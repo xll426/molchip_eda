@@ -1,14 +1,14 @@
 # molchip_eda — AI4EDA 论文深度解读与开源索引
 
-> 📚 **105 篇论文深度讲解** · 97 个论文目录 · 全部分类 + 开源标注 + 点击直达
-> 🏷️ 初版 v0.1 — 后续持续更新完善
-> 📖 完整导航：[00-总索引.md](00-总索引.md) · 校验：`python3 _校验.py`（105/105 通过 ✅）
+> 📚 **107 篇论文深度讲解** · 99 个论文目录 · 全部分类 + 开源标注 + 点击直达
+> 🏷️ 初版 v0.2 — 后续持续更新完善
+> 📖 完整导航：[00-总索引.md](00-总索引.md) · 校验：`python3 _校验.py`（107/107 通过 ✅）
 
 ---
 
 ## 30 秒速览
 
-本仓库为 AI4EDA（AI for Electronic Design Automation）领域 **105 篇论文** 提供统一格式的深度技术解读。
+本仓库为 AI4EDA（AI for Electronic Design Automation）领域 **107 篇论文** 提供统一格式的深度技术解读。
 
 - **一篇论文 = 一份 `论文深度讲解.md`**，按 12 节骨架组织
 - **每份解读包含**：一句话定位 → EDA 17 阶段映射 → 输入/输出样例 → 方法架构 ASCII 图 → 公式推导 → 实验数据 → 创新点 → 缩写表 → 芯片流程关系 → 讨论局限 → 复现信息 → 一分钟复述
@@ -29,9 +29,10 @@
 | 3 | [DeepGate4](DeepGate4/论文深度讲解.md) | **ICLR 2025** | ✅ | 电路表示 | 亚线性内存图 Transformer，1.6M 门电路训练，92.9% SAT 加速 |
 | 4 | [TopoRTL](TopoRTL/论文深度讲解.md) | **ICLR 2026** | ✅ | 电路表示 | 拓扑信息对 RTL 电路表示至关重要 |
 | 5 | [R2G](R2G/论文深度讲解.md) | **CVPR 2026** | ✅ | Benchmark | RTL→GDSII 多视图电路图 benchmark，覆盖率 8/17 |
-| 6 | [ChipNeMo](ChipNeMo/论文深度讲解.md) | **DAC 2024** | ❌ | 领域 LLM | NVIDIA 芯片设计域适配 LLM，覆盖率 9/17（最高） |
-| 7 | [RTLFixer](RTLFixer/论文深度讲解.md) | **DAC 2024** | ✅ | RTL 修复 | ReAct+RAG 自动化语法修复，**98.5%** 修复率，NVIDIA |
-| 8 | [MAGE](MAGE/论文深度讲解.md) | **ICCAD 2024** | ✅ | RTL 生成 | 多 Agent 协作 RTL 生成，不训练模型，仿真反馈迭代修复 |
+| 6 | [QiMeng](QiMeng/论文深度讲解.md) | arXiv 2025 | ⏳ | 全流程系统 | 中科院三层全自动处理器设计，LPCM 多模态大模型，CPU-v2 对标 A53 |
+| 7 | [ChipNeMo](ChipNeMo/论文深度讲解.md) | **DAC 2024** | ❌ | 领域 LLM | NVIDIA 芯片设计域适配 LLM，覆盖率 9/17（最高） |
+| 8 | [RTLFixer](RTLFixer/论文深度讲解.md) | **DAC 2024** | ✅ | RTL 修复 | ReAct+RAG 自动化语法修复，**98.5%** 修复率，NVIDIA |
+| 9 | [MAGE](MAGE/论文深度讲解.md) | **ICCAD 2024** | ✅ | RTL 生成 | 多 Agent 协作 RTL 生成，不训练模型，仿真反馈迭代修复 |
 | 9 | [BetterV](BetterV/论文深度讲解.md) | **ICML 2024** | ⏳ | RTL 生成 | 判别式引导受控 Verilog 生成，Bayes+Langevin 动力学 |
 | 10 | [CraftRTL](CraftRTL/论文深度讲解.md) | **ICLR 2025** | ✅ | RTL 生成 | NVIDIA 正确即构造（KMap/FSM）+ 目标代码修复 |
 | 11 | [CircuitNet3.0](CircuitNet3.0/论文深度讲解.md) | **ICLR 2025** | ⏳ | 数据集 | 多模态早期 PPA 预测，RTLDistil 蒸馏+MOSS 编码，覆盖率 9/17 |
@@ -52,8 +53,9 @@
 | 26 | [MGVGA](MGVGA/论文深度讲解.md) | **ICLR 2025** | ✅ | 电路表示 | 门级掩码建模（MGM）+ Verilog-AIG 对齐（VGA） |
 | 27 | [PCB-Bench](PCB-Bench/论文深度讲解.md) | **ICLR 2026** | ✅ | 跨领域 | PCB 布局布线 LLM 评测基准，3,700+ 题目 |
 | 28 | [CorrectHDL](CorrectHDL/论文深度讲解.md) | arXiv 2025 | ✅ | RTL 生成 | 以 HLS 为参考的 Agentic HDL 生成 |
-| 29 | [FuncGNN](FuncGNN/论文深度讲解.md) | **ACM TRETS 2026** | ✅ | 电路表示 | GNN 学习逻辑电路功能语义 |
-| 30 | [AnalogGenie](AnalogGenie/论文深度讲解.md) | arXiv 2025 | ✅ | 跨领域 | 模拟电路基础模型，3,350 拓扑生成 |
+| 29 | [SpecLoop](SpecLoop/论文深度讲解.md) | arXiv 2026 | ⏳ | RTL 逆向 | RTL→Spec 逆向生成 + 形式验证反馈闭环（NTU+MediaTek） |
+| 30 | [FuncGNN](FuncGNN/论文深度讲解.md) | **ACM TRETS 2026** | ✅ | 电路表示 | GNN 学习逻辑电路功能语义 |
+| 31 | [AnalogGenie](AnalogGenie/论文深度讲解.md) | arXiv 2025 | ✅ | 跨领域 | 模拟电路基础模型，3,350 拓扑生成 |
 
 > 📝 【开源标注说明】✅ = GitHub 仓库已确认 · ⏳ = 论文声明将开源/等待发布 · ❌ = 闭源/未公开
 > 🔗 点击论文名直接打开深度讲解
@@ -62,11 +64,12 @@
 
 ### 📂 按研究方向分类（全部 105 篇）
 
-#### 1. RTL 生成、修复与 Agent（27 篇）
+#### 1. RTL 生成、修复与 Agent（28 篇）
 
 | 论文 | 会议 | 代码 | 覆盖率 | 链接 |
 |---|---:|---|:---:|------|
 | VeriTrace | arXiv 2026 | ⏳ | 2/17 | [📄](VeriTrace/论文深度讲解.md) |
+| **QiMeng** | arXiv 2025 | ⏳ | 12-15/17 | [📄](QiMeng/论文深度讲解.md) |
 | MAGE | ICCAD 2024 | ✅ | 2/17 | [📄](MAGE/论文深度讲解.md) |
 | ChipSeek | arXiv 2025 | ✅ | ~3.5/17 | [📄](ChipSeek/论文深度讲解.md) |
 | VerilogCoder | ICCAD 2024 | ✅ | 2/17 | [📄](VerilogCoder/论文深度讲解.md) |
@@ -149,7 +152,7 @@
 | DREAMPlace | DAC 2019 | ✅ | 1/17 | [📄](DREAMPlace/论文深度讲解.md) |
 | **RocketPPA** | **MLSys 2026** | ❌ | 3/17 | [📄](RocketPPA/论文深度讲解.md) |
 
-#### 5. 验证、修复与形式化（14 篇）
+#### 5. 验证、修复与形式化（15 篇）
 
 | 论文 | 会议 | 代码 | 覆盖率 | 链接 |
 |---|---:|---|:---:|------|
@@ -167,6 +170,7 @@
 | SpecAlign | arXiv 2025 | ✅ | 2/17 | [📄](SpecAlign/论文深度讲解.md) |
 | VeriDafny | arXiv 2025 | ❌ | 2/17 | [📄](VeriDafny/论文深度讲解.md) |
 | AssertLLM | arXiv 2024 | ✅ | 1/17 | [📄](AssertLLM/论文深度讲解.md) |
+| **SpecLoop** | arXiv 2026 | ⏳ | 2/17 | [📄](SpecLoop/论文深度讲解.md) |
 
 #### 6. 物理设计、跨阶段与成本（7 篇）
 
@@ -218,16 +222,16 @@
 
 | 分类 | 总数 | 已开源 ✅ | 待发布 ⏳ | 闭源 ❌ |
 |---|---:|---:|---:|---:|
-| RTL 生成、修复与 Agent | 27 | 17 | 8 | 2 |
+| RTL 生成、修复与 Agent | 28 | 17 | 9 | 2 |
 | Benchmark 与评测 | 20 | 17 | 3 | 0 |
 | 电路表示学习与数据集 | 16 | 13 | 3 | 0 |
 | 逻辑综合与 PPA 预测 | 4 | 2 | 0 | 2 |
-| 验证、修复与形式化 | 14 | 8 | 4 | 2 |
+| 验证、修复与形式化 | 15 | 8 | 5 | 2 |
 | 物理设计与跨阶段 | 7 | 4 | 3 | 0 |
 | EDA Agent 与流程编排 | 3 | 2 | 0 | 1 |
 | 跨领域 | 10 | 6 | 4 | 0 |
 | 综述 | 4 | 0 | 0 | 4 |
-| **总计** | **105** | **69 (66%)** | **25 (24%)** | **11 (10%)** |
+| **总计** | **107** | **69 (64%)** | **27 (25%)** | **11 (10%)** |
 
 ---
 
