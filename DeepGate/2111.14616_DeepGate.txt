@@ -1,0 +1,443 @@
+                                                DeepGate: Learning Neural Representations of
+                                                                Logic Gates
+                                                          Min Li∗ , Sadaf Khan∗ , Zhengyuan Shi∗ , Naixing Wang† , Yu Huang† and Qiang Xu∗
+                                                                        ∗   The Chinese University of Hong Kong, Shatin, Hong Kong S.A.R.
+                                                                                       † Huawei Technologies Co., Ltd., China
+
+                                                                                     {mli, skhan, zyshi21, qxu}@cse.cuhk.edu.hk
+
+
+                                            Abstract—Applying deep learning (DL) techniques in the             various EDA tasks has not been addressed yet. In this work,
+arXiv:2111.14616v3 [cs.LG] 21 Apr 2022
+
+
+
+
+                                         electronic design automation (EDA) field has become a trending        we take the first step towards this direction by introducing
+                                         topic. Most solutions apply well-developed DL models to solve         a novel GNN-based solution for the representation learning
+                                         specific EDA problems. While demonstrating promising results,
+                                         they require careful model tuning for every problem. The              of logic gates, namely DeepGate, which is aware of the
+                                         fundamental question on ”How to obtain a general and effective        logic computation procedure and the structural information of
+                                         neural representation of circuits?” has not been answered yet. In     combinational circuits.
+                                         this work, we take the first step towards solving this problem. We       Naturally, logic circuits can be modeled as directed acyclic
+                                         propose DeepGate, a novel representation learning solution that       graphs (DAGs), in which logic gates appear in a specific
+                                         effectively embeds both logic function and structural information
+                                         of a circuit as vectors on each gate. Specifically, we propose        topological order. Therefore, one could collect many logic
+                                         transforming circuits into unified and-inverter graph format for      circuits and resort to existing DAG-GNN architecture [12],
+                                         learning and using signal probabilities as the supervision task       [13] to learn the node embedding for each logic gate with some
+                                         in DeepGate. We then introduce a novel graph neural network           supervision tasks (e.g., Boolean satisfiability [14]). However,
+                                         that uses strong inductive biases in practical circuits as learning   we argue that such straightforward solutions cannot effectively
+                                         priors for signal probability prediction. Our experimental results
+                                         show the efficacy and generalization capability of DeepGate.          extract information from circuit graphs.
+                                                                                                                  Firstly, logic circuits could follow different design styles
+                                                                I. I NTRODUCTION                               and use diverse technology libraries containing various logic
+                                                                                                               gate types, leading to heterogeneous circuit graphs with mixed
+                                            The rise of deep learning (DL) has aroused much interest           distributions that are challenging to learn. In DeepGate, we
+                                         in applying it to solve various electronic design automation          propose to conduct learning on a general intermediate rep-
+                                         (EDA) problems that otherwise rely on some heuristics or              resentation of logic circuits, i.e., and-inverter graph (AIG),
+                                         hand-engineered rules, as surveyed in [1]. The most natural           with the help of logic synthesis tools [15]. The benefits are
+                                         representation of circuits and netlists is a graph. With the          twofold: (i). Such a unified format constrains the circuit graph
+                                         recent success of graph neural networks (GNNs) [2], [3] in            distribution without changing circuit functionalities. All the
+                                         modeling non-structured data, various works have explored its         transformed circuits only feature two types of logic gates
+                                         potential on EDA problems such as congestion prediction [4]           (i.e., 2-input AND gate and inverter); (ii). The logic synthesis
+                                         and testability analysis [5]. These works focus on learning a         procedure naturally introduces a strong inductive bias of
+                                         particular function that takes the circuit graph as input and         practical circuits for effective learning with GNN models.
+                                         directly maps it to output for desired EDA tasks, without                Secondly, the effectiveness of representation learning heav-
+                                         considering the internal computational process in the circuits.       ily relies on supervision tasks. For example, when pre-training
+                                            Recently, a notable trend in the deep learning community           CV models, the image class labels of the ImageNet dataset
+                                         is to employ pre-trained models for many downstream tasks             serve as the cornerstone. In contrast, considering the difficulty
+                                         rather than learning a specific model for each task from              in annotating a textual dataset as large as ImageNet, self-
+                                         scratch [6]. For example, a series of convolutional neural            supervised tasks are used instead in NLP pre-trained model
+                                         networks (CNNs) are pre-trained on the ImageNet dataset [7].          development. For effective circuit representation learning, we
+                                         They perform well on other computer vision (CV) tasks                 propose to use the signal probability (i.e., the probability of
+                                         such as image segmentation [8] and object detection [9] by            being logic ‘1’) for every node as rich supervision because
+                                         fine-tuning with a small amount of task-specific data. Sim-           it embeds the genuine logic relationship of each node in the
+                                         ilarly, pre-trained Transformer-based language models (e.g.,          circuits. To be specific, we perform logic simulations with a
+                                         GPT [10] and BERT [11]) have achieved unparalleled perfor-            large amount of random patterns to obtain faithful probability
+                                         mance on various natural language processing (NLP) tasks.             values for supervision.
+                                            Whereas in the EDA domain, despite all the recent efforts in          Last but most important, existing GNN models are general
+                                         learning-based solutions [1], obtaining a general and effective       solutions designed to extract information from all kinds of
+                                         circuit representation that serves as the basis for solving           graphs, while circuit graphs are a unique type of graph
+                                             1       2         3       G at every layer ` and a final graph representation hG , as in
+                         6
+                                                                       [18]:
+        1
+               4                   8        5            4             h`v = COMBINE` (hv`−1 , AGGREGATE` ({h`−1
+                                                                                                             u |u ∈ N (v)})), ` = 1, ., L
+        2                                                                                                                              (1)
+                                                                                        hG = READOUT({hL
+                                                                                                       v , v ∈ V})                       (2)
+        3                 7                      7                 6
+                                                                       wherein N (v) denotes neighboring nodes of node v and
+              5
+                                                         8
+                                                                       L is the number of layers. The parameterized function
+                                                                       AGGREGATE` aggregates messages from neighboring nodes
+                   Circuit                               DAG
+                                                                       N (v), and COMBINE` obtains an updated hidden state after
+              Fig. 1. The Circuit Representation as DAG                aggregation. Finally, the function READOUT` retrieves the
+                                                                       states of all nodes V and produces the graph neural repre-
+                                                                       sentation. A notable GNN architecture is the graph attention
+with logic relationships between nodes. In this work, we               network (GAT) [20] that considers the importance of different
+design a dedicated GNN model for circuit graphs, significantly         neighbors during aggregation.
+enhancing the learning effectiveness.                                     Directed acyclic graphs (DAGs) are a special type of graphs,
+  We summarize the contributions of this work as follows:              yet broadly seen across many domains, including circuit mod-
+                                                                       eling (see Fig. 1). Recently, few studies have been dedicated to
+  •   To the best of our knowledge, DeepGate is the first work         DAG-GNN designs [12], [13], which propagate the message
+      for the general and effective circuit representation learn-      following the topological ordering between nodes and only
+      ing problem. Specially, we propose a novel design flow           consider the predecessors in the AGGREGATE` function, as
+      to tackle this problem: (i). circuit transformation in AIG       demonstrated in Equation (3).
+      form; (ii). supervision with logic-simulated probabilities;
+                                                                       h`v = COMBINE` (h`−1
+                                                                                        v   , AGGREGATE` ({h`u |u ∈ P(v)})), ` = 1, ..., L
+      (iii). representation learning with a dedicated GNN model                                                                          (3)
+      for circuit graphs.                                              The major difference between Eq. (3) and Eq. (1) is that
+  •   We propose a novel GNN model for circuit graphs                  in DAG-GNN, the aggregation function for v will be only
+      that exploits unique circuit properties, including attention     executed after all of its predecessors’ hidden states have
+      mechanisms that mimic the logic computation procedure            already been computed.
+      and reversed propagation layers that consider logic im-             Besides stacking L layers to increase the depth of the
+      plication effects.                                               network, one can also apply the same model for T times in
+                                                                       the recurrent fashion to generate the final embedding [14]:
+  •   Reconvergence structures are inevitable due to logic
+      sharing in multi-level logic networks, and they are the            htv = COMBINE(ht−1
+                                                                                        v   , AGGREGATE({htu |u ∈ P(v)})), t = 1, ..., T
+                                                                                                                                        (4)
+      main challenges for logic analysis [16]. We treat them
+                                                                         Using the taxonomy defined in [21], we name the two
+      as first-class citizen and introduce novel solutions in our
+                                                                       variants of DAG-GNNs described in Equations (3)–(4) as
+      GNN model.
+                                                                       DAG-ConvGNNs and DAG-RecGNNs, respectively.
+   We learn the representations of logic gates with many small
+                                                                       B. GNN-Based Solutions for EDA Problems
+subcircuits extracted from benchmark circuits. Experimental
+results performed on large circuits show the efficacy and gen-            Existing GNN-based EDA solutions use an end-to-end flow
+eralization capability of DeepGate. We organize the remainder          for specific EDA tasks wherein the labels are usually extracted
+of this paper as follows. We review related works in Section II.       from commercial EDA tools.
+Section III introduces the DeepGate architecture, while in                To the best of our knowledge, the first GNN-based EDA
+Section IV, we present the experimental results on various             technique is applied to the test point insertion (TPI) problem,
+circuits. Finally, Section V concludes this paper.                     which is formulated as a node binary classification problem
+                                                                       and solved with a graph convolutional network [5]. The
+                                                                       ground-truth labels are collected from commercial TPI tools,
+                     II. R ELATED W ORKS                               revealing whether a particular node is ”easy to observe” or
+                                                                       not. CongestionNet [4] models the circuit as an undirected
+A. Graph Neural Networks                                               graph and trains a GAT model to predict the congestion of
+                                                                       the final physical design on a per-cell basis. GRANNITE [22]
+   Graph neural networks [2], [3] have received a lot of atten-        conducts power estimation using a DAG-GNN model. Gate
+tion for their effectiveness in modeling non-structured data.          netlists are mapped onto graphs with per-node (gate) and per-
+By learning vectorial representations on graphs via feature            edge (net) features. They achieved good accuracy (less than
+propagation and aggregation, GNNs show convincing results              5.5% error across a diverse set of benchmarks) for fast (¡1
+in various domains [17]–[19]. The most popular GNN model               second) average power estimation on designs up to 50k gate.
+employs a message-passing neural network architecture, which           Recently, [23] proposes a GAT-based model named N et2 for
+computes representation/hidden states h`v for node v in a graph        pre-placement net length estimation.
+   To solve a particular EDA problem, the above techniques            logic function and the structural information of the circuits. In
+typically pre-compute many node/edge features (e.g., SCOAP            DeepGate, we propose to use the signal probability on every
+testability measures in [5]) and use existing GNN models to           node as supervision, which satisfies the above requirements:
+aggregate these features for solution findings. Consequently,         (i). It is relatively easy to obtain highly-accurate probability
+the learned node features cannot be transferred among related         values by running logic simulations on many random input
+tasks, despite using the same circuit graphs as inputs. More          patterns, especially when the circuit size is limited; (ii). A
+importantly, an effective representation for circuits should be       unique yet important property of logic circuits that makes
+aware of their logic functions. However, existing solutions           circuit analysis challenging is the reconvergence structures,
+ignore it and only consider the structural information in their       and logic simulation is arguably the only way to obtain the
+learning procedure.                                                   actual value for such structures; (iii). The logic probability of
+   Motivated by the above, we propose to learn a general              each gate itself plays an essential role in many EDA tasks.
+and effective circuit representation without pre-computing any
+specific features, as detailed in the following section.              C. GNN Model in DeepGate
+                                                                         Given circuit graphs in AIG form, the objective of our GNN
+                   III. P ROPOSED S OLUTION                           model is to estimate the probability of every node such that it
+A. Overview of DeepGate                                               would be as close to the genuine signal probability as possible.
+                                                                      Different from existing DAG-ConvGNNs [12], [13] and DAG-
+   Figure 2 presents the overview of the proposed DeepGate
+                                                                      RecGNNs [14] models that focus on learning the topological
+solution, consisting of two stages for the neural representation
+                                                                      information in the graph, DeepGate is designed to learn
+learning of logic gates:
+                                                                      both the circuit structural information and the computational
+   • Circuit Data Preparation: Given a pool of circuit de-
+                                                                      behaviour of logic circuits, and embed them as vectors on
+     signs, we use logic synthesis tools to transform them into       every logic gate.
+     a unified AIG format. We then perform logic simulations
+                                                                         We now elaborate on the detailed GNN model design
+     on the circuits with sufficient random patterns to obtain
+                                                                      in DeepGate. Given a circuit graph G, we embed the gate
+     the signal probability (i.e., the probability of node being
+                                                                      type of each node v with one-hot encoding in xv . To be
+     logic ‘1‘) on every node as supervision. We elaborate the
+                                                                      specific, as only primary inputs (PIs), And gates and Not gates
+     details in Section III-B.
+                                                                      are present in AIGs, we assign a 3-d vector for each node
+  •   Probabilities Prediction with DeepGate: Given a cir-            according to its gate type. It should be noted that instead
+      cuit dataset and the logic-simulated probabilities as the       of relying on the probability-based measurements in previous
+      supervision task, we introduce a novel GNN model                works [5], [22], our model only requires gate type information
+      dedicated for circuit graph analysis to learn the neural        for the representation learning. We also have hidden states hv
+      representations of logic gates, as detailed in Section III-C.   for every node, which is initialized randomly. Given these,
+                                                                      DeepGate resorts to attention-based aggregation design [13],
+B. Circuit Data Preparation                                           [20] and the gated recurrent unit (GRU) [12] as the update
+   Some circuits are at the register-transfer level, while others     function.
+are gate-level netlists mapped with various libraries. Such
+                                                                         Aggregation. We use the attention mechanism in the additive
+heterogeneity across circuits is a challenge for GNN model
+                                                                      form to instantiate the AGGREGATE function in Equation (3),
+development. To tackle this problem, we resort to the logic
+                                                                      wherein the aggregated message mtv for a node v at tth
+synthesis tool ABC [15] and transform all circuits into the
+                                                                      iteration is computed by:
+unified AIG format. If the original circuit is too large, we
+extract small sub-circuits with circuit sizes ranging from 30         mtv =
+                                                                               X        t
+                                                                                       αuv htu          t
+                                                                                                 where αuv = sof tmax(w1> ht−1 +w2> htu )
+                                                                                                                           v
+to 3k gates. Note that, we test the effectiveness of DeepGate                 u∈P(v)
+                                                                                                                u∈P(v)
+on much larger circuits for its generalization capabilities.                                                                          (5)
+   The benefits of such circuit pre-processing flow include:                   t
+                                                                      where αuv   is a weighting coefficient that is computed by fol-
+(i). Only two logic gate types (i.e., 2-input AND gate and            lowing the query-key design as in usual attention mechanisms.
+1-input Not gate) are considered, which would dramatically            To be specific, ht−1
+                                                                                        v    serves as query, and representation of
+reduce representation learning difficulty; (ii). Applying logic       predecessors from current iteration t, htu , serves as key. The
+synthesis introduces strong relational inductive bias into the        intuition behind using the attention mechanism for aggregation
+resulting circuit graphs; (iii). The constraint on circuit size       is that when we do the logic computation in digital circuits, the
+facilitates efficient GNN training with both reduced sizes of         controlling value of a logic gate determines the output of that
+circuit graphs and less time for preparing supervision labels.        gate. Therefore, controlling values are far more important than
+   There are many possibilities to annotate a circuit, e.g., the      non-controlling values. To mimic this behaviour, the attention
+satisfiability of the circuit [14]. However, a good supervision       mechanism can learn to assign high weights for controlling
+task should satisfy the following condition: the labels should        inputs of gates and give less importance to the rest of the
+be easily obtained while retaining rich information for both the      inputs.
+                                                                                    Simulated
+                                                      Logic Simulation              Probability
+                                                                                   𝑦1 , …, 𝑦5
+
+                                                                                             𝑥2 | ℎ20
+                                                                                                              𝑥1 |ℎ10                                               ℎ1𝑇
+                                                                              𝑥1 | ℎ10                                             Forward        Reverse
+                                                                             𝑦1 1            2 𝑦2                                   Layer          Layer                                                     𝑦ො 1          𝑦ො 2
+                                                                                                              𝑥2 |ℎ20                                               ℎ2𝑇
+                                                                            𝑥3 | ℎ30          𝑥4 | ℎ40
+                       Mapping to       Logic                                                                 𝑥3 |ℎ30                                               ℎ3𝑇                                      𝑦ො 3      𝑦ො 4
+                                                                             𝑦 3             4 𝑦4
+                         AIG         Optimization                             3
+                                                                                                              𝑥4 |ℎ40                                               ℎ4𝑇
+                                                                                         5     𝑥5 | ℎ50                                                                                                             𝑦ො 5
+                                                                                  𝑦5                          𝑥5 |ℎ50                                               ℎ5𝑇
+                                                                                                                                   DeepGate Model                                    Regressor               Predicted
+                                                          Optimized                                                                                                                                          Values
+ Circuits Collection                                                              Circuit Graphs
+                                                      Circuits Collection                                  Initialized                                            Node
+                                                                                   with labels
+                                                                                                             Vector                                             Embeddings
+
+                       (a) Circuit Data Preparation                                                        (b) Probabilities Prediction with DeepGate
+
+
+                                                                   Fig. 2. The Overview of DeepGate.
+
+
+
+   Combine. We then use the GRU to instantiate the COM-                                                                            1      2       3                              1        2          3
+BINE function for updating the hidden state of target node                                                                                                Fan-out
+                                                                                                                                                          Node
+v:                                                                                                                                 5          4                                  5               4
+               htv = GRU ([mtv , xv ], ht−1
+                                        v )             (6)
+                                                                                                                        Reconvergence 7               6                               7                  6
+wherein mtv , xv are concatenated together and treated as input,                                                        Node
+                                                                                                                                                                          Skip
+while ht−1
+         v   is the past state of GRU.                                                                                                        8                           Connection             8
+   On the one hand, DeepGate adopts the recursive DAG-
+GNNs functional defined in Equation (4). The reasons for
+                                                                                                        Fig. 3. Information Propagation at Reconvergence Node using Skip Connec-
+using the recurrent architecture are two-fold: (i). it is un-                                           tion
+realistic for GNNs to capture the circuit’s functional and
+structural information with a single forward propagation; (ii).                                         nodes is different from normal nodes and such structures are
+the recurrent learning procedure facilitates reaching stabilized                                        inevitable due to logic sharing in multi-level logic networks.
+node embeddings quickly.                                                                                Hence, they are the main challenge for logic probability
+   On the other hand, our proposed GNN model differs from                                               analysis. To accommodate their impact, we introduce the
+previous DAG-GNNs [12]–[14] that initialize h0v as xv and                                               improvement into DeepGate to enable special processing for
+treat the aggregated message as the state of recurrent function.                                        reconvergence nodes as shown in Figure 3.
+In contrast, we fix the gate type information of nodes xv                                                  Firstly, we maintain the information of reconvergence nodes
+as inputs for all iterations. Such employment can avoid the                                             during circuit data preparation, including its corresponding
+information vanishing of gate properties during the long-term                                           source fan-out node, and the logic level difference between
+recursive propagation.                                                                                  the source nodes and reconvergence nodes. Secondly, we add
+   Reversed Propagation Layer. In DeepGate, we also consider                                            direct edges between the fan-out node and the reconvergence
+backward information propagation, i.e., processing the graph                                            node, named skip connection here. The new edges facilitate
+in reversed topological order. One of the main reasons to                                               the information exchange from fan-out nodes to reconvergence
+introduce the backward layers in our framework is that logic                                            nodes. Last but not least, we leverage the positional encoding
+implication and backtracking in the reversed order can be                                               technique [25] to differentiate the skip connection and the
+highly useful for predicting the states of nodes. It also helps                                         normal connection. To be specific, the function γ(D) is a
+stabilize training, as proved in sequence-to-sequence learning                                          mapping of logic level difference D between source fan-out
+tasks [24].                                                                                             node and reconvergence node into a higher dimensional space
+   Regressor. After T iterations, we pass the hidden states of                                          R2L :
+nodes hTv into a multi-layer perceptron (MLP), which com-                                                 γ(D) = (sin(20 πD), cos(20 πD), · · · , sin(2L−1 πD), cos(2L−1 πD))
+putes a single scalar for every node to regress the simulated                                                                                                               (7)
+probabilities. The weights of MLP are shared for nodes with                                             The impact of the fanout node on the reconvergence nodes
+the same gate types. We train the network to minimize the L1                                            depends upon the distance between them. Generally speak-
+loss between the prediction ŷv and the true probability yv .                                           ing, the longer the distance is, the lesser impact it has on
+                                                                                                        the reconvergence node. The above function can induce the
+D. Skip Connection for Reconvergence Structure with Posi-                                               knowledge of how much fanout node can impact the result
+tional Encoding                                                                                         of reconvergence node into the model. We assign the encoded
+   In the previous section we have described the core compo-                                            vector as the edge attributes to skip connection and incorporate
+nents of DeepGate necessary for predicting the logic probabil-                                          it into the coefficient calculation described in Equation (5) as
+ities of nodes. However, the logic inference on reconvergence                                           the third input.
+                              TABLE I                                                           TABLE II
+          T HE S TATISTICS OF C IRCUIT T RAINING DATASET              T HE P ERFORMANCE C OMPARISON OF D EEP G ATE WITH OTHER GNN
+                                                                                MODELS FOR L OGIC P ROBABILITY P REDICTION
+          Benchmark    #Subcircuits   #Node         #Level
+                                                                         Model               Aggregator      Avg. Prediction Error
+          EPFL         828            [52–341]      [4–17]               GCN                 Conv. Sum              0.1386
+          ITC99        7,560          [36–1,947]    [3–23]                                    Attention             0.1840
+          IWLS         1,281          [41–2,268]    [5–24]                                    DeepSet               0.2541
+          Opencores    1,155          [51–3,214]    [4–18]                                   GatedSum               0.1995
+          Total        10,824         [36–3,214]    [3–24]               DAG-ConvGNN         Conv. Sum              0.2215
+                                                                                              Attention             0.2398
+                                                                                              DeepSet               0.2431
+                                                                                             GatedSum               0.2333
+                      IV. E XPERIMENTS                                   DAG-RecGNN          Conv. Sum              0.0328
+                                                                         (T=10)               DeepSet               0.0302
+                                                                                             GatedSum               0.0329
+A. Datasets                                                              DeepGate         Attention w/o SC         0.0234
+                                                                         (T=10)           Attention w/ SC          0.0204
+   We extract many sub-circuits from four circuit benchmark
+suites: ITC’99 [26], IWLS’05 [27], EPFL [28] and Open-
+Core [29], and follow the circuit data preparation flow de-         T = 10 iterations of message passing are performed to obtain
+scribed in Section III-B to transform all circuits into a unified   the final embeddings. We choose L = 8 in Equation (7) for the
+AIG format. We conduct logic simulations with up to 100k            skip connection setting. For training, all models are optimized
+random input patterns to obtain an accurate signal probability      for 60 epochs using the ADAM optimizer with a learning
+on every node.                                                      rate of 1 × 10−4 . We use the topological batching technique
+   Table I presents the statistics of the circuit dataset. #Sub-    introduced in [13] to accelerate the training.
+circuits shows the total number of subcircuits extracted from
+each benchmark. As shown in the table, the constructed circuit      C. Probability Prediction
+dataset covers circuit sizes ranging from tens to thousands of
+nodes with different logic levels. Finally, there are 10, 824          1) Comparison of DeepGate with Baseline Solutions:
+circuits in total, and we create 90/10 training/test splits for     Table II compares DeepGate with other baseline solutions in
+model training and evaluation.                                      terms of prediction error. From this table, we have several
+B. Evaluation Metric and Baselines                                  observations: First, both GCN and DAG-ConvGNN are subject
+                                                                    to poor performance for probability prediction, mainly due to
+   To evaluate the performance of different GNN models,             their lack of ability to model the computational behaviours
+we calculate the average value of the absolute differences          of circuits. For instance, the best GCN model, equipped
+between the simulated probability yv and the predicted ŷv          with Conv. Sum, gives 0.1386 of prediction error, which
+from DeepGate for all nodes V in the circuits, as shown in          in turn is even higher than the worst performing model of
+equation (8). The smaller the value is, the better the model        DAG-RecGNN. Therefore, only by incorporating the logical
+performs.                                                           ordering into the model design and conducting the propagation
+                                        1 X                         recurrently, will make the model perform well. It shows the
+        Avg. P rediction Error =            |yv − ŷv |      (8)    advantage of DAG-RecGNN implementation with dedicated
+                                        N
+                                              v∈V                   recurrent scheme and reversed layer design discussed in Sec-
+   We consider three GNN models: GCN, DAG-ConvGNN,                  tion III-C over simpler GNN architectures. Second, among
+and DAG-RecGNN. GCN model treats the circuit graphs as              all models, DeepGate with attention alone achieves significant
+undirected graphs in representation learning. DAG-ConvGNN           prediction error reduction. It brings 22.76% relative improve-
+model follows the settings defined in Equation (3). For DAG-        ment compared with the best baseline solution, which is
+RecGNN model, we adopt the same COMBINE function and                the DAG-RecGNN model equipped with DeepSet aggregator.
+the reversed propagation layer design in DeepGate, as depicted      Hence, using the dedicated attention mechanism benefits logic
+in Section III-C. As for the GNN model in DeepGate, it              representation learning. Third, equipped with skip connection
+contains additional attention mechanism and skip connection         design, DeepGate can further reduce the prediction error from
+(SC). Under every setting, we evaluate 4 different aggregator       0.0234 to 0.0204, which reveals the efficacy of introducing the
+designs, which include representative works for DAG learning,       reconvergence knowledge into the model design. To summa-
+i.e., Convolutional Sum (abbreviated as Conv. Sum) [30],            rize, with only the gate type information and the connectivity
+Attention [13], [20], GatedSum [12] and DeepSet [14].               between gates, DeepGate learns to predict highly-accurate
+   In order to make the comparison fair, we instantiate all         probabilities for logic gates.
+models with d = 64 for the node hidden states hv and design            As we observe that DAG-RecRNN with DeepSet aggregator
+the other parameterized functions to have a similar number          (abbreviated as DeepSet for the following discussion) performs
+of tunable parameters. For DAG-RecGNNs and our DeepGate             better than the other baselines, in later results, we only
+model, a forward layer is followed by a reversed layer, and         compare DeepGate (w/ skip connection) with it.
+                           TABLE III                                                              TABLE IV
+T HE P ERFORMANCE C OMPARISON OF D EEP G ATE AND D EEP S ET ON F IVE      T HE P ERFORMANCE OF D EEP G ATE WITH AND WITHOUT C IRCUIT
+                        L ARGE C IRCUITS                                                      T RANSFORMATION
+
+     Design            #Nodes Levels DeepSet DeepGate Reduction                             w/o Tran.   w/ Tran.   Pre-trained
+     Arbiter           23.7K   173   0.0277   0.0073   73.56%                       EPFL     0.0442     0.0292       0.0142
+     Squarer           36.0K   373   0.0495   0.0346   30.16%                       IWLS     0.0447     0.0342       0.0209
+     Multiplier        47.3K   521   0.0220   0.0159   27.94%
+     80386 Processor   13.2K   122   0.0534   0.0387   27.56%
+     Viper Processor   40.5K   133   0.0520   0.0389   25.18%
+                                                                       (e.g., XOR and NAND) are used much less frequently. Such
+                                                                       in-balanced gate distributions may lead to insufficient training,
+   2) Results on Large Circuits: Furthermore, we evaluate              causing higher prediction errors.
+DeepGate on five circuit designs that are substantially larger            Additionally, we directly apply the pre-trained DeepGate
+than the circuits it saw during training. The circuit statistics       model on the merged AIG dataset, as shown in Section IV-A
+and the prediction error of both DeepGate and DeepSet are              for comparison. As can be observed, DeepGate trained on the
+shown in Table III. The number of gates in these designs is            dataset consisting of different benchmarks can further reduce
+two orders of magnitude more than that of the training circuits.       the prediction errors by 51.37%. It supports the claim that
+   We can observe that DeepGate achieves similar prediction            unifying different circuit designs into a common intermediate
+accuracy as that on small circuits, and it outperforms DeepSet         representation can help the model learn a better representation
+in these large circuits by a large margin. Such results clearly        of logic gates.
+demonstrate the generalization capability of DeepGate. In par-
+ticular, DeepGate achieves 73.56% prediction error reduction             2) Impact of Recurrence Iterations: During the inference
+on Arbiter. This is because, the Arbiter circuit is designed to        phase, the number of iterations T can be set as different values.
+accommodate access from multiple requests, and it contains             The higher the value, the higher the computational cost.
+repetitive logic units with many reconvergence structures. As            We enumerate different values for T , ranging from 1 to
+DeepGate treats such structures as a first-class citizen in the        50. We observe that our GNN model is able to decrease the
+GNN model, it can generate much more accurate predictions.             prediction loss as T increases. However, the prediction error
+                                                                       converges quickly at around T = 10, despite the circuit size.
+D. Discussion                                                          Such experimental results further demonstrate the scalability
+                                                                       of the proposed DeepGate solution.
+   1) Effectiveness of Circuit Transformation: DeepGate uses
+the logic synthesis tool to transform the circuits from dif-
+ferent sources into unified AIG forms. One may wonder the                         V. C ONCLUSION AND F UTURE W ORK
+performance of DeepGate if the network is directly trained
+on the original circuits, wherein other gate types (e.g., XOR,            This paper proposes DeepGate, a novel representation learn-
+NAND, NOR, and OR) are also included. To investigate                   ing solution that effectively embeds both logic functions and
+the effectiveness of the circuit transformation in DeepGate,           structural information of a circuit as vectors on each gate. In
+we conduct the controlled experiments on EPFL and IWLS                 DeepGate, we construct easy-to-learn circuit graphs by trans-
+benchmarks, as shown in Table IV.                                      forming circuits into unified AIG format and introduce a novel
+   Take EPFL as an example, we extract 375 sub-circuits                GNN model with circuit knowledge as priors for effective
+from the original designs, and develop two versions: the               representation learning. Using informative signal probability as
+ones with the original 6 gates types and the other with                supervision tasks on small sub-circuits, we show DeepGate can
+AIG transformation. For each version, we train the DeepGate            generalize to large circuits with accurate predictions without
+model from scratch. The only difference is that for the former         any pre-computed features.
+version of the dataset, we assign 7-d one-hot encoding for                While showing promising results, the current DeepGate
+the node feature xv . As can be observed from Table IV,                model is still in its infancy. For example, we could introduce
+DeepGate trained on AIGs performs better than the one trained          other informative supervision tasks (e.g., logic inference and
+on the original circuits by a large margin (33.94% relative            Boolean satisfiability) to achieve better representations for
+prediction error reduction on EPFL). The same observation              logic gates. We could also add more circuits for training to
+can be obtained from the results on IWLS circuits.                     build a large-scale foundation model for logic circuits [31].
+   Such improvements originate from the benefit of circuit             Moreover, in our future work, we plan to apply the repre-
+transformation because when only two logic gate types are              sentations learned in DeepGate onto many downstream EDA
+considered, representation learning difficulty is reduced dra-         tasks (e.g., power estimation, logic reduction, and equivalence
+matically without any impact on circuit functionalities. Also,         checking). These tasks are directly related to signal probability
+we manually check the usage frequency of different gate types          analysis, and we believe DeepGate can achieve satisfactory
+in the original formats, and observe that some gates types             results without much effort in finetuning the model.
+                             R EFERENCES                                        [16] M. Roberts and P. Lala, “Algorithm to detect reconvergent fanouts in
+                                                                                     logic circuits,” IEEE Proceedings Computers and Digital Techniques,
+ [1] G. Huang, J. Hu, Y. He, J. Liu, M. Ma, Z. Shen, J. Wu, Y. Xu, H. Zhang,         1987.
+     K. Zhong et al., “Machine learning for electronic design automation: A     [17] W. Hu, M. Fey, M. Zitnik, Y. Dong, H. Ren, B. Liu, M. Catasta, and
+     survey,” TODAES, vol. 26, no. 5, pp. 1–46, 2021.                                J. Leskovec, “Open graph benchmark: Datasets for machine learning on
+ [2] T. N. Kipf and M. Welling, “Semi-supervised classification with graph           graphs,” arXiv preprint arXiv:2005.00687, 2020.
+     convolutional networks,” arXiv preprint arXiv:1609.02907, 2016.            [18] J. Gilmer, S. S. Schoenholz, P. F. Riley, O. Vinyals, and G. E. Dahl,
+ [3] W. L. Hamilton, R. Ying, and J. Leskovec, “Inductive representation             “Neural message passing for quantum chemistry,” in ICML, 2017, pp.
+     learning on large graphs,” in NIPS, 2017, pp. 1025–1035.                        1263–1272.
+ [4] R. Kirby, S. Godil, R. Roy, and B. Catanzaro, “Congestionnet: Routing      [19] L. Wu, P. Sun, R. Hong, Y. Fu, X. Wang, and M. Wang, “Socialgcn:
+     congestion prediction using deep graph neural networks,” in 2019 VLSI-          An efficient graph convolutional network based model for social recom-
+     SoC. IEEE, pp. 217–222.                                                         mendation,” arXiv preprint arXiv:1811.02815, 2018.
+ [5] Y. Ma, H. Ren, B. Khailany, H. Sikka, L. Luo, K. Natarajan, and B. Yu,     [20] P. Veličković, G. Cucurull, A. Casanova, A. Romero, P. Liò, and
+     “High performance graph convolutional networks with applications in             Y. Bengio, “Graph attention networks,” ICLR, 2017.
+     testability analysis,” in DAC, 2019, pp. 1–6.                              [21] Z. Wu, S. Pan, F. Chen, G. Long, C. Zhang, and S. Y. Philip, “A
+ [6] X. Han, Z. Zhang, N. Ding, Y. Gu, X. Liu, Y. Huo, J. Qiu, L. Zhang,             comprehensive survey on graph neural networks,” IEEE transactions on
+     W. Han, M. Huang et al., “Pre-trained models: Past, present and future,”        neural networks and learning systems, vol. 32, no. 1, pp. 4–24, 2020.
+     AI Open, 2021.                                                             [22] Y. Zhang, H. Ren, and B. Khailany, “Grannite: Graph neural network
+ [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet classification         inference for transferable power estimation,” in DAC. IEEE, 2020, pp.
+     with deep convolutional neural networks,” NIPS, pp. 1097–1105, 2012.            1–6.
+ [8] S. Minaee, Y. Y. Boykov, F. Porikli, A. J. Plaza, N. Kehtarnavaz, and      [23] Z. Xie, R. Liang, X. Xu, J. Hu, Y. Duan, and Y. Chen, “Net2: A
+     D. Terzopoulos, “Image segmentation using deep learning: A survey,”             graph attention network method customized for pre-placement net length
+     IEEE Transactions on Pattern Analysis and Machine Intelligence, 2021.           estimation,” in ASP-DAC. IEEE, 2021, pp. 671–677.
+ [9] S. Ren, K. He, R. Girshick, and J. Sun, “Faster r-cnn: Towards real-time   [24] I. Sutskever, O. Vinyals, and Q. V. Le, “Sequence to sequence learning
+     object detection with region proposal networks,” NIPS, pp. 91–99, 2015.         with neural networks,” 2014.
+[10] T. B. Brown, B. Mann, N. Ryder, M. Subbiah, J. Kaplan, P. Dhariwal,        [25] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez,
+     A. Neelakantan, P. Shyam, G. Sastry, A. Askell et al., “Language models         Ł. Kaiser, and I. Polosukhin, “Attention is all you need,” in NIPS, 2017,
+     are few-shot learners,” arXiv preprint arXiv:2005.14165, 2020.                  pp. 5998–6008.
+[11] J. Devlin, M.-W. Chang, K. Lee, and K. Toutanova, “Bert: Pre-training      [26] S. Davidson, “Characteristics of the itc’99 benchmark circuits,” in ITSW,
+     of deep bidirectional transformers for language understanding,” arXiv           1999.
+     preprint arXiv:1810.04805, 2018.                                           [27] C. Albrecht, “Iwls 2005 benchmarks,” in IWLS, 2005.
+[12] M. Zhang, S. Jiang, Z. Cui, R. Garnett, and Y. Chen, “D-vae: A             [28] L. Amarú, P.-E. Gaillardon, and G. De Micheli, “The epfl combinational
+     variational autoencoder for directed acyclic graphs,” 2019.                     benchmark suite,” in IWLS, no. CONF, 2015.
+[13] V. Thost and J. Chen, “Directed acyclic graph neural networks,” in ICLR,   [29] O. Team, “Opencores,” https://opencores.org/.
+     2021.                                                                      [30] D. Selsam, M. Lamm, B. Bünz, P. Liang, L. de Moura, and D. L.
+[14] S. Amizadeh, S. Matusevych, and M. Weimer, “Learning to solve circuit-          Dill, “Learning a sat solver from single-bit supervision,” arXiv preprint
+     SAT: An unsupervised differentiable approach,” in ICLR, 2019.                   arXiv:1802.03685, 2018.
+[15] R. Brayton and A. Mishchenko, “Abc: An academic industrial-strength        [31] R. Bommasani, D. A. Hudson, E. Adeli, R. Altman, S. Arora, S. von
+     verification tool,” in CAV. Springer, 2010, pp. 24–40.                          Arx, M. S. Bernstein, J. Bohg, A. Bosselut, E. Brunskill et al.,
+                                                                                     “On the opportunities and risks of foundation models,” arXiv preprint
+                                                                                     arXiv:2108.07258, 2021.
+

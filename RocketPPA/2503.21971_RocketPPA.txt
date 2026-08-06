@@ -1,0 +1,882 @@
+arXiv:2503.21971v3  [cs.LG]  10 Jun 2025
+RocketPPA: Code-Level Power, Performance, and
+Area Prediction via LLM and Mixture of Experts
+Armin Abdollahi, Mehdi Kamal, and Massoud Pedram
+Department of Electrical and Computer Engineering, University of Southern California, Los Angeles, CA, USA
+{arminabd, mehdi.kamal, pedram}@usc.edu
+Abstract—This paper presents RocketPPA, a novel ultra-fast
+power, performance (delay), and area (PPA) estimator operating
+directly at the code-level abstraction using HDL code as input. The
+key technical innovation is its LLM-based regression model, which
+uniquely integrates a large language model (LLM) with a mixture-
+of-experts (MoE) architecture composed of multilayer perceptrons
+(MLPs). The LLM interprets the input HDL code and then utilizes
+its final hidden-layer representations to predict PPA metrics.
+Low-rank adaptation (LoRA) is used for parameter-efficient fine-
+tuning to enable efficient LLM training. Furthermore, the work
+includes the development of an LLM-based HDL code repair
+framework to generate a large and synthesizable training dataset.
+Experimental results on the VerilogEval benchmark demonstrate
+that RocketPPA achieves significant improvements in the accuracy
+of PPA estimation compared to previous state-of-the-art methods
+like Llama3-MetRex-8B. Specifically, at a 10% relative error
+threshold, RocketPPA enhances the pass rate for area prediction
+by 13.6%, delay by 9.4%, and power by 14.7%. At a 20%
+threshold, the improvements are 9.6% for area, 10.8% for delay,
+and 18.5% for power. Moreover, RocketPPA achieves a speedup
+of over 20× compared to MetRex and 30× over MasterRTL in
+processing the test set. The impact of RocketPPA is the potential to
+substantially accelerate the hardware design process by providing
+accurate PPA estimations early in the design cycle, thus avoiding
+the overhead of manual feature engineering and time-consuming
+synthesis flows.
+I. INTRODUCTION
+PPA estimators are at the heart of modern VLSI design, as
+they critically influence the functionality and efficiency of hard-
+ware implementations [1]. In conventional electronic design au-
+tomation (EDA), high-level approaches to PPA estimation typ-
+ically involve abstract modeling techniques, simulation-based
+analyses, and synthesis optimizations that produce approximate
+metrics [2]. Although these traditional methods provide a
+helpful baseline, they often fail to capture nuanced interactions
+in increasingly complex circuits [3]. Their limitations include
+significant computational overhead, the reliance on manual
+calibration, and a lack of granularity that can impede the
+ability to fine-tune designs for optimal power, delay, and area
+performance [4]. These inherent limitations in traditional PPA
+estimation methods have started the exploration of alternative
+approaches that promise to capture the complexities of modern
+VLSI design more effectively.
+In this context, large language models (LLMs) have recently
+demonstrated considerable potential in automating hardware
+design workflows, particularly for Verilog code generation
+and analysis. Starting with solutions such as BetterV [5] and
+ChipNeMo [6], researchers have shown that domain-specific
+fine-tuning can allow LLMs to generate high-quality Verilog
+modules that meet syntactic and even partial functional require-
+ments. Building on these early results, multi-expert modeling
+paradigms like [7] and hierarchical or specialized data-curation
+pipelines like [8], [9] have significantly expanded LLM per-
+formance, making it possible to target more complex scenar-
+ios in electronic design automation. Meanwhile, others have
+broadened the scope to include Verilog understanding [10],
+hallucination mitigation [11], hierarchical frameworks [12], and
+open-source linting [13]. These advancements underscore the
+dramatic shift in chip design and verification by LLMs, creating
+a new research trajectory where code generation, debugging,
+and performance tuning converge.
+In this work, we propose an LLM-based regression model
+for estimating the design metrics of a given HDL Verilog
+code. The model accelerates the hardware design process by
+directly predicting PPA metrics at the code level. Our approach
+utilizes an LLM to analyze and understand the input HDL code,
+generating a latent representation based on its final hidden
+layer results. This representation is shared across separate
+MoE MLPs, each dedicated to predicting a specific design
+metric. We employ a normalization strategy to address the large
+dynamic range of metric values that improves the accuracy
+of the model prediction. To improve training efficiency and
+allow flexibility in using different foundation models, we apply
+LoRA to fine-tune the LLM. For training the proposed LLM-
+based PPA estimator, we generate a large set of syntactically
+correct and synthesizable HDL designs and train the model
+on them. Additionally, we evaluate its efficiency by comparing
+its estimations with those of two state-of-the-art (SOTA) code-
+level PPA estimators.
+Based on the above explanations, we can summarize the
+contributions of this work as follows.
+• Introducing an end-to-end LLM-based neural architecture
+that directly translates Verilog code into power, delay, and
+area metrics without additional processing steps.
+• Integrating a mixture-of-experts extension to the model’s
+regression part, enhancing the design parameters’ predic-
+tion.
+• Proposing a normalizing approach to improve the accuracy
+of the model.
+This paper is organized as follows. Section II reviews some
+previous work. The details of the proposed LLM-based PPA
+estimator are discussed in Section III. Section IV evaluates the
+efficacy of the RocketPPA compared to earlier works. Finally,
+the paper is concluded in Section V.
+
+II. RELATED WORK
+In this section, we review prior work on the use of LLMs
+in hardware design. Early efforts to harness LLMs to gen-
+erate valid Verilog modules include BetterV [5], which in-
+troduced discriminative guidance, and ChipNeMo [6], which
+pioneered domain-adaptive tokenization and pre-training. Fol-
+lowing these, multi-expert architectures [7] and hallucination-
+mitigation strategies [11] extended generation accuracy by
+focusing on syntactic correctness and domain alignment. Other
+works have explored hierarchical decomposition [12], prompt-
+ing frameworks [14], and multi-agent ecosystems [15] to en-
+hance code quality. Another crucial direction involves clean-
+ing up and augmenting Verilog datasets for improved model
+training. For example, CRAFTRTL [8] introduced correct-
+by-construction non-textual data for code generation models,
+while OriGen [9] leveraged code-to-code augmentation and
+self-reflection to refine Verilog sets further. These studies have
+significantly reduced minor syntax errors by synthesizing large
+volumes of high-fidelity data, enabling more robust fine-tuning.
+Beyond raw generation, researchers have begun to quantify
+how well LLMs understand Verilog semantics. DeepRTL [10]
+presents a unified representation model that supports both
+generation and comprehension, and LintLLM [13] proposes
+a pipeline for automated defect detection. For more targeted
+benchmarks, RTLLM [16] and VerilogEval [17] offer tasks
+and datasets to measure functional correctness. In contrast,
+MetRex [18] specifically addressed the post-synthesis metrics
+(area, delay, power). MetRex [18] provides a large and auto-
+matically cleaned corpus of synthesized Verilog designs paired
+with post-synthesis area, delay, and static power reports. A
+chain-of-thought template guides LLMs through gate counts
+and critical path reasoning, and supervised LoRA fine-tuning
+on this dataset demonstrates that metric estimation can be
+performed directly from HDL text without feature extraction.
+This ongoing shift toward PPA-aware generation is underscored
+by advanced frameworks such as [19], [20], which leverage
+multi-stage prompts and search strategies to generate code
+meeting power or timing goals.
+As these models become fully integrated into the chip design
+workflow, researchers have also looked at watermarking [21]
+and IP protection. Frameworks like [22] highlight security and
+trust concerns with LLM-based EDA, advocating stronger safe-
+guards against malicious or unauthorized code usage. Mean-
+while, solutions like OPL4GPT [23] explore how alternate pro-
+gramming paradigms (e.g., C++-to-hardware flows) compare
+to conventional Verilog flows for hardware acceleration. The
+field has rapidly evolved from simple Verilog text generation
+to comprehensive frameworks integrating domain-adaptive data
+curation, multi-expert architectures, and advanced debugging.
+Our work builds on these efforts by presenting a fine-tuning
+strategy (via LoRA and an MLP-based mixture-of-experts) to
+address performance estimation in hardware design jointly. We
+aim to make LLM-based solutions more practically viable for
+next-generation EDA, moving beyond code syntax to incorpo-
+rate critical metrics that drive real-world chip design decisions.
+III. PROPOSED LLM-BASED PPA-ESTIMATOR METHOD
+A. Model Architecture
+Figure 1 shows the general architecture in which the pro-
+posed neural architecture consists of three main components:
+(1) a foundational LLM for the extraction of features, (2) an
+MoE regression neural model for the prediction of the final
+metric, and (3) a LoRA-based parameter-efficient fine-tuning
+scheme that adjusts the parameters of the foundation model.
+We employ a base model as our backbone to encode Verilog
+code inputs into high-dimensional representations. Unlike the
+causal language model heads commonly used for text genera-
+tion, we switch to a regression-friendly interface. The model
+produces a stack of hidden states {h
+1 ; h
+2 ; : : : ; h
+L } during the
+forward pass. We take the last hidden state h
+L
+and perform a
+simple average pooling along the sequence dimension defined
+in Equation 1, where n
+denotes the number of tokens in the
+code. This pooled output (which has, for example, a dimension
+of 4096 in CodeLlama-7B) then serves as input to our Mixture
+of Experts regressor.
+O
+poled
+=
+1
+n
+nX
+i =1
+h
+L
+i
+(1)
+To capture the diversity of hardware modules and thereby
+avoid biasing a single dense network toward any single design
+regime, we incorporate a MoE technique. We define N
+distinct
+expert subnetworks, each comprising multiple fully connected
+layers with activations and dropout. Each expert is precisely
+implemented as an MLP that produces an individual scalar
+prediction y k
+for the target performance metric. A small linear
+layer maps the pooled output from LLM to a distribution over
+the N
+experts. Formally, given the pooled output, the gating
+network computes the gating weights by:
+
+=
+Softmax( W
+gate × O
+poled
+)
+(2)
+where 
+∈R
+N
+and each element 
+k
+represents the initial
+weight assigned to the k th
+expert. To focus the model’s
+capacity on the most relevant experts, we employ a top-k gating
+mechanism. Let K
+be the set of indices corresponding to the
+top-k experts with the highest values in  . We then renormalize
+the gating weights for these experts by:
+~
+k =
+
+k
+P
+j ∈K
+
+j
+;
+for k
+∈K:
+(3)
+This normalization ensures that the weights of the selected
+experts sum up to 1, effectively concentrating the predictive
+capacity of the model on the most pertinent outputs of the
+experts. Finally, the overall prediction ^y
+is calculated as a
+weighted sum of the outputs of only the top-k experts:
+^y
+=
+NX
+k =1
+~
+k y k
+(4)
+Thus, the gating network first projects the (e.g., 4096-
+dimensional) pooled representation of the model into an N-
+dimensional space, yielding a probability distribution over the
+
+Fig. 1: The model architecture of the proposed PPA estimator.
+experts via a softmax operation. The top-k experts are then
+selected, and their weights are renormalized to form a focused
+aggregation of expert predictions. This design allows the model
+to take advantage of the specialized knowledge of a subset of
+experts most familiar with a given input, thus improving the
+performance of regression for predicting hardware metrics such
+as power, delay, and area.
+We adopt a parameter-efficient fine-tuning approach using
+LoRA, which significantly reduces computational overhead by
+focusing on a subset of parameters rather than fine-tuning all
+LLM components. This strategy maintains the expressiveness
+of the model while limiting the number of trainable parameters.
+In contrast, the MoE regressor is kept fully trainable, allowing
+its gating network and expert components to effectively adapt
+to the diverse range of Verilog designs and PPA values in the
+dataset.
+As an example, Figure 2 illustrates the token size distribution
+of Verilog files in the dataset studied in this work. The results
+show a wide distribution, with some Verilog files exceeding the
+input token limit of the foundational LLM model employed. We
+address the limitation of the LLM’s input size (i.e., number of
+tokens) by splitting each lengthy Verilog file into smaller, non-
+overlapping, fixed-size token fragments (e.g., each fragment
+contains 512 tokens). Each fragment is passed individually
+through the model, producing a separate embedding for that
+code fragment. These fragment embeddings are subsequently
+combined, e.g., by taking their average, to create a single,
+unified embedding representing the entire Verilog file. This
+approach preserves all code information without truncation be-
+cause every token belongs to exactly one fragment. Therefore,
+we maintain the maximum sequence length limit while still
+capturing the complete context of large Verilog inputs [24].
+B. Data Pre-procesing and Training ﬂow
+Since raw performance metrics can span several orders of
+magnitude (see Figure 3), the log transformation is applied
+to compress the range and stabilize the numerical values.
+Specifically, for each performance metric x
+i , we compute
+log
+( x
+i +
+ )
+where 
+is a small constant to avoid taking the
+Fig. 2: Token size distribution of the Verilog files in the studied
+dataset.
+logarithm of zero. This transformation reduces the variance
+and mitigates the impact of extreme values. To ensure stable
+training, we normalize the logarithmic transformation of the
+performance metric values by computing the mean 
+and the
+standard deviation 
+over the training set and, subsequently,
+applying a z-score normalization, which maps the logarith-
+mically transformed values to a standard normal distribution
+with zero mean and unit variance. Hence, the normalized input
+performance metric (^x
+i ) is obtained by:
+^x
+i =
+log(
+x
+i +
+ ) −
+
+(5)
+For training loss, we use the smooth ‘ 1 (Huber) loss, which
+offers a balance between mean square error (MSE) and mean
+absolute error (MAE). The smooth ‘ 1
+loss behaves quadrati-
+cally when the prediction error is small, ensuring fine-grained
+adjustments. However, it transitions to linear behavior when
+the error is large, thereby reducing the influence of outliers.
+Hence, we suggest the loss defined by Equation (6). This
+piecewise formulation ensures that the loss function remains
+robust to outliers while providing smooth gradients when errors
+are small, which is essential for stable convergence.
+L
+=
+(
+0 : 5 (^
+y i −z i ) 2 ;
+if |^y i −z i | <
+1 ;
+|^y i −z i | −0 : 5 ;
+otherwise.
+(6)
+
+(a)
+(b)
+(c)
+Fig. 3: 2D Heatmap of Token Size vs. Power, Delay, and Area
+Fig. 4: Hubor loss demonstration on a single batch of data during
+training
+In this equation, ^y i represents the predicted output of the
+model for the i th
+Verilog code metric, while z i
+denotes its
+corresponding actual value. Log transformation, z-score nor-
+malization, and smooth ‘ 1 loss work together to handle the wide
+range of performance metric values. This normalization scheme
+standardizes the data, ensuring that the regression model learns
+effectively, while the Smooth ‘ 1
+loss balances sensitivity and
+robustness during training.
+Figure 4 illustrates predictions versus ground-truth labels at
+a mid-epoch stage of training under the Huber loss. The blue
+points (inliers) lie within the Huber threshold, where the loss
+behaves quadratically, much like MSE, so these points strongly
+influence the regression fit. However, red points (outliers)
+trigger the Huber loss linear regime, which means that large
+residuals have a reduced impact on parameter updates. The blue
+line represents the Huber regression fit that balances these two
+behaviors: It remains sensitive to most inliers while preventing
+extreme outliers from dominating the model.
+IV. RESULTS AND DISCUSSION
+A. Experimental Setup
+For the evaluation study, the dataset was generated by
+aggregating Verilog modules (some faulty) from three primary
+sources to ensure a broad coverage of the design lengths and
+complexities. Due to the significant number of incorrect codes,
+we used an internal HDL code repair framework (detailed in
+Figure 5) to correct syntax errors and ensure synthesizability.
+Specifically, the generated dataset has 9,239 modules from
+the MG-Verilog repository, 7,791 modules from a curated
+GitHub collection (verilog github), and 3,923 modules from
+the VeriGen dataset. These modules span a broad spectrum,
+from simple combinational circuits to complex finite-state
+machines, ensuring that our data set is representative of the
+challenges encountered in practical hardware design. The de-
+tails of the generated dataset are provided in Table I. We split
+our purified data into 80-20 training versus validation splits.
+Each sample consists of a Verilog code snippet and the log-
+transformed variant of the corresponding performance metric.
+For comparative studies, we used sample codes (138 HDL
+codes) from the VerilogEval benchmark [17]. The dataset is
+divided into three levels. Specifically, we also performed a
+set of studies on the codes in Level 3. These HDL codes
+represent the most complex part of the VerilogEval dataset.
+This level comprises 72 modules (over 50% of the total of 138)
+and includes designs such as finite-state machines, complex
+combinational logic, and advanced sequential circuits. These
+modules span a wide gate count range, up to 607 gates, and
+pose a significant challenge for PPA prediction models due to
+their structural depth and behavioral intricacies. Note that this
+dataset has been used only for evaluation, not training.
+Our training workflow completes in around 11 hours on a
+single NVIDIA RTX A6000 GPU with 48GB of VRAM for
+a full 24-epoch schedule. Despite the large parameter count
+of employed foundation models, our LoRA-based parameter-
+efficient fine-tuning keeps GPU memory usage at roughly
+41GB, comfortably fitting on one GPU card without requiring
+model parallelism or multi-GPU setups.
+The model was trained 10 times, with different initial random
+seeds. Hence, each experiment was performed ten times, and
+the observed standard deviation was below 1%. This small
+variability arises primarily from inherent stochastic processes
+during training (e.g., the randomness introduced by dropout and
+weight initialization). This indicates that our results are stable
+under modest changes in initialization and data shuffling.
+To assess the efficacy of the proposed estimator, we compare
+its efficiency with those of MetRex [18] (with the Llama3-
+8B model as the LLM employed) and MasterRTL [25]. Note
+that MetRex can only estimate static power, in contrast to
+RocketPPA and MasterRTL, which can evaluate the overall
+
+Fig. 5: The proposed HDL code repair framework.
+TABLE I: Dataset Composition
+Source
+Number of Modules
+MG-Verilog
+9,239
+verilog github
+7,791
+VeriGen
+3,923
+Total
+20,953
+power consumption in addition to the static power. Master-
+RTL [25] tackles the PPA estimation task via a pre-synthesis
+route: it converts RTL into a bit-level Simple Operator Graph
+(SOG) that aligns one-to-one with the synthesized netlist.
+Separate tree-based models then predict timing, power, and area
+from SOG features, offering strong cross-design generalization
+but at the cost of a CPU-intensive graph-construction pipeline.
+The Pass Rate metric (introduced in [18]) has been used to
+evaluate the methods. This metric represents the percentage of
+HDL code input instances for which the estimator predicts a
+design metric (area, delay, and power) with an error below a
+predefined threshold (i.e.,  ). In this context, the error refers
+to the relative error (RE). Equation (7) defines the Pass Rate
+at threshold  , computed on M
+samples. Specifically, for each
+sample i , we check whether its relative error RE
+i is below or
+equal to t
+%
+. The indicator function 1 returns 1 if the condition
+holds and 0 otherwise, and the pass rate is simply the average
+of these indicator values in all M
+samples.
+PassRate(  ) =
+1
+M
+MX
+i =1
+1
+
+REi ≤
+
+(7)
+Finally, for the comparative studies in this paper, we em-
+ployed the LLaMA-3.1-8B-Instruct model [26] as the LLM
+engine of RocketPPA. We also used CodeLlama-7B [27] and
+LLaMA-3-8B [26] for ablation studies. For every design metric
+(i.e., area, delay, and power dissipation) we considered an
+MoE head with N
+= 6
+experts; during inference, the top-k
+gating network kept only the k =3
+highest-scoring experts for
+the weighted sum. Each expert was a three-layer MLP, hence
+the MoE block adds 4.7M parameters. Low-Rank Adaptation
+at rank r
+= 16
+was applied to each transformer block’s
+weight matrices, adding approximately 8 : 4 M trainable param-
+eters (about 0 : 1%
+, in the case of LLaMA-3.1-8B-Instruct
+model).
+B. Results
+1) Comparison Study
+Table II compares the pass rate metric across the considered
+methods for area, delay, total power (static Power + dynamic
+power), and static power, evaluated under threshold values  of
+10% and 20%. In this study, all HDL codes of VerilogEval were
+used for evaluation. As the 10% threshold, our MoE model
+achieves an area prediction pass rate of 71.6%, which represents
+a 13.6 percentage point improvement over Llama3-MetRex-8B
+(58.0%) and a 20.4 percentage point increase over MasterRTL
+(51.2%). Our model achieves 57.2% pass rate for delay esti-
+mation, outperforming Llama3-MetRex-8B’s 47.8% (a 9.4 per-
+centage point gain), and MasterRTL’s 50.7% (a 6.5% increase).
+Regarding total power dissipation, our MoE variant reaches
+55.0% pass rate, improving by 9.9% percentage points over
+MasterRTL (45.1%). For Static Power, our proposed method
+can achieve 56.7%, 14.7% higher than Llama3-MetRex-8B
+
+(42.0%), and 9.2% larger than MasterRTL (47.5%). At the
+more lenient 20% threshold, we observe parallel gains across
+all metrics: the area-prediction pass rate climbs to 84.6% (a
+9.6-percentage-point improvement over Llama3-MetRex-8B’s
+75.0% and a 3.1% uplift over MasterRTL’s 78.1%); the
+delay-prediction pass rate rises to 74.9% (10.8 points above
+Llama3-MetRex-8B’s 64.1% and 7.0% above MasterRTL); the
+static-power pass rate reaches 72.8% (18.5 points higher than
+Llama3-MetRex-8B’s 54.3% and 7.6% better than MasterRTL’s
+65.2%); and the overall power-prediction pass rate advances
+to 70.8% (a 7.1-point advantage over MasterRTL’s 63.7%).
+Collectively, these results confirm that our proposed regression
+model—combining an LLM with a MoE MLP—delivers su-
+perior accuracy for area, delay, static power and total power,
+substantially outperforming prior LLM-based PPA estimators
+and the classical MasterRTL approach.
+The proposed RocketPPA, which is fully executable on GPU,
+processed the entire 138 design test set in just 16s (0.12s per
+design) on an NVIDIA A6000 GPU. At the same time, this
+time for the MetRex CoT approach was ∼30
+s on an NVIDIA
+H100 GPU, and ∼514
+s
+for MasterRTL’s CPU preprocessing
+plus regression, and ∼680
+s
+for a full Yosys+OpenSTA flow.
+Thus, the proposed LLM-based PPA estimator could provide
+more than 20× speedup over MetRex and 30× over MasterRTL,
+confirming that a direct LLM-based Verilog to PPA regressor
+can surpass prior accuracy while entirely avoiding the overhead
+of manual feature engineering.
+We conducted another comparison study by focusing on
+the HDL codes at Level 3 of VerilogEval, the results of
+which are illustrated in Figure 6. As the results show, previous
+methods such as MasterRTL [25] and Llama3-MetRex-8B [18]
+struggle at level-3 of the VerilogEval dataset, especially under
+stricter thresholds for area and static power. In contrast, our
+model demonstrates a clear advantage in achieving the highest
+pass rates across all thresholds. As an example, in the case
+of static power estimation, at the 10% (20%) threshold and
+MasterRTL’s pass rate decreased by 18% (26%), MetRex’s
+pass rate decreased by 16% (22%). In contrast, RocketPPA’s
+pass rate reduced by only 7% (11%). Note that MetRex and
+MasterRTL do not report their delay estimation efficiency for
+the HDL codes at Level 3 of VerilogEval.
+(a)
+(b)
+Fig.
+6:
+Comparison
+of
+pass
+rates
+for
+MasterRTL,
+Llama3-MetRex-8B,
+and
+PPARocket
+at
+level-3
+of
+the
+VerilogEval benchmark, with area and static power results
+under 5%, 10%, and 20% thresholds.
+2) Ablation Study
+Table III presents a detailed comparison of the performance
+of our model at 10% and 20% thresholds across three design
+metrics (i.e., area, delay, and total power) for three foundational
+LLMs, each evaluated with and without the Mixture-of-Experts
+extension. Inclusion of the MoE architecture consistently im-
+proves accuracy in all settings. In particular, LLama-3.1-8B-
+Instruct with MoE achieves the highest overall performance,
+reaching pass rates of 71.6%, 57.2%, and 55.0% at the threshold
+10%, and pass rates of 84.6%, 74.9%, and 70.8% at the thresh-
+old 20% for area, delay, and static power, respectively. The
+higher efficiency of the Llama-3.1-8B-Instruct variant could be
+because it has undergone supervised instruction tuning on a
+wide range of tasks, aligning its hidden-state embeddings more
+closely with user-specified objectives. In practice, this means
+that when we extract the final hidden layer to feed into our PPA
+regressor, Llama-3.1-8B-Instruct produces features that are both
+more semantically meaningful and more robust for downstream
+regression, which explains why it outperforms the Llama3.0
+base model and the older CodeLlama-7B.
+Furthermore, the performance gains observed when compar-
+ing the MoE variants with their respective non-MoE baselines
+confirm the benefit of expert specialization in enhancing pre-
+diction robustness, particularly as model size and architectural
+complexity increase. We should emphasize that the cost of MoE
+was about 4.7M additional parameters in the case of employing
+LLama-3.1-8B-Instruct as the LLM engine in RockectPPA.
+Figure 7 shows the impact of the number of experts (pa-
+rameter N
+) and the number of best selected experts (parameter
+k ) used to generate the estimated value. This figure compares
+the pass rates at the 10% and 20% thresholds, respectively,
+when using LLama-3.1-8B-Instruc as the base model. Note
+that when N
+was four (six), we considered k
+as two (three).
+As shown, increasing the number of experts from four to six
+consistently increases the pass rate across all metrics (up to
+3%); adopting top-k gating further refines the gating network’s
+ability to select the most relevant expert(s), yielding improved
+pass rates over both our single-expert baseline and previous
+SOTA results. Note that our studies showed that increasing N
+from six to a higher value leads to almost similar results, but
+increases the number of parameters. Therefore, six is selected
+as the best model. Interestingly, the largest gains emerge in
+power, likely due to the higher variance in power signatures
+across complex modules. Moving from the 10% threshold to
+the more lenient 20% threshold raises overall pass rates by
+roughly 10–15%. Still, the ranking among methods remains
+consistent, underscoring the general robustness of top-k gating
+when combined with additional experts.
+Figure 8 illustrates the efficiency of the RockectPPA under
+different token sizes (i.e., input HDL size). The pass rates for
+area, delay, and total power at (a) 10% and (b) 20% thresholds
+on our generated validation set (stratified into small, medium,
+and large modules by token size) are reported in this figure. As
+shown, a general trend indicates that the pass rate increases
+with larger token sizes. For example, the pass rate of the
+RocketPPA for the area is increased by 5.47% (6.52%) for
+
+TABLE II: Comparison of the pass rate metric across the considered methods for Area, Delay, Static Power, and Power, evaluated
+under threshold values 
+of 10% and 20% on VerilogEval benchmark.
+10% Threshold
+20% Threshold
+Method
+Area
+Delay
+Total Power
+Static Power
+Area
+Delay
+Total Power
+Static Power
+MetRex Llama3-8B
+58.0%
+47.8%
+N/A
+42.0%
+75.0%
+64.1%
+N/A
+54.3%
+RocketPPA Llama-3.1-8B-Instruct
+71.6%
+57.2%
+55.0%
+56.7%
+84.6%
+74.9%
+70.8%
+72.8%
+MasterRTL
+51.2%
+50.7%
+45.1%
+47.5%
+78.1%
+67.9%
+63.7%
+65.2%
+TABLE III: Ablation study on the impact of mixture-of-expert MLP across multiple base models: Pass rates at 10% and 20%
+thresholds for Area, Delay, and total Power.
+Base Model & Method
+10% Threshold
+20% Threshold
+Area
+Delay
+Power
+Area
+Delay
+Power
+CodeLlama-7B (w/o MoE)
+61.8%
+47.7%
+45.1%
+75.8%
+65.6%
+57.1%
+CodeLlama-7B (MoE)
+65.9%
+51.7%
+49.2%
+79.0%
+69.2%
+60.2%
+LLama-3.1-8B-Instruct (w/o MoE)
+66.5%
+53.1%
+50.7%
+80.9%
+71.1%
+63.0%
+LLama-3.1-8B-Instruct (MoE)
+71.6%
+57.2%
+55.0%
+84.6%
+74.9%
+70.8%
+LLama3-8B (w/o MoE)
+60.2%
+48.1%
+47.2%
+73.2%
+70.8%
+56.9%
+LLama3-8B (MoE)
+64.3%
+52.1%
+49.4%
+76.7%
+71.8%
+58.1%
+(a)
+(b)
+Fig. 7: Pass rates across different mixture-of-experts (MoE)
+configurations. Each bar group shows the fraction of modules
+with relative errors below a specified threshold for the indicated
+metric.
+the large Verilog files compared to that of the small Verilog
+files under the 10% (20%) threshold. The model attains higher
+accuracy for larger modules, even though one might assume
+that more complex code would be harder to predict. A likely
+explanation is that lengthier Verilog files provide the model
+with richer contextual information (e.g., additional signals, state
+machines, or instantiations), enabling it to better learn and
+generalize power, delay, and area relationships. Meanwhile,
+although simpler, small modules do not offer as much structural
+variety, limiting the model’s ability to infer PPA outcomes.
+(a)
+(b)
+Fig. 8: Pass Rates at 10% and 20% MRE Thresholds, Stratified
+by Token Size for LLama-3.1-8B-Instruct (MoE).
+V. CONCLUSION
+We presented RocketPPA, an ultra-fast, code-level estima-
+tor of power, delay, and area that combines a large lan-
+guage model fine-tuned with LoRA and a mixture-of-experts
+MLP regressor. Trained directly on HDL, RocketPPA sur-
+passes state-of-the-art methods—Llama3-MetRex-8B and Mas-
+terRTL—raising 10%-error pass rates by up to 13.6% (area),
+9.4% (delay), and 14.7% (power); even at 20% error the gains
+remain 9.6–18.5%. On the demanding Level-3 VerilogEval set,
+it preserves these advantages while running more than 20x
+faster than MetRex and 30x faster than MasterRTL, eliminating
+costly feature engineering. By providing rapid, accurate PPA
+
+estimates early in the design flow, RocketPPA accelerates
+design-space exploration and paves the way for next-generation
+EDA tools that bridge high-level code and physical implemen-
+tation metrics.
+REFERENCES
+[1] G. D. Micheli, Synthesis and optimization of digital circuits
+.
+McGraw-
+Hill Higher Education, 1994.
+[2] D. Chinnery and K. W. Keutzer, Closing the gap betwen ASIC & custom:
+tols and techniques for high-performance ASIC design
+.
+Springer
+Science & Business Media, 2002.
+[3] N. H. Weste and D. Harris, CMOS VLSI design: a circuits and systems
+perspective
+.
+Pearson Education India, 2015.
+[4] B. S. Amrutur and M. A. Horowitz, “Speed and power scaling of sram’s,”
+IE journal of solid-state circuits
+, vol. 35, no. 2, pp. 175–185, 2000.
+[5] P. Zehua, H. Zhen, M. Yuan, Y. Huang, and B. Yu, “Betterv: Controlled
+verilog generation with discriminative guidance,” in Forty-ﬁrst Interna-
+tional Conference on Machine Learning
+, 2024.
+[6] M. Liu, T.-D. Ene, R. Kirby, C. Cheng, N. Pinckney, R. Liang, J. Alben,
+H. Anand, S. Banerjee, I. Bayraktaroglu et al.
+, “Chipnemo: Domain-
+adapted llms for chip design,” arXiv preprint arXiv:231.0176
+, 2023.
+[7] B. Nadimi and H. Zheng, “A multi-expert large language model archi-
+tecture for verilog code generation,” in 2024 IE LM Aided Design
+Workshop (LAD)
+.
+IEEE, 2024, pp. 1–5.
+[8] M. Liu, Y.-D. Tsai, W. Zhou, and H. Ren, “Craftrtl: High-quality synthetic
+data generation for verilog code models with correct-by-construction
+non-textual representations and targeted code repair,” arXiv preprint
+arXiv:2409.1293
+, 2024.
+[9] F. Cui, C. Yin, K. Zhou, Y. Xiao, G. Sun, Q. Xu, Q. Guo, D. Song, D. Lin,
+X. Zhang et al.
+, “Origen: Enhancing rtl code generation with code-to-
+code augmentation and self-reflection,” arXiv preprint arXiv:2407.16237
+,
+2024.
+[10] Y. Liu, X. Changran, Y. Zhou, Z. Li, and Q. Xu, “Deeprtl: Bridging ver-
+ilog understanding and generation with a unified representation model,”
+in The Thirtenth International Conference on Learning Representations
+.
+[11] Y. Yang, F. Teng, P. Liu, M. Qi, C. Lv, J. Li, X. Zhang, and Z. He,
+“Haven: Hallucination-mitigated llm for verilog code generation aligned
+with hdl engineers,” arXiv preprint arXiv:2501.04908
+, 2025.
+[12] J. Tang, J. Qin, K. Thorat, C. Zhu-Tian, Y. Cao, C. Ding et al.
+, “Hivegen–
+hierarchical llm-based verilog generation for scalable chip design,” arXiv
+preprint arXiv:2412.05393
+, 2024.
+[13] Z. Fang, R. Chen, Z. Yang, Y. Guo, H. Dai, and L. Wang, “Lintllm: An
+open-source verilog linting framework based on large language models,”
+arXiv preprint arXiv:2502.10815
+, 2025.
+[14] Z. Mi, R. Zheng, H. Zhong, Y. Sun, and S. Huang, “Promptv: Leveraging
+llm-powered multi-agent prompting for high-quality verilog generation,”
+arXiv preprint arXiv:2412.1014
+, 2024.
+[15] Y. Zhao, H. Zhang, H. Huang, Z. Yu, and J. Zhao, “Mage: A
+multi-agent engine for automated rtl code generation,” arXiv preprint
+arXiv:2412.0782
+, 2024.
+[16] Y. Lu, S. Liu, Q. Zhang, and Z. Xie, “Rtllm: An open-source benchmark
+for design rtl generation with large language model,” in 2024 29th Asia
+and South Paciﬁc Design Automation Conference (ASP-DAC)
+.
+IEEE,
+2024, pp. 722–727.
+[17] M. Liu, N. Pinckney, B. Khailany, and H. Ren, “Verilogeval: Evaluating
+large language models for verilog code generation,” in 2023 IE/ACM
+International Conference on Computer Aided Design (ICAD)
+.
+IEEE,
+2023, pp. 1–8.
+[18] M. Abdelatty, J. Ma, and S. Reda, “Metrex: A benchmark for verilog code
+metric reasoning using llms,” arXiv preprint arXiv:241.03471
+, 2024.
+[19] K. Thorat, J. Zhao, Y. Liu, H. Peng, X. Xie, B. Lei, J. Zhang, and C. Ding,
+“Advanced large language model (llm)-driven verilog development: En-
+hancing power, performance, and area optimization in code synthesis,”
+arXiv preprint arXiv:2312.0102
+, 2023.
+[20] M. DeLorenzo, A. B. Chowdhury, V. Gohil, S. Thakur, R. Karri, S. Garg,
+and J. Rajendran, “Make every move count: Llm-based high-quality rtl
+code generation using mcts,” arXiv preprint arXiv:2402.03289
+, 2024.
+[21] K. Wang, K. Chang, M. Wang, X. Zou, H. Xu, Y. Han, and Y. Wang,
+“Rtlmarker: Protecting llm-generated rtl copyright via a hardware water-
+marking framework,” arXiv preprint arXiv:2501.0246
+, 2025.
+[22] Z. Wang, L. Alrahis, L. Mankali, J. Knechtel, and O. Sinanoglu, “Llms
+and the future of chip design: Unveiling security risks and building trust,”
+in 2024 IE Computer Society Anual Symposium on VLSI (ISVLSI)
+.
+IEEE, 2024, pp. 385–390.
+[23] K. Tasnia and S. Rahman, “Opl4gpt: An application space exploration of
+optimal programming language for hardware design by llm,” Cryptology
+ePrint Archive
+, 2024.
+[24] I. Beltagy, M. E. Peters, and A. Cohan, “Longformer: The long-document
+transformer,” arXiv preprint arXiv:204.05150
+, 2020.
+[25] W. Fang, Y. Lu, S. Liu, Q. Zhang, C. Xu, L. W. Wills, H. Zhang, and
+Z. Xie, “Masterrtl: A pre-synthesis ppa estimation framework for any
+rtl design,” in 2023 IE/ACM International Conference on Computer
+Aided Design (ICAD)
+.
+IEEE, 2023, pp. 1–9.
+[26] A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle,
+A. Letman, A. Mathur, A. Schelten, A. Vaughan et al.
+, “The llama 3 herd
+of models,” arXiv preprint arXiv:2407.21783
+, 2024.
+[27] B. Roziere, J. Gehring, F. Gloeckle, S. Sootla, I. Gat, X. E. Tan, Y. Adi,
+J. Liu, R. Sauvestre, T. Remez et al.
+, “Code llama: Open foundation
+models for code,” arXiv preprint arXiv:2308.12950
+, 2023.

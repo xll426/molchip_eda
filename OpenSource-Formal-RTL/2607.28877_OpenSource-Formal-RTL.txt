@@ -1,0 +1,331 @@
+                                                Open-Source LLM-Driven Formal Verification:
+                                                   A Multi-Agent Pipeline for RTL Repair
+                                                                                                     Ha Trung Tran
+                                                                                                 Independent Researcher
+                                                                                                    Seattle, WA, USA
+                                                                                             trantrungha072020@gmail.com
+
+
+                                            Abstract—Verification consumes the majority of modern chip          fails—feeds the resulting counterexample back to the LLM
+                                         design effort, yet the formal verification tools that provide          to guide a repair, repeating until the design is either proved
+                                         mathematical guarantees of correctness remain expensive and            correct or the iteration budget is exhausted. Because correct-
+                                         restrictively licensed. While large language models (LLMs) have
+                                         shown promise for hardware design, existing approaches to RTL          ness is established by formal proof rather than simulation, a
+                                         repair validate their results through simulation—which exercises       successful repair is guaranteed to hold for all reachable inputs.
+                                         only a subset of inputs—or rely on commercial tools, and few              We evaluate the framework on a suite of six benchmarks.
+                                         combine formal proof with an entirely open-source toolchain. In        Through an ALU case study, we show that the pipeline can
+                                         this paper, we present a multi-agent pipeline that couples an          detect and repair a real functional bug and prove the result
+                                         LLM with an open-source formal backend (Yosys, SymbiYosys,
+                                                                                                                correct by k-induction, demonstrating the feasibility of the ap-
+arXiv:2607.28877v1 [cs.AR] 30 Jul 2026
+
+
+
+
+                                         and Z3) to repair RTL through counterexample-guided iteration:
+                                         the framework generates formal properties, verifies the design,        proach. Across the full suite, however, one of six benchmarks
+                                         and feeds counterexamples back to the LLM until the design is          is repaired reliably, and we characterize four distinct failure
+                                         proved correct by k-induction or an iteration budget is exhausted.     modes on the remainder: bounded-cover vacuity, specification
+                                         Through an ALU case study, we show that the pipeline can               ambiguity, temporal-logic bugs, and multi-property pressure.
+                                         detect and repair a real functional bug with a formal proof of
+                                         correctness. Across a six-benchmark suite, one design is repaired      We therefore frame this work as a feasibility study with a
+                                         reliably, and we characterize four distinct failure modes—             detailed failure analysis; the clear boundary it draws between
+                                         bounded-cover vacuity, specification ambiguity, temporal-logic         tractable and intractable cases is itself an informative result.
+                                         bugs, and multi-property pressure. We frame this work as a                This paper makes the following contributions:
+                                         feasibility study with a detailed failure analysis, and additionally
+                                         report a practical limitation of the Yosys bind directive relevant        • A multi-agent framework for LLM-driven RTL repair
+                                         to the open-source formal verification community.                            that relies exclusively on open-source formal verification
+                                            Index Terms—large language models, formal verification, RTL               tools.
+                                         repair, multi-agent systems, open-source EDA                              • A typed Property IR that separates property reasoning
+                                                                                                                      by the LLM from the generation of syntactically correct
+                                                                I. I NTRODUCTION
+                                                                                                                      SystemVerilog assertions.
+                                            Verification consumes the majority of modern chip design               • An end-to-end ALU case study together with a charac-
+                                         effort, often accounting for 60–70% of the total design cycle.               terization of four distinct failure modes, obtained through
+                                         Formal verification, which provides mathematical guarantees                  a multi-run evaluation protocol.
+                                         of correctness, is a powerful tool for this task, yet the                 • A practical engineering note documenting a limitation
+                                         industrial-grade tools that perform it remain expensive and re-              of the Yosys bind directive relevant to the open-source
+                                         strictively licensed. In parallel, large language models (LLMs)              formal verification community.
+                                         have emerged as a promising means of automating parts of the
+                                         hardware design flow, from generating RTL to assisting with                                  II. BACKGROUND
+                                         debugging.
+                                            Existing work at this intersection, however, leaves a gap.          A. Formal Verification and Model Checking
+                                         LLM-based approaches to RTL either generate designs and                   Formal verification uses mathematical reasoning to prove
+                                         validate them through simulation—which exercises only a                that a design satisfies a given property across all reachable
+                                         subset of the input space—or rely on commercial verifica-              states and inputs, in contrast to simulation, which exercises
+                                         tion tools. Comparatively few combine formal proof, which              only specific inputs [1]. Bounded Model Checking (BMC)
+                                         reasons over all reachable states, with an entirely open-source        verifies a property within a bound of k cycles: if a coun-
+                                         toolchain that is reproducible and freely accessible.                  terexample is found, an error is reported; if none is found
+                                            In this paper, we present a multi-agent pipeline that cou-          within k steps, no conclusion can be drawn for deeper behavior
+                                         ples an LLM with an open-source formal backend (Yosys,                 [1]. This bounded nature is the root cause of the bounded-
+                                         SymbiYosys, and Z3) to repair RTL through counterexample-              cover vacuity discussed in Section VI. To prove a property
+                                         guided iteration. The pipeline generates formal properties from        at all depths rather than only within k steps, we rely on
+                                         a specification, verifies the design, and—when verification            k-induction, which establishes a base case and an inductive
+step [2]. This is what allows a PASS in our framework to be        model precise, grounded evidence of what went wrong. Third,
+interpreted as proven for all reachable inputs. Properties are     a separation of reasoning from syntax: the LLM reasons about
+expressed as SystemVerilog Assertions (SVA); our framework         what properties should hold, expressed through a typed inter-
+uses immediate assertions. When a property fails, the solver       mediate representation, while a dedicated compiler guarantees
+returns a counterexample (CEX) as a waveform trace (VCD)           that the resulting SystemVerilog assertions are syntactically
+that demonstrates the violation. This trace is the feedback our    correct.
+pipeline consumes, parsed by the CEX Analyzer node.
+                                                                   C. Pipeline Flow
+B. The Open-Source Formal Toolchain
+                                                                      The pipeline takes a natural-language specification and a
+   Our verification backend is built entirely from open-source     buggy RTL module as input. The Contract agent first extracts
+tools. Yosys is an open-source RTL synthesis framework that        the structural interface, which the Architect uses to synthesize
+reads and elaborates SystemVerilog [3]. SymbiYosys (SBY)           formal properties that are compiled and inlined into the
+is a front-end that coordinates the formal flow over Yosys         design. The Verifier then checks the design and routes the
+and supports both prove and cover modes [4]. Z3 serves as          outcome: a PASS terminates the loop; a FAIL forwards the
+the SMT solver backend for bounded model checking and k-           counterexample to the CEX Analyzer, which localizes the fault
+induction [5]. We deliberately adopt this open-source stack        for the Coder to repair, after which the Reviewer audits the
+because commercial formal tools, such as VCS and Jasper-           fix before returning control to the Verifier; a vacuous result
+Gold, are expensive and restrictively licensed, which limits       routes back to the Architect to regenerate properties. This loop
+reproducibility and accessibility—particularly for academic        repeats until the design is proved correct or the maximum
+labs and individual developers.                                    number of iterations is reached.
+C. LLMs for RTL Generation and Repair                                                  IV. I MPLEMENTATION
+   Large language models can generate Verilog from natural-
+                                                                   A. System Overview
+language specifications [6], [7]. However, generated code
+frequently contains both syntax and logic errors, which mo-           We implement our framework in Python 3.12 as an au-
+tivates iterative repair. Existing approaches, such as RTL-        tomated RTL repair system that combines an LLM-driven
+Fixer, combine simulation or compiler feedback with iterative      multi-agent pipeline with open-source formal methods. The
+prompting to correct these errors [8]. Most such methods rely      pipeline is orchestrated by a state graph (LangGraph 1.0.6)
+on simulation, which checks only a limited set of inputs, or on    that manages a shared state and performs conditional routing
+commercial tools. Comparatively few combine formal proof           between nodes. The pipeline comprises two kinds of nodes:
+with an entirely open-source toolchain—the gap this work           five nodes are driven by a large language model (GPT-4o)
+addresses.                                                         for reasoning, and one node is a tool wrapper that invokes
+                                                                   the formal backend. All verification runs on open-source tools
+                    III. A RCHITECTURE                             (Yosys, SymbiYosys, and Z3), removing any dependency on
+A. Overview                                                        commercial licenses.
+   Our framework is a closed-loop pipeline that repairs RTL
+                                                                   B. Technology Stack
+by combining LLM-based reasoning with formal verification
+feedback. Rather than tasking a single model with the entire re-      The system is built on five core components. LangGraph
+pair problem, we decompose it into a set of specialized agents,    1.0.6 provides the orchestration layer: it defines each node
+each responsible for a narrow, well-defined step: extracting       as part of a graph, routes the shared state according to
+the design interface, synthesizing formal properties, verifying    runtime conditions, and supports the feedback loop between
+the design, analyzing counterexamples, repairing the RTL, and      the verifier, coder, and reviewer. GPT-4o, accessed through
+reviewing the result. Fig. 1 shows the overall architecture. The   the OpenAI API (client library 2.15.0), serves as the LLM
+pipeline iterates a verify–repair loop, guided at each step by     for the reasoning nodes. Yosys 0.61+39, through its built-
+concrete counterexamples from the formal backend, until the        in SystemVerilog frontend, reads the RTL together with the
+design is proved correct or an iteration budget is exhausted.      inlined assertions and elaborates them into a netlist for the
+                                                                   solver. SymbiYosys (SBY) 0.61 orchestrates the formal flow
+B. Design Principles                                               in two modes: prove, which uses k-induction, and cover, which
+   The architecture rests on three principles. First, separation   checks reachability. Z3 4.15.5 serves as the SMT backend for
+of concerns: decomposing the pipeline into specialized agents      bounded model checking and k-induction. This entirely open-
+keeps each step controllable and independently debuggable,         source stack ensures that our results are reproducible without
+in contrast to a single monolithic prompt whose failures are       any commercial license.
+difficult to localize. Second, a formal feedback loop: unlike
+approaches that rely on simulation, our pipeline consumes          C. Pipeline Nodes
+counterexamples—concrete waveform traces that a solver pro-           The pipeline consists of six nodes. The entry node, the Con-
+duces to witness a violation—as its repair signal, giving the      tract node, ingests a natural-language specification together
+            Fig. 1. System architecture of the multi-agent RTL repair pipeline. Blue nodes are LLM agents; green nodes are formal tools.
+
+
+
+with the RTL module. It extracts the structural interface—                 which audits the semantic alignment of the fix. If the review
+ports, clock, reset, and reset polarity—and returns a design               passes, control returns to the Verifier node to re-check the
+contract in JSON form that is shared by all subsequent nodes.              updated RTL; otherwise, control returns to the Coder node for
+   The Architect node receives this design contract and uses               a further attempt.
+the LLM to generate a Property IR, a set of typed objects.                    The entire pipeline is orchestrated by the state graph,
+An internal Property Compiler then translates the IR into                  beginning at the Contract node. The Verifier node is the central
+SystemVerilog immediate assertions and injects them inline                 branching point, with four possible transitions (to the coder, to
+into the design under test (DUT), returning the merged RTL                 the analyzer, back to the architect on vacuity, or to termination
+module.                                                                    on pass or maximum iterations), while the Reviewer node
+   The Verifier node receives the assertion-inlined RTL. It                forms a second branching point with two transitions. Fig. 1
+generates the SBY configuration file and runs Yosys, SBY,                  illustrates the full architecture.
+and Z3 in both prove and cover modes. Its outcome is one                   D. Key Engineering Decisions
+of three states: PASS, FAIL with a VCD counterexample, or                     Typed Property IR. Rather than having the LLM emit Sys-
+VACUOUS.                                                                   temVerilog assertions directly—which is error-prone and diffi-
+   When the outcome is FAIL with a counterexample, the CEX                 cult to control—we introduce a typed intermediate representa-
+Analyzer node parses the VCD trace, identifies which assertion             tion. The LLM generates IR objects drawn from seven types:
+is violated, and produces a root-cause analysis together with a            Equality, Implication, ResetInvariant, MutualExclusion, Tran-
+repair hint. This yields a textual repair strategy for the Coder           sitionProperty, HandshakeProperty, and HoldProperty. The
+node.                                                                      compiler then translates these into valid assertions. This
+   The Coder node receives the current RTL module and                      separates property reasoning, performed by the LLM, from
+the repair strategy. The LLM corrects the faulty logic while               syntactically correct generation, guaranteed by the compiler,
+preserving the inlined assertion block unchanged, and returns              and allows each IR object to be validated before compilation.
+the repaired RTL.                                                             Inline Assertion Injection. Assertions are injected di-
+   The repaired module is then passed to the Reviewer node,                rectly into the DUT module, immediately before the final
+endmodule, rather than through a bind directive. We adopt                                          TABLE I
+inline injection because of a specific limitation in the Yosys             M ULTI -RUN R ESULTS PER B ENCHMARK (n = 5 RUNS EACH )
+frontend; the underlying issue that motivates this choice is          Benchmark          Type     Pass  Iters        Time (s)         Outcome
+detailed in Section VI-C.                                             alu               comb.      5/5    2.0       16.5 ± 3.0        proven correct
+   Robustness Layer. Because the LLM emits bit-width spec-            counter            seq.      0/5   10.0       47.8 ± 3.4        cover vacuity
+                                                                      arbiter           comb.      0/5   10.0       86.7 ± 2.8        spec ambiguity
+ifiers inconsistently, we normalize them to a safe form. We           axi lite slave     seq.      0/5   10.0      127.1 ± 20.9       multi-property
+further mask arithmetic results to the exact bit-width of the         uart tx            seq.      0/5   10.0      125.3 ± 18.7       temporal logic
+target signal so that assertions match the modular wrap-around        fifo               seq.     0/3a   10.0       108.7 ± 3.5       temporal logic
+                                                                      a Three valid runs; two excluded due to an   API quota limit,
+behavior of the RTL. Finally, injection is made idempotent by         not a verification failure.
+stripping any pre-existing assertion block before re-injecting,
+which prevents duplicate assertion cells during repeated it-
+erations. Together, these steps ensure that LLM-generated
+assertions compile reliably through Yosys.
+
+                       V. E VALUATION
+A. Experimental Setup
+   We evaluate whether an LLM, guided by counterexample
+traces and backed entirely by open-source formal tools, can
+repair RTL designs without any commercial license. Our setup
+is defined by five conditions. First, the language model: we
+use GPT-4o (OpenAI) with the temperature set to zero and
+a maximum of ten iterations per benchmark. Second, the
+formal backend: Yosys 0.61+39, SymbiYosys 0.61, and Z3
+4.15.5. Third, the benchmark suite: six modules—counter,
+                                                                     Fig. 2. Multi-run pass rate per benchmark (n = 5). For fifo, three valid runs
+alu, arbiter, axi lite slave, uart tx, and fifo—ranging from         are reflected; two runs were excluded due to an API quota limit.
+a simple combinational design (alu) to sequential designs
+with more complex state (fifo, axi lite slave). Fourth, each
+benchmark is injected with a single, specific bug. Finally, we          Across the suite, one benchmark (alu) is repaired reliably
+run each benchmark five times independently, yielding 30 runs        across all five runs, while the remaining benchmarks fail
+in total.                                                            consistently. We report this result honestly: the framework
+   We use five independent runs per benchmark because the            reliably repairs combinational logic in the alu case, and our
+language model is nondeterministic: the same input can pro-          multi-run protocol exposes distinct, well-characterized failure
+duce different outputs across runs. Measuring this variance,         modes on the others. We analyze these failure causes in detail
+rather than reporting a single run, provides the statistical rigor   in Section VI. Fig. 2 shows the pass rate per benchmark.
+needed to assess the framework’s stability.                          D. Case Study: ALU True Positive
+B. Evaluation Metrics                                                   The alu module is injected with a single bug: for opcode
+                                                                     2’b11, the module computes result = a & b instead
+   We report three metrics. The pass rate is the number of
+                                                                     of the correct a | b. The repair proceeds end to end as
+successful runs over the total number of runs for a given
+                                                                     follows. The Architect generates five properties (one per
+benchmark (for example, 5/5 or 0/5). We define a run as PASS
+                                                                     opcode, plus a zero-flag property) and the Verifier runs a
+only when the repaired RTL satisfies two conditions: every
+                                                                     proof, which returns FAIL with a counterexample. The CEX
+assertion is proved by k-induction, and every cover property
+                                                                     Analyzer parses the VCD trace and localizes the violation to
+is reachable (that is, the result is not vacuous). The iterations
+                                                                     the or-operation. The Coder then applies a single-line fix, and
+to convergence is the number of verifier loops executed before
+                                                                     re-verification succeeds by k-induction. The repair changes
+a PASS, or the maximum of ten if the run does not converge.
+                                                                     exactly one character (& to |), demonstrating that the fix is
+Finally, we record the wall-clock time of each run.
+                                                                     precise and does not disturb the surrounding structure. The
+   A key point is that our PASS criterion is based on formal         violated property, or_operation_a, asserts that result
+proof rather than simulation. Simulation exercises only a            equals a | b for opcode 2’b11, allowing the CEX Analyzer
+subset of inputs, whereas k-induction proves that an assertion       to localize the fault precisely. This case is stable across all
+holds for all reachable states. Our pass rate is therefore lower     five runs, converging in two iterations at an average of 16.5
+in part because our acceptance standard is substantially stricter    seconds. Fig. 3 illustrates the full repair sequence.
+than simulation-based evaluation.
+                                                                     E. Iteration and Timing Analysis
+C. Main Results                                                        The alu benchmark converges fastest and most stably,
+  Table I reports the results across the six-benchmark suite.        requiring two iterations in every run. The five failing bench-
+Fig. 3. End-to-end ALU repair sequence. The pipeline detects the bug via a counterexample in the first iteration and proves the repaired design correct by
+k-induction in the second.
+
+
+marks, by contrast, reach the ten-iteration maximum on every                  This presents a broader challenge in LLM interpretation of
+run without converging. Importantly, a high iteration count                   specifications: the model interprets the natural-language intent
+does not indicate that a repair is close to succeeding; rather,               correctly, but that intent contradicts the declared hardware
+it indicates that the pipeline is stuck—either in a vacuity                   constraints.
+loop, as with counter, or because the Coder cannot resolve the                   3) Temporal logic bugs (uart tx, fifo): For these bench-
+underlying logic, as with the temporal-logic cases. We also ob-               marks, the Coder fails to produce a valid fix within ten
+serve that timing variance differs sharply across benchmarks:                 iterations. The bugs involve multi-cycle temporal behavior that
+axi lite slave (±20.9 s) and uart tx (±18.7 s) vary far more                  exceeds the Coder’s current reasoning ability. This suggests
+than the others (±3 s), suggesting that designs with many                     that while the LLM repairs local combinational faults well (as
+properties or deeper state cause the pipeline to struggle in less             in the ALU case), multi-cycle temporal reasoning remains a
+predictable ways.                                                             challenge.
+                                                                                 4) Multi-property pressure (axi lite slave): The runs for
+                          VI. D ISCUSSION
+                                                                              this benchmark do not converge and exhibit large timing vari-
+  The framework succeeds on simple combinational logic                        ance (±20.9 s). Multiple properties compete simultaneously,
+but fails on the remaining benchmarks through four distinct,                  so a change that satisfies one property may break another, and
+well-characterized failure modes. These are not repetitions of                the pipeline struggles differently on each run. This indicates
+a single fault; each arises from an independent cause, and                    that repair capability degrades as the number of simultaneous
+characterizing them is itself a contribution of this work.                    constraints grows—a scalability limitation.
+A. Failure Mode Taxonomy                                                      B. What Works
+   1) Bounded-cover vacuity (counter): When the counter is                      The ALU case demonstrates the central claim of feasibility:
+verified, every assertion is proved by k-induction, yet the run               an LLM, combined with open-source formal verification and
+is still reported as FAIL. The cause is the cover property:                   counterexample feedback, can detect and repair a real bug with
+reaching the wrap-around state (count = 2WIDTH − 1, i.e.                      a mathematical proof of correctness. The strengths are clear—
+255 for WIDTH = 8) requires at least 256 cycles to become                     local combinational faults are fixed with minimal, precise edits
+reachable in bounded model checking, and at the default depth                 and with fast, stable convergence. Equally useful is the sharp
+it is therefore flagged as vacuous. This exposes a tension                    boundary between what works and what does not: it indicates
+between cover-based vacuity checking and designs with deep                    which classes of bugs are well suited to this approach and
+state. It is a limitation of bounded model checking rather than               which require further research.
+a repair fault—the repair itself is, in fact, correct.
+   2) Specification ambiguity (arbiter): Here the LLM gen-                    C. Engineering Insight: The Yosys bind Limitation
+erates properties that cannot be satisfied. The specification                    During development we found that the Yosys 0.61 built-in
+describes round-robin behavior, which requires memory, yet                    SystemVerilog frontend silently discards modules referenced
+the module is declared combinational. The Architect generates                 through a bind directive, emitting only a generic notice that
+fairness and alternation properties that are faithful to the                  an unused module has been removed. Because the bound
+specification but unsatisfiable by pure combinational logic.                  assertion module never reaches the solver, SymbiYosys returns
+The underlying issue is a mismatch between the timing implied                 a trivial PASS regardless of whether the RTL is correct—
+by the specification and the timing declared by the module.                   a false positive. We confirmed this through a discriminating
+probe: identical buggy RTL with identical assertions produced        to logic errors detected through simulation yields limited im-
+a PASS via the bind path but a FAIL with a counterexample            provement. In contrast, our framework targets functional logic
+via inline injection. We resolve the issue by injecting assertions   bugs and uses formal counterexamples—concrete waveform
+directly into the design under test rather than binding them.        traces produced by an SMT solver—as the repair signal, with
+This is a practical note for the open-source EDA community           correctness established by k-induction proof rather than test
+and stands independently of our main results.                        passing.
+                                                                        Positioning. Existing approaches thus either generate RTL
+D. Threats to Validity                                               and validate it by simulation, or repair RTL using compiler
+   Several factors limit the generality of our conclusions. The      and simulation feedback. To the best of our knowledge, the
+benchmark suite is small (six modules), so the results are pre-      combination of LLM-driven repair, formal counterexample
+liminary. Each benchmark is injected with a single, manually         guidance, and an entirely open-source verification toolchain
+introduced bug, which may not represent the distribution of          remains largely unexplored; this intersection is the focus of
+bugs that arise in practice or in LLM-generated code. All            our work.
+experiments use a single language model (GPT-4o). Together,
+these factors mean that our study is best read as a feasibility                               VIII. C ONCLUSION
+study rather than a large-scale evaluation.                             We presented a multi-agent pipeline that combines a
+                                                                     large language model with open-source formal methods for
+E. Future Work                                                       counterexample-guided RTL repair. Through an ALU case
+   Several directions follow from these findings. Adaptive           study, we showed that the framework can detect a real
+cover depth for deep-state designs could address the bounded-        functional bug, repair it, and prove the result correct by k-
+cover vacuity mode, and refining vacuity detection to distin-        induction, establishing the feasibility of the approach. Across
+guish an unreachable cover from a genuinely vacuous asser-           a six-benchmark suite, however, only one design was repaired
+tion would be a more principled solution. A property–timing          reliably, and we characterized four distinct failure modes—
+consistency check could catch specification ambiguity before         bounded-cover vacuity, specification ambiguity, temporal-logic
+verification. A stronger Coder, better equipped for multi-cycle      bugs, and multi-property pressure—that mark the current
+temporal reasoning, would target the temporal-logic failures.        limits of the method. This boundary between tractable and
+Finally, expanding the benchmark suite and testing multiple          intractable cases, together with a practical note on a limitation
+bug types per module are essential next steps.                       of the Yosys bind directive relevant to the open-source formal
+   Taken together, these results position the framework as a         verification community, is a central contribution of this work,
+feasible but early-stage approach: it establishes that open-         showing that combining open-source formal verification with
+source, LLM-driven formal repair is possible, while clearly          an LLM is feasible in principle. Future directions include
+delineating the technical barriers that must be overcome to          refining vacuity detection for deep-state designs, strengthening
+make it robust.                                                      the model’s multi-cycle temporal reasoning, and expanding the
+                                                                     benchmark suite to bug types beyond those studied here. By
+                    VII. R ELATED W ORK                              building entirely on freely available tools, we hope this work
+                                                                     lowers the barrier to combining language models with formal
+   LLMs for RTL generation. A growing body of work
+                                                                     methods for reliable hardware design.
+applies large language models to hardware design, particularly
+                                                                        Availability. The framework, benchmarks, and the raw
+to generating Verilog from natural-language specifications.
+                                                                     multi-run logs underlying Table I are available at https://
+VeriGen fine-tunes an LLM specifically for Verilog code
+                                                                     github.com/trunghafromvietnam/rtl-repair-framework.
+generation [6], while benchmarks such as VerilogEval [7] and
+RTLLM [9] provide standardized problem sets for evaluating
+                                                                                                   R EFERENCES
+LLM-generated RTL. Notably, RTLLM evaluates generated
+designs against progressive syntax, functionality, and design-        [1] A. Biere, A. Cimatti, E. Clarke, and Y. Zhu, “Symbolic model checking
+                                                                          without BDDs,” in Tools and Algorithms for the Construction and
+quality goals, with functionality assessed through testbench-             Analysis of Systems (TACAS), LNCS vol. 1579, Springer, 1999, pp. 193–
+based checking [9]. Across this line of work, correctness is              207.
+established by simulation or testing, which exercises only a          [2] M. Sheeran, S. Singh, and G. Stålmarck, “Checking safety properties
+subset of the input space and therefore cannot provide formal             using induction and a SAT-solver,” in Formal Methods in Computer-
+                                                                          Aided Design (FMCAD), LNCS vol. 1954, Springer, 2000, pp. 127–144.
+guarantees.                                                           [3] C. Wolf, “Yosys Open SYnthesis Suite,” https://yosyshq.net/yosys/.
+   LLM-based RTL repair with feedback. Closer to our                  [4] YosysHQ, “SymbiYosys (SBY): Front-end for Yosys-based formal ver-
+work, RTLFixer combines compiler feedback with retrieval-                 ification flows,” https://github.com/YosysHQ/sby.
+                                                                      [5] L. de Moura and N. Bjørner, “Z3: An efficient SMT solver,” in Tools
+augmented generation and ReAct-style iterative prompting to               and Algorithms for the Construction and Analysis of Systems (TACAS),
+repair Verilog code, resolving 98.5% of compilation errors in             LNCS vol. 4963, Springer, 2008, pp. 337–340.
+its debugging dataset [8]. However, RTLFixer targets syntax           [6] S. Thakur et al., “VeriGen: A large language model for Verilog code
+                                                                          generation,” arXiv preprint arXiv:2308.00708, 2023.
+errors and relies on compiler logs and simulation as its              [7] M. Liu et al., “VerilogEval: Evaluating large language models for Verilog
+feedback signal; its authors report that extending the approach           code generation,” arXiv preprint arXiv:2309.07544, 2023.
+[8] Y. Tsai, M. Liu, and H. Ren, “RTLFixer: Automatically fixing RTL
+    syntax errors with large language models,” in Proc. 61st ACM/IEEE
+    Design Automation Conference (DAC), 2024.
+[9] Y. Lu, S. Liu, Q. Zhang, and Z. Xie, “RTLLM: An open-source
+    benchmark for design RTL generation with large language model,” in
+    Proc. Asia and South Pacific Design Automation Conference (ASP-DAC),
+    2024.
+

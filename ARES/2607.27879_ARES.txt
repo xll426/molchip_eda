@@ -1,0 +1,527 @@
+                                                     Ares: Adaptive Reasoning-Effort Steering for PPA- and
+                                                        Cost-Aware RTL Optimization with LLM Agents
+                                                          Stef Cuyckens                                       Mihaela Jivanescu                                         Jun Yin
+                                                   stef.cuyckens@kuleuven.be                       mihaela.jivanescu@nokia-bell-labs.com                        jun.yin@kuleuven.be
+                                                            KU Leuven                                         Nokia Bell Labs                                        KU Leuven
+                                                         Leuven, Belgium                                     Antwerp, Belgium                                     Leuven, Belgium
+
+                                                                                        Chao Fang†                                       Marian Verhelst
+                                                                                 chao.fang@kuleuven.be                            marian.verhelst@kuleuven.be
+                                                                                       KU Leuven                                           KU Leuven
+                                                                                    Leuven, Belgium                                     Leuven, Belgium
+                                         ABSTRACT                                                                               it, synthesizes the edit, reads back the resulting PPA, and repeats.
+                                         Large language model (LLM) agents optimize the power, perfor-                          If the new design has a lower figure of merit (FoM), for example
+                                         mance, and area (PPA) of register-transfer-level (RTL) designs by                      a power-area-delay product defined against the original design, it
+                                         iterating over edits, synthesis, and PPA analysis, paying a dollar                     is retained. The quality of these edits improves with the capability
+                                         cost for every LLM call. Prior agents report the quality reached                       of the LLM. Capable agents therefore rely on large commercial
+arXiv:2607.27879v1 [cs.AR] 30 Jul 2026
+
+
+
+
+                                         without its normalized cost, attribute that quality to an engineered                   models [10], whose rapidly growing token bills [6] already put a
+                                         cross-design memory, and hold the reasoning effort of every call                       single agentic run at several dollars [11]. The cost of an optimization
+                                         fixed. We propose Ares with three corresponding innovations. (1)                       run thus deserves as much attention as the FoM it reaches. Prior art
+                                         We introduce a normalized dollar cost per LLM call reported along-                     falls short on both counts. Some agents that optimize existing RTL
+                                         side the figure of merit (FoM), enabling fair comparison across                        score only area and timing, leaving power out of the objective [9, 30].
+                                         effort levels and optimizers. (2) Using this accounting, we find the                   On cost, every state-of-the-art optimizer falls short: at best it reports
+                                         construction of the long-term memory matters little. An engineered                     one aggregate dollar figure for a whole study, and none provides
+                                         memory brings no dependable gain over a plain concatenation of                         a unified metric that relates optimization quality to its dollar cost,
+                                         the same experience. (3) We instead adapt the per-call reasoning                       allowing fair comparison across optimizers [9, 28, 30].
+                                         effort by escalating to deeper reasoning only once progress at a                           This missing cost metric also leaves unevaluated where an opti-
+                                         lower effort stalls, via a patience counter fit on 21 training designs,                mizer’s quality actually comes from. Currently, the most capable
+                                         allocating reasoning where it pays rather than uniformly across                        RTL agents reach a lower FoM by giving the agent a long-term mem-
+                                         all iterations. On three test designs unseen during training, the                      ory, a collection of optimization experience distilled across designs
+                                         effort policy lowers the FoM by 23–27% where the best fixed effort                     and reused on new ones [9, 33]. These agents attribute the quality
+                                         reaches 16–23%, at equal normalized cost. Ares closes up to 83%                        of the optimizer to how that memory is constructed, and engineer
+                                         of the gap from an LLM-drafted multiply-accumulate unit to its                         its content and organization accordingly, from distilled markdown
+                                         highly hand-optimized counterpart, and reaches a 25% deeper FoM                        rule libraries to manager-curated entry pools [9, 33, 35, 38]. Using
+                                         than state-of-the-art Dr. RTL at 12% of its tokens.                                    a cost-controlled comparison, we find this attribution does not hold
+                                                                                                                                at equal spend: an engineered memory brings no dependable gain
+                                         KEYWORDS                                                                               over a plain concatenation of the same experience, though both
+                                         RTL optimization, LLM agents, adaptive reasoning effort, PPA, in-                      beat running with no long-term memory.
+                                         ference cost, agent memory, electronic design automation                                   We instead turn to the reasoning effort the LLM is allowed to
+                                                                                                                                perform per call, a per-call setting, typically low, medium, or high,
+                                         1    INTRODUCTION                                                                      that determines how much hidden reasoning the LLM performs
+                                         Meeting power, performance, and area (PPA) targets is a central                        before it emits an edit, at a higher token cost for a higher level [2].
+                                         challenge of digital hardware design, and improving the register-                      Prior RTL agents nonetheless hold it at a single value [9, 22, 28,
+                                         transfer-level (RTL) description that determines them has tradi-                       30, 33], while a fixed high effort overthinks the iterations a cheap
+                                         tionally required scarce human expert effort [16, 20, 27]. Much                        edit would have solved and a fixed low effort underthinks the ones
+                                         RTL therefore ships functionally correct but unoptimized, whether                      that genuinely need deeper reasoning [2]. We find that adapting
+                                         drafted quickly by an engineer or generated by an LLM.                                 the effort during the run, raising it only on the iterations where
+                                            Automating the optimization of such RTL with large-language-                        cheaper reasoning has stalled, improves the average FoM reached
+                                         model (LLM) agents has recently drawn increased attention [1, 20,                      at a given cost, as we show in Sec. 5.2.
+                                         27]. An LLM agent pairs an LLM with electronic design automation                           Motivated by these observations, we present Ares, an LLM-agent
+                                         (EDA) tools. It takes an existing, unoptimized design as input, edits                  RTL optimizer that steers the reasoning effort adaptively across
+                                         † Corresponding author.
+                                                                                                                                the iterations of a run, accounting for the dollar cost of every call,
+                                                                                                                                illustrated in Fig. 1. This work makes the following contributions.
+                                         This project has been partly funded by the European Research Council (ERC) under
+                                         grant agreement No. 101088865, the Flanders AI Research Program, and long-term
+                                         structural Methusalem funding by the Flemish Government.
+                                                                                                                            1
+                                                                                                                                                                                                                        Cuyckens et al.
+
+
+                                                                                                                                                 3 Adaptive reasoning effort, set per call
+                                                                                                                                                   stalled and failed iterations charge a patience counter 𝐶
+        Input design 𝒗0
+                                                                                                                                                             medium               escalate: 𝐶 ≥ 𝑝                 high
+                                                                           fail: discard                                                                dependable, cheap            discharge              deeper, higher cost
+        unoptimized RTL 𝑣0                          LLM agent
+                                                 edits the RTL
+                                                                                           functional verify                                                 best FoM                           Result
+                                               short-term memory                     long random TB + SEC vs 𝑣0
+                    initialize                    (current run)                                                                                                          unoptimized 𝑣0
+
+          best design yet
+          current optimum                                                                                                                                                                                stuck at medium
+                                                                                                                                                                          medium
+                                                                                                                                                                                        high
+                                                      2                                                                                                                                effort                     fixed high
+                                                                                                                After optimizing, update long-term memory
+                                                          long-term memory
+             testbench                                                                                                                                                                                   lower FoM at lower cost
+                                       pass                     markdown
+          generated from 𝑣0
+                                                                                                                                                                                                                               1   cost
+                                                                                                                                random vectors
+
+
+                                       synthesize                     synthesize @ 𝑓                       gate-level verify                       power                        Figure of Merit
+                                   max 𝑓 (Synopsys DC)                area (Synopsys DC)                       netlist + TB                      PrimeTime                   𝑓 · area · power (norm. 𝑣0 )
+
+                                 synthesis & PPA measurement (commercial flow)                                          fail: discard
+
+                                                      if FoM beats best: keep as new best; else discard; then iterate
+
+Figure 1: Overview of Ares. The LLM agent edits the running-best RTL; each candidate is verified against the input design 𝑣 0 ,
+synthesized on the commercial flow, and kept only if it lowers the FoM. Our contributions: 1 the per-call cost metric enabling
+proper comparison, 2 the finding that the construction of the cross-design long-term memory matters little, and 3 an adaptive
+reasoning-effort policy that escalates once progress stalls. On the right, our adaptive effort reaches a lower FoM than fixed
+effort at the same cost.
+    •    1 Normalized per-call cost enables fair optimizer com-                                                         2       BACKGROUND AND MOTIVATION
+        parison (Sec. 3.1). We propose a unified metric that relates                                                    LLM agents entered RTL design one objective at a time: first check-
+        each LLM call’s normalized dollar cost to the FoM it reaches,                                                   ing a design, then generating it, and now optimizing it [27]. Early
+        making optimization quality and spend jointly comparable                                                        agents drafted SystemVerilog assertions and testbenches from a
+        across effort levels and optimizers. This metric reveals that                                                   specification [8, 29, 36], and attention then moved to generating
+        Ares reaches a deeper FoM than the state-of-the-art (SotA)                                                      correct RTL, where modern LLMs now score so highly on the Ver-
+        Dr. RTL [9] at 8.7× lower cost.                                                                                 ilogEval and RTLLM benchmarks that the task is considered close
+      • 2 Long-term-memory construction matters less than                                                               to solved [13, 17–19, 33]. Yet these designs are often inefficient: they
+        assumed (Sec. 3.2). We compare an engineered memory that                                                        pass their tests while wasting area and power [1]. The objective
+        applies the structuring, filtering, and abstraction operations                                                  accordingly shifted to the quality of the hardware, and the RTL-OPT
+        of prior work [9, 33, 35, 38] against a plain concatenation of                                                  benchmark shows that a weak synthesizer can credit the agent for
+        the same experience and against no long-term memory. The                                                        a rewrite that a commercial tool would make on its own [20].
+        engineered construction brings little benefit over the plain                                                       Iterating on measured feedback improves this hardware qual-
+        one, as we measure at equal spend.                                                                              ity further [13, 22, 32], but the first agents that do so keep what
+      • 3 Adaptive per-call reasoning effort improves opti-                                                             they learn only for the duration of a run. REvolution and POET
+        mization quality (Sec. 3.3). To allocate the reasoning effort                                                   evolve a population of candidate designs scored on power, area,
+        efficiently, we implement adaptive reasoning-effort steering                                                    and timing [22, 28], and CktEvo keeps an archive of its best candi-
+        in Ares via a patience counter, fit once on 21 training de-                                                     dates [30]. In all three the stored candidates are the memory itself:
+        signs, that escalates to deeper reasoning only once progress                                                    no guidance is distilled from them, the population or archive is
+        at a lower effort stalls. On three held-out test designs, this                                                  discarded when the run ends, and every new design is optimized
+        policy lowers the FoM by 23–27% where the best fixed effort                                                     from scratch [22, 28, 30].
+        reaches 16–23%, at equal normalized cost.                                                                          A second group of agents carries its experience across designs,
+    The central result is that where and when an LLM agent spends                                                       as distilled guidance rather than stored candidates. VeriAgent, in
+its reasoning budget, rather than how its memory is written, sets the                                                   the generation setting, keeps a pool of structured nodes, each a
+FoM per dollar it reaches. The adaptive policy ends at a lower FoM                                                      trigger condition paired with natural-language guidance, which a
+than any fixed effort level on all three test designs (Sec. 5.2). Ares                                                  dedicated manager agent inserts, refines, or discards after every
+further closes up to 83% of the gap from an LLM-drafted microscal-                                                      run [33]. Dr. RTL distills a markdown library of optimization strate-
+ing (MX) multiply-accumulate unit to its hand-optimized counter-                                                        gies, including negative “avoid” strategies, and reuses it on designs
+part [7] while cutting the run-to-run variance by 58% (Sec. 5.3). On                                                    held out from its construction [9]. The same deliberate construc-
+controller, Ares reaches a FoM of 0.694 where REvolution [22]                                                           tion appears in the general-agent literature, where skill libraries
+and Dr. RTL [9] reach 0.943 and 0.923, while spending 12% of                                                            transfer best when aligned with the target domain [35, 38]. Table 1
+Dr. RTL’s tokens for the same number of design iterations (Sec. 5.4).                                                   compares the two groups to Ares by the form of their memory
+                                                                                                                        and how long it lives. Of the five systems, only REvolution and
+
+
+                                                                                                                2
+Ares: Adaptive Reasoning-Effort Steering for PPA- and Cost-Aware RTL Optimization with LLM Agents
+
+
+Table 1: Memory-carrying LLM agents for RTL optimization                                     The FoM is the product of the three post-synthesis PPA compo-
+compared to Ares.                                                                          nents, each normalized to the unoptimized input 𝑣 0 ,
+                          Task       Mem.       Cross- Power Cost Effort Open
+                                                                                                                         area power delay
+                                     form       design in FoM axis adapt. source                            FoM =             ·      ·                                      (1)
+                                                                                                                         area0 power0 delay0
+     REvolution [22]      gen.    pop.            no        yes     no    no    yes
+     POET [28]            opt.    pop.            no        yes     no    no     no        The normalization fixes FoM(𝑣 0 ) = 1, and a lower FoM is better.
+     CktEvo [30]          opt.  archive           no        no      no    no     no        Because all three components enter the product, an edit that trades
+     VeriAgent [33]       gen.   nodes            yes       yes     no    no     no        one component for another is judged on its net effect.
+     Dr. RTL [9]          opt. markdown           yes       no      no†   no    yes
+                                                                                              The FoM records how deep an optimizer reaches, not what reach-
+     Ares (ours)          opt. markdown           yes       yes     yes   yes   yes*
+† Reports one aggregate dollar figure for the complete study [9].
+                                                                                           ing that depth costs, and that difference accumulates into cost be-
+*Our code will be available upon peer-reviewed publication.                                cause the effort levels of one model are priced differently and a run
+                                                                                           spans dozens of iterations. Call counts and token counts are the two
+Dr. RTL release their code [9, 22], and they are therefore the two
+                                                                                           natural measures of that spend, and neither suffices. A call count
+we compare against on our own flow.
+                                                                                           treats effort levels of unequal price as one equivalent iteration, eras-
+   No agent of either group reports what an LLM call costs or adapts
+                                                                                           ing a real difference in cost. A token count does distinguish the
+how much reasoning it receives, as the two rightmost columns of
+                                                                                           calls, but input, cached-input, reasoning, and output tokens carry
+Table 1 show. Outside RTL design this is a known inefficiency: a
+                                                                                           different unit prices, and commercial tools bill in dollars, leaving
+fixed inference-time budget wastes reasoning on simple problems
+                                                                                           token counts an indirect quantity the user must still convert.
+and cuts it short on hard ones [2]. Because the payoff of extra test-
+                                                                                              Ares therefore computes the normalized dollar cost of every LLM
+time compute varies with the difficulty of the prompt, compute-
+                                                                                           call and reports it next to the FoM, rather than just an aggregate
+optimal scaling allocates that compute adaptively per prompt [31].
+                                                                                           total. The call’s logged input (in), cache read (cr), cache write (cw),
+Cost-aware methods apply the same idea across models and calls,
+                                                                                           and output token (out) counts (𝑡𝑖 ) are weighted by their published
+escalating to a costlier model, routing a call, or pruning a reasoning
+                                                                                           per-token OpenRouter prices (𝑝) [21, 26], and the weighted sum is
+step only when the expected value justifies the cost [5, 14, 15]. All
+                                                                                           the call’s dollar cost. Summing the calls of a run gives its cumulative
+of them adapt the budget of a single, isolated task, whereas an
+                                                                                           cost. The internal reasoning is included in the output tokens [25].
+optimization run is a sequence of iterations where the difficulty
+of finding the next improvement changes as the design becomes                                                𝑁
+                                                                                                            ∑︁
+                                                                                                  Cost =                                                                    (2)
+                                                                                                                                                                        
+more optimized. Ares therefore computes the normalized cost of                                                    𝑝 in 𝑡𝑖,in + 𝑝 cr 𝑡𝑖,cr + 𝑝 cw 𝑡𝑖,cw + 𝑝 out 𝑡𝑖,out
+every call and steers the reasoning effort across the iterations of                                         𝑖=1
+
+one run, escalating on stalled progress through a counter fit once                         Every cost axis in this paper reports that cumulative cost in high-
+on the training designs.                                                                   calls, the dollars spent divided by the design’s mean computed
+                                                                                           cost of one high-effort call. Referring the cost to the design’s own
+3     THE ARES OPTIMIZER                                                                   high-effort price keeps comparisons unaffected by pricing changes,
+Ares optimizes designs by repeatedly editing its RTL, scoring can-                         because whatever the underlying model charges, one high-call is
+didates with the FoM, and keeping the best version, while adapting                         always the price of one high-effort iteration on that design. It is also
+the reasoning effort it spends on each edit. As Fig. 1 shows, it tracks                    why cumulative cost, rather than a cumulative call or token count,
+two quantities throughout a run, the quality reached and the nor-                          is the abscissa of every figure below. This per-call accounting goes
+malized dollar cost of reaching it 1 (Sec. 3.1). Each iteration hands                      beyond the single aggregate of prior work [9] and the turn-count
+the running-best RTL, initialized to the unoptimized input design                          proxy of general-agent studies [11].
+𝑣 0 , to the LLM agent together with the conversation of the run
+so far and the long-term markdown memory 2 (Sec. 3.2). The                                 3.2    Revisit the value of memory construction
+agent proposes an edit at the effort level set by the adaptive policy                      With this accounting, we test at equal spend the claim of prior
+ 3 (Sec. 3.3). The candidate must first prove functional equivalence                       work that cross-design long-term memory construction dictates
+to 𝑣 0 , on a long random testbench and by sequential equivalence                          the quality of the optimizer. That attribution, made from distilled
+checking. It is then synthesized on the commercial flow, re-verified                       rule libraries to manager-curated entry pools [9, 33, 35, 38], rests
+on the netlist, and its measured area, power, and delay combine                            on comparisons of the final FoM, and need not hold at equal spend.
+into the FoM, reported next to the computed dollar cost of the call                           The agent draws on two memories. The short-term memory
+that produced it. A candidate that lowers the FoM becomes the new                          is the conversation of the current run. Every iteration resumes
+running best and the next iteration chains from it. One that fails to                      the same session and re-feeds its history to the LLM [11], and the
+verify, to synthesize, or to improve is discarded, and either outcome                      record is discarded when the run ends. The long-term memory is
+updates the patience counter that sets the effort of the next call. An                     the experience accumulated across designs, a markdown document
+optimization run ends when its cumulative cost reaches a user-set                          distilled from training designs and injected into the agent’s prompt,
+budget, and returns the running best as the optimized design.                              so that a strategy learned on one design can be reused on another.
+                                                                                              To test if construction decides the outcome, we hold everything
+3.1       Price the PPA gain of each LLM call                                              else fixed and vary only how the same experience is written down,
+Ares takes two inputs, a functionally correct but unoptimized RTL                          across three memory-mode variants built from one identical pool
+design 𝑣 0 , and a testbench that exercises it, generated by the opti-                     of raw experience. 1 The memoryless agent lacks a long-term
+mizer itself when none is supplied.                                                        memory. It still learns within a design, but starts each new design
+                                                                                       3
+                                                                                                                                                                   Cuyckens et al.
+
+
+                                         memoryless         baseline memory     engineered memory                           improve
+                                       1.0                                                                    𝐶 →𝐶 (1 − ΔFoM/𝜅 )
+                                                                                          tv80                                                   counter 𝐶 ≥ 𝑝
+
+                                       0.9
+                                                                                                                                        MEDIUM                     HIGH
+                                       0.8
+                                       0.7
+  Best FoM reached (lower is better)
+
+
+
+
+                                                                                                                    stall +1, fail +𝑤              discharge
+
+                                             0              5             10              15
+                                       1.0                                                              Figure 3: The adaptive-effort policy, with constants (𝑝 = 3,
+                                                                                          uart          𝑤 = 2.8, 𝜅 = 0.05) fit once on the training designs.
+                                       0.9
+                                       0.8                                                              3.3     Steer the per-call reasoning effort
+                                                                                                        The other input condition that actually varies between iterations is
+                                       0.7
+                                                                                                        how deeply a call is allowed to think. It bears directly on the cost
+                                             0          5            10             15         20       view of Sec. 3.1. The price gap between the effort levels is what
+                                       1.0                                                              makes cost-aware accounting necessary in the first place, and that
+                                                                                     controller         same gap means the reasoning effort is not only a spend to account
+                                       0.9
+                                                                                                        for but a variable the optimizer can steer. We therefore investigate
+                                       0.8                                                              the per-call reasoning effort. Every iteration is one LLM call, and
+                                       0.7                                                              the effort, exposed at three levels, sets how much hidden reasoning
+                                                                                                        that call performs and what it costs. At low effort the LLM reasons
+                                             0                  5              10              15       little before emitting its edit, at high effort it reasons at length, and
+                                                      Cumulative cost (high-calls)                      medium sits between. Changing the level between iterations leaves
+Figure 2: The three memory constructions of Sec. 3.2 on the
+                                                                                                        the conversation, the long-term memory, and the prompt cache
+three test designs, best FoM (normalized to 𝑣 0 , lower is better)
+                                                                                                        untouched [21]. Which level an iteration deserves is not known in
+against cumulative cost in high-calls, the unit of Sec. 3.1.
+                                                                                                        advance. An opening iteration with obvious inefficiencies left to
+Each bold curve is the mean over three faint individual runs,
+                                                                                                        remove is well served by a cheap call, while a run stuck at the same
+all using medium reasoning effort. The engineered memory
+                                                                                                        best FoM for many iterations may need more thinking, and thus a
+brings no dependable gain over the baseline concatenation.
+                                                                                                        higher reasoning effort, to improve further.
+                                                                                                            Ares therefore starts every design at medium effort, the depend-
+from scratch. 2 The baseline memory distills each training run into                                     able middle setting in the fixed-effort comparison of Sec. 5.1, and
+a list of simple descriptions of the optimizations that worked on that                                  escalates to high effort only once medium has stalled. We call an
+design and concatenates those lists. 3 The engineered memory uses                                       iteration stalled when its candidate synthesizes and verifies but
+the same experience and creates a superset that incorporates all                                        does not lower the FoM, and failed when it does not even produce a
+prior works’ techniques. In this rule superset, 1) each accepted edit                                   valid candidate, which could be because the edit does not compile,
+is recorded as a structured (context, action, result) case [12, 37], 2)                                 synthesize, or verify. A single stalled iteration is a noisy signal,
+ineffective and harmful edits are kept as explicit anti-optimizations                                   because even a productive run rejects most of its candidates. Ares
+to avoid [9], and 3) duplicate entries are merged across designs and                                    instead accumulates the evidence in a patience counter 𝐶, updated
+the remainder ranked by measured effectiveness [33, 35, 38]. Unlike                                     after every iteration as follows.
+prior work’s annotations at the structural or skill level [9, 33, 35,                                         • A stalled iteration adds one, 𝐶 → 𝐶 + 1.
+38], Ares further anonymizes design-specific names, so that a rule                                            • A failed iteration adds a weight 𝑤, 𝐶 → 𝐶 + 𝑤.
+matches on the structure of a problem rather than on its source.                                              • An accepted improvement discharges the counter propor-
+    Starting from identical raw experience, both memory-carrying                                                tionally to its relative FoM gain using a reset scale 𝜅.
+variants run a full agent optimization per training design and log                                      Writing the relative gain of an accepted edit as ΔFoM = (FoMbest −
+each edit’s FoM effect. Consequently, any FoM difference between                                        FoMnew )/FoMbest , the discharge is 𝐶 → 𝐶 · max(0, 1 − ΔFoM/𝜅). A
+them stems solely from how this experience is recorded. As Fig. 2                                       relative gain of at least 𝜅 clears the counter fully, while a marginal
+shows (setups in Sec. 3.1 and 4), accumulated experience success-                                       gain barely lowers it. A run that improves marginally therefore
+fully lowers FoM, with both memory variants typically ending                                            still escalates. When 𝐶 reaches the patience threshold 𝑝, the next
+below the memoryless baseline.                                                                          iteration runs at high effort and the counter resets, the two-state
+    At equal cost, however, the engineered memory ( 3 ) brings no                                       policy is shown in Fig. 3.
+dependable gain over the plain concatenation. On all three held-out                                         We fit 𝑝, 𝑤, and 𝜅 jointly, once, on the medium-effort runs of
+test designs the two curves descend together and end close, with                                        the training designs. The policy should escalate exactly where stay-
+neither ahead consistently. This means the structuring, deduplica-                                      ing at medium would no longer pay. On the recorded runs, an
+tion, and abstraction that prior work invests add nothing on these                                      escalation is warranted at an iteration where medium produces no
+designs beyond what the baseline concatenation already delivers.                                        accepted improvement within the next three iterations, and wasted
+What decides the quality of an edit is thus not how much experience                                     where it does. We grid-search the three constants to catch as many
+is fed to the LLM, which moves us to examine the optimization                                           warranted points as possible while keeping at least 90% of fired
+process from another angle.                                                                             escalations warranted. This returns 𝑝 = 3, 𝑤 = 2.8, and 𝜅 = 0.05,
+                                                                                                    4
+Ares: Adaptive Reasoning-Effort Steering for PPA- and Cost-Aware RTL Optimization with LLM Agents
+
+
+                                               low effort         med effort        high effort      adaptive        by formal sequential equivalence checking at RTL (JasperGold [4]),
+                                         1.0                                                                         while the synthesized netlist is still verified with the testbench.
+                                                                                                       tv80
+                                         0.9                                                                            Synthesis flow. PPA is measured with the commercial Synopsys
+                                                                                                                     Design Compiler and PrimeTime on the open-source Nangate 45 nm
+                                         0.8                                                                         library [23]. We use a commercial synthesizer because a weaker
+    Best FoM reached (lower is better)
+
+
+
+
+                                         0.7                                                                         open-source one would credit the agent for rewrites a commercial
+                                               0                  5                 10                 15            tool applies on its own [20], and an open-source library so that no
+                                         1.0                                                                         foundry data reaches the LLM. For each design the synthesizer first
+                                                                                                       uart          finds the shortest achievable clock period, the delay term of the
+                                         0.9                                                                         FoM. The design is then resynthesized at this frequency to obtain
+                                         0.8                                                                         area, and PrimeTime reports power from the switching activity of
+                                         0.7                                                                         the testbench vectors simulated on that netlist [22, 33].
+                                                                                                                        LLM. Ares runs as an agent on the Claude Code command-
+                                               0              5                10             15            20       line assistant [3], the same assistant Dr. RTL uses [9], on Opus 4.6
+                                         1.0
+                                                                                                  controller         throughout, with extended thinking and prompt caching. A call
+                                         0.9                                                                         that specifies no effort level runs at the assistant’s default, which is
+                                                                                                                     identical to selecting high [3]. An effort schedule across iterations
+                                         0.8                                                                         must therefore come from the optimizer. Because the LLM cannot be
+                                         0.7                                                                         sampled with a fixed seed, each configuration is repeated multiple
+                                               0                      5                  10                 15       times.
+                                                            Cumulative cost (high-calls)
+Figure 4: The three fixed effort levels and the adaptive policy                                                      5 EXPERIMENTS
+of Sec. 3.3 on the three test designs, with axes, unit, and curve                                                    5.1 No fixed effort level fits the whole run
+styles as in Fig. 2.                                                                                                 The first experiment varies the fixed per-call reasoning effort of
+                                                                                                                     Sec. 3.3 on the three test designs, and Fig. 4 shows that the reasoning
+catching 94% of the warranted points. That the fitted failure weight                                                 effort changes both what a run costs and how deep it optimizes.
+exceeds one is interesting, as the training runs treat one failed edit                                               To ensure a fair comparison, we let every effort level run until it
+like almost three stalled ones. This can be understood by what each                                                  reaches a similar total cost. Only the low-effort runs stop below that
+event reveals. A stalled iteration still produces a valid candidate,                                                 cost, because the LLM reports it is out of optimization ideas. Low
+and its missing gain may reflect a near-miss of a sound strategy.                                                    effort is also the weakest setting: it ends above medium on every
+A failed iteration produces no valid candidate, which could be evi-                                                  design, and it is the least dependable: on controller it ends at a
+dence that the LLM needs more thinking to properly implement an                                                      mean FoM of 0.82 where medium can reach 0.77, and on tv80 none
+optimization.                                                                                                        of its runs ends below 0.84 where the best medium run reaches 0.71.
+                                                                                                                        High effort needs more cost than medium to reach the same FoM
+4                       EXPERIMENTAL SETUP                                                                           early in a run: its first successful optimizations land only after a
+Dataset. We evaluate on 24 single, self-contained open-source RTL                                                    cost of 4.6–7.1 high-calls, where medium cuts its first 5% of FoM
+modules of a few hundred to a few thousand lines: 19 of the 20                                                       within a cost of 0.9–3.9. The extra reasoning pays off only near the
+designs of Dr. RTL [9] (its LSTM module is excluded for its inferred                                                 end of a run: fixed high ends considerably deeper than medium on
+memories), an FFT butterfly and a Huffman decoder from the RTL-                                                      tv80 (0.79 against 0.84), but on uart and controller, there is only
+Rewriter benchmark [34], and a CORDIC, a pipelined FFT, and a                                                        a difference of 0.004 and 0.016. Medium sits in between: it makes
+JPEG DCT from OpenCores [24]. Three designs spanning the range                                                       progress earliest and ends deeper than low on every design, but it
+of optimizability are held out as the test set: tv80, the arithmetic-                                                stalls on a plateau that more spending at medium does not escape,
+logic unit of a Z80 core; uart, a serial transceiver; and controller,                                                exactly the stall the adaptive policy exploits.
+the control unit of an AES core. The remaining 21 designs form the
+training set: one optimization run over each gathers its accepted                                                    5.2    Adaptive effort beats fixed effort
+optimizations into the long-term memory, and the same runs fit the                                                   We next run the adaptive policy of Sec. 3.3, with the escalation
+escalation constants. Sec. 5.3 additionally optimizes an open-source                                                 constants 𝑝, 𝑤, and 𝜅 fixed once on the training designs rather than
+design introduced there, an MX multiply-accumulate unit [7]. Be-                                                     tuned per design. The policy starts every design at medium and
+cause the two long-term memory constructions perform equally,                                                        is just as cheap early in a run: it cuts its first 5% of FoM within
+we use the engineered memory in all experiments of Sec. 5, as we                                                     a cost of 0.9–3.0 high-calls, like fixed medium, where fixed high
+find its structured rules are easier to read for humans.                                                             has not yet improved anything. As Fig. 4 shows, it then overtakes
+   Testbench and verification. Verification and power analysis                                                       every fixed arm: it reaches the final FoM of fixed high sooner than
+use a generated testbench of 104 random input vectors from a fixed                                                   fixed high itself on all three designs, on uart at 0.89× the cost, and
+seed. Every iteration compares the candidate’s outputs, at RTL                                                       descends beyond it to end deepest everywhere, at mean FoMs of
+and on the synthesized netlist, against those of the unoptimized                                                     0.76, 0.77, and 0.73 against fixed high’s 0.79, 0.84, and 0.79. Across
+input design [28]. Because random vectors cannot exercise every                                                      the three designs the adaptive policy lowers the input design’s FoM
+structure, equivalence to the input design is additionally guaranteed                                                by 23–27% where the best fixed arm reaches 16–23%.
+                                                                                                                 5
+                                                                                                                                                                                                                   Cuyckens et al.
+
+
+   The gain comes from targeting extra effort effectively. Once the                                                                                             runs (n=6)                                   fixed med. ±std
+                                                                                                                                          70
+
+
+
+
+                                                                                        Best unnormalized FoM reached (lower is better)
+                                                                                                                                                                adaptive branch
+                                                                                                                                                                first switch to high                         adaptive ±std
+fixed medium stalls, spending more on it fails to lower the FoM                                                                                                 running at high effort
+                                                                                                                                                                human-optimized
+further, whereas the same cost under the adaptive policy succeeds.                                                                        60
+
+5.3    Close the gap to hand-optimized design                                                                                             50
+To test Ares where the optimization potential is known to be large,
+we select an open-source MX multiply-accumulate (MAC) unit                                                                                40
+whose published implementation is hand-optimized (MX_fp32) [7].
+From its specification and testbench, Claude Opus 4.6 drafted MX_LLM,                                                                     30
+a functionally equivalent MAC, and Ares optimizes that draft to-
+ward the hand-optimized design on the unnormalized FoM, the                                                                               20
+absolute area-power-delay product, where the gap between the                                                                                   0       5        10         15        20       5         10         15          20
+two is the improvement to recover. As Fig. 5 shows, Ares lowers                                                                                                 Cumulative cost (high-calls)
+MX_LLM’s FoM from 68.8 to a mean of 33.6 over six runs (deepest                  Figure 5: An LLM-created MX MAC optimized toward a
+27.5), closing up to 83% of the gap to MX_fp32’s published FoM                   human-optimized one (black). Left: six fixed-medium runs,
+of 18.9. The same optimizer improves the already hand-optimized                  each branching to a switch-to-high continuation (dashed) at
+MX_fp32 by only 16%, and more experience in the long-term mem-                   its first stall point, the amber band marking the high-effort
+ory, which here holds only the 21 training designs, would likely                 iterations. Right: the same runs averaged (mean±1 std bands)
+push the optimized draft deeper still.                                           for the fixed-medium and escalated arms.
+   The same six runs measure the adaptive policy’s benefit over                                                                     1.2                                                      returns 0.923; best
+
+                                                                              Best FoM reached
+                                                                               (lower is better)
+fixed medium run by run: each run is branched at its stall point                                                                    1.1                                                      candidate 0.909 discarded
+into two continuations, one staying at medium and one following                                                                                             v0 baseline (original RTL)
+                                                                                                                                    1.0
+the adaptive policy, drawn dashed in the left panel of Fig. 5. The                                                                  0.9
+escalated continuation reaches a lower FoM for the same number of                                                                                                                  Ares adaptive
+                                                                                                                                    0.8                                            REvolution
+iterations in five of the six runs, and the sixth ends within 2% of its                                                                                                            Dr. RTL timing-sel
+fixed-medium branch. The escalated iterations are more expensive,
+                                                                                                                                    0.7
+yet at the same cumulative cost the adaptive arm still typically sits                                                                              0       20         40           60       80      100            120          140
+at a lower FoM, lowering the mean from 42.1 to 33.6, as the right                                                                                                    Cumulative cost (high-calls)
+panel of Fig. 5 shows.                                                           Figure 6: Ares with adaptive effort, REvolution, and Dr. RTL
+   The six runs also expose the run-to-run variance of such opti-                optimizing controller from the same 𝑣 0 on the same flow,
+mizers: from the same 𝑣 0 , each fixed-medium run settles onto a                 25 candidates each, dots marking the verified ones. Dr. RTL’s
+plateau of its own, with endpoints scattered from 29.8 to 52.4 (std              timing-focused selection returns the annotated 0.923 and
+8.9). The escalation helps the runs that lag behind most, dropping               discards its ringed best candidate at 0.909.
+the three highest plateaus by 7.3 to 20.0 FoM points while the run               the same effort. Dr. RTL optimizes timing and area without power,
+that already reached 29.8 gains nothing. Because a designer pays                 and under the power-aware FoM the power its rewrites add cancels
+per run, a dependable result from fixed medium requires several                  much of their timing gain: its selection returns 0.923, discarding
+runs, exactly what the sampling and population strategies of prior               its best candidate under that FoM, 0.909. It spends 8.7× Ares’s
+optimizers do [22, 28]. The adaptive policy achieves this depend-                total over the same 25 iterations, computed from its transcripts. We
+ability within a single run, cutting the run-to-run variance by 58%              attribute the high cost to its multi-agent pipeline: every iteration
+(std 8.9 to 5.8) and the endpoint band from 22.6 to 17.6 FoM points              runs a critical-path analysis agent, several parallel rewrite agents,
+for a mean of 7.3 extra high-calls. A likely explanation is that the             and an evaluation agent [9] per proposed design.
+escalation lands exactly where a run is stuck, giving the lagging
+runs the deeper reasoning to leave their local minima.                           6                                          CONCLUSION
+                                                                                 We present Ares, an LLM-agent RTL optimizer that adapts its
+5.4    Comparison with SotA optimizers                                           per-call reasoning effort with a patience counter and computes
+On a shared commercial tool flow and the FoM of Eq. 1, we compare                the normalized dollar cost of every LLM call alongside the FoM it
+Ares against REvolution [22], the strongest evolutionary LLM-RTL                 reaches. Its central finding is that the quality and cost of such an
+framework that releases its code, adapted as an optimizer on our                 optimizer are set not by how its long-term memory is written but by
+flow, and against the skill-library optimizer Dr. RTL [9] with its               where its reasoning is spent. Escalating effort only where medium
+own memory file. All three optimize controller from the same 𝑣 0 .               effort stalls lowers the input design’s FoM by 23–27% where the
+As Fig. 6 shows, Ares reaches a FoM of 0.694 at a cost of about 15               best fixed effort reaches 16–23%. The same optimizer closes up to
+high-calls. REvolution runs its population of five RTL candidates                83% of the gap from an LLM draft to a hand-optimized multiply-
+per iteration for five iterations, as many total designs as Ares’s 25            accumulate unit and reaches a lower FoM than prior optimizers
+iterations, and stops at 0.943 at an equivalent cost of 10 high-effort           with 12% of the tokens of the strongest.
+calls on controller. We attribute this difference to REvolution
+lacking both mechanisms of Ares: its population stores candidates
+rather than distilled cross-design experience, and every call uses
+                                                                          6
+Ares: Adaptive Reasoning-Effort Steering for PPA- and Cost-Aware RTL Optimization with LLM Agents
+
+
+REFERENCES                                                                                     [20] Yao Lu, Shang Liu, Hangan Zhou, Wenji Fang, Qijun Zhang, and Zhiyao Xie. 2026.
+ [1] Manar Abdelatty, Maryam Nouh, Jacob K. Rosenstein, and Sherief Reda. 2025.                     A New Benchmark for the Appropriate Evaluation of RTL Code Optimization.
+     Pluto: A Benchmark for Evaluating Efficiency of LLM-generated Hardware Code.                   arXiv preprint arXiv:2601.01765 (2026).
+     arXiv preprint arXiv:2510.14756 (2025).                                                   [21] Elias Lumer, Faheem Nizar, Akshaya Jangiti, Kevin Frank, Anmol Gulati, Man-
+ [2] Mohammad Ali Alomrani, Yingxue Zhang, Derek Li, Qianyi Sun, Soumyasundar                       dar Phadate, and Vamse Kumar Subbiah. 2026. Don’t Break the Cache: An
+     Pal, Zhanguang Zhang, Yaochen Hu, Rohan Deepak Ajwani, Antonios Valkanas,                      Evaluation of Prompt Caching for Long-Horizon Agentic Tasks. arXiv preprint
+     Raika Karimi, Peng Cheng, Yunzhou Wang, Pengyi Liao, Hanrui Huang, Bin Wang,                   arXiv:2601.06007 (2026).
+     Jianye Hao, and Mark Coates. 2025. Reasoning on a Budget: A Survey of Adaptive            [22] Kyungjun Min, Kyumin Cho, Junhwan Jang, and Seokhyeong Kang. 2026. REvolu-
+     and Controllable Test-Time Compute in LLMs. arXiv preprint arXiv:2507.02076                    tion: An Evolutionary Framework for RTL Generation Driven by Large Language
+     (2025).                                                                                        Models. In Proceedings of the Asia and South Pacific Design Automation Conference
+ [3] Anthropic. 2025. Claude Code. https://code.claude.com/docs/en/overview.                        (ASP-DAC).
+ [4] Cadence Design Systems. 2025. JasperGold Formal Verification Platform.                    [23] Nangate Inc. 2011. NanGate FreePDK45 Open Cell Library. https://si2.org/
+     https://www.cadence.com/en_US/home/tools/system-design-and-verification/                       open-cell-library/.
+     formal-and-static-verification/jasper-verification-platform.html.                         [24] OpenCores. 2026. OpenCores: Open Source IP Cores. https://opencores.org.
+ [5] Lingjiao Chen, Matei Zaharia, and James Zou. 2024. FrugalGPT: How to Use Large            [25] OpenRouter. 2026. OpenRouter Documentation: Reasoning Tokens. https://
+     Language Models While Reducing Cost and Improving Performance. Transactions                    openrouter.ai/docs/use-cases/reasoning-tokens.
+     on Machine Learning Research (TMLR) (2024).                                               [26] OpenRouter. 2026. OpenRouter Models: Model and Pricing Index. https://
+ [6] Yuxi Chen, Junming Chen, Chenyu He, Yiwei Li, Yicheng Ji, Yifan Wu, Dingyu                     openrouter.ai/models.
+     Yang, Lansong Diao, Lidan Shou, Hongliang Zhang, Huan Li, and Gang Chen.                  [27] Jingyu Pan, Guanglei Zhou, Chen-Chia Chang, Isaac Jacobson, Jiang Hu, and
+     2026. Token Economics for LLM Agents: A Dual-View Study from Computing                         Yiran Chen. 2025. A Survey of Research in Large Language Models for Electronic
+     and Economics. arXiv preprint arXiv:2605.09104 (2026).                                         Design Automation. ACM Transactions on Design Automation of Electronic Systems
+ [7] Stef Cuyckens, Xiaoling Yi, Nitish Satya Murthy, Chao Fang, and Marian Verhelst.               (TODAES) 30, 3 (2025).
+     2025. Efficient Precision-Scalable Hardware for Microscaling (MX) Processing in           [28] Heng Ping, Peiyu Zhang, Zhenkun Wang, Shixuan Li, Anzhe Cheng, Wei Yang,
+     Robotics Learning. In Proceedings of the IEEE/ACM International Symposium on                   Paul Bogdan, and Shahin Nazarian. 2026. POET: Power-Oriented Evolutionary
+     Low Power Electronics and Design (ISLPED).                                                     Tuning for LLM-Based RTL PPA Optimization. arXiv preprint arXiv:2603.19333
+ [8] Wenji Fang, Mengming Li, Min Li, Zhiyuan Yan, Shang Liu, Hongce Zhang, and                     (2026).
+     Zhiyao Xie. 2025. AssertLLM: Generating and Evaluating Hardware Verification              [29] Vaishnavi Pulavarthi, Deeksha Nandal, Soham Dan, and Debjit Pal. 2025. As-
+     Assertions from Design Specifications via Multi-LLMs. In Proceedings of the Asia               sertionBench: A Benchmark to Evaluate Large-Language Models for Assertion
+     and South Pacific Design Automation Conference (ASP-DAC).                                      Generation. In Findings of the Association for Computational Linguistics: NAACL
+ [9] Wenji Fang, Yao Lu, Shang Liu, Jing Wang, Ziyan Guo, Junxian He, Fengbin Tu,                   2025. 8073–8080.
+     and Zhiyao Xie. 2026. Dr. RTL: Autonomous Agentic RTL Optimization through                [30] Zhengyuan Shi, Jingxin Wang, Tairan Cheng, Changran Xu, Weikang Qian, and
+     Tool-Grounded Self-Improvement. arXiv preprint arXiv:2604.14989 (2026).                        Qiang Xu. 2026. CktEvo: Repository-Level RTL Code Benchmark for Design
+[10] Shubham Gandhi, Manasi Patwardhan, Lovekesh Vig, and Gautam Shroff. 2024.                      Evolution. arXiv preprint arXiv:2603.08718 (2026).
+     BudgetMLAgent: A Cost-Effective LLM Multi-Agent System for Automating                     [31] Charlie Victor Snell, Jaehoon Lee, Kelvin Xu, and Aviral Kumar. 2025. Scaling LLM
+     Machine Learning Tasks. In Proceedings of the 4th International Conference on                  Test-Time Compute Optimally Can be More Effective than Scaling Parameters for
+     AI-ML Systems (AIMLSystems).                                                                   Reasoning. In The Thirteenth International Conference on Learning Representations
+[11] Pengfei Gao and Chao Peng. 2026. More with Less: An Empirical Study of Turn-                   (ICLR).
+     Control Strategies for Efficient Coding Agents. In Proceedings of the IEEE/ACM            [32] Yun-Da Tsai, Mingjie Liu, and Haoxing Ren. 2024. RTLFixer: Automatically
+     International Conference on Software Engineering (ICSE).                                       Fixing RTL Syntax Errors with Large Language Models. In Proceedings of the
+[12] Siyuan Guo, Cheng Deng, Ying Wen, Hechang Chen, Yi Chang, and Jun Wang.                        ACM/IEEE Design Automation Conference (DAC).
+     2024. DS-Agent: Automated Data Science by Empowering Large Language                       [33] Yaoxiang Wang, Qi Shi, ShangZhan Li, Qingguo Hu, Xinyu Yin, Bo Guo, Xu Han,
+     Models with Case-Based Reasoning. In Proceedings of the International Conference               Maosong Sun, and Jinsong Su. 2026. VeriAgent: A Tool-Integrated Multi-Agent
+     on Machine Learning (ICML).                                                                    System with Evolving Memory for PPA-Aware RTL Code Generation. arXiv
+[13] Chia-Tung Ho, Haoxing Ren, and Brucek Khailany. 2025. VerilogCoder: Au-                        preprint arXiv:2603.17613 (2026).
+     tonomous Verilog Coding Agents with Graph-based Planning and Abstract                     [34] Xufeng Yao, Yiwen Wang, Xing Li, Yingzhao Lian, Ran Chen, Mingxuan Yuan,
+     Syntax Tree (AST)-based Waveform Tracing Tool. In Proceedings of the AAAI                      Hong Xu, and Bei Yu. 2024. RTLRewriter: Methodologies for Large Models aided
+     Conference on Artificial Intelligence (AAAI).                                                  RTL Code Optimization. In Proceedings of the IEEE/ACM International Conference
+[14] Bowen Jin, TJ Collins, Donghan Yu, Mert Cemri, Shenao Zhang, Mengyu Li, Jay                    on Computer-Aided Design (ICCAD).
+     Tang, Tian Qin, Zhiyang Xu, Jiarui Lu, Guoli Yin, Jiawei Han, and Zirui Wang.             [35] Haozhen Zhang, Quanyu Long, Jianzhu Bao, Tao Feng, Weizhi Zhang, Haodong
+     2025. Controlling Performance and Budget of a Centralized Multi-agent LLM                      Yue, and Wenya Wang. 2026. MemSkill: Learning and Evolving Memory Skills
+     System with Reinforcement Learning. arXiv preprint arXiv:2511.02755 (2025).                    for Self-Evolving Agents. arXiv preprint arXiv:2602.02474 (2026).
+[15] Yushu Li, Wenlong Deng, Jiajin Li, and Xiaoxiao Li. 2026. Spend Less, Rea-                [36] Zixi Zhang, Balint Szekely, Pedro Gimenes, Greg Chadwick, Hugo McNally,
+     son Better: Budget-Aware Value Tree Search for LLM Agents. arXiv preprint                      Jianyi Cheng, Robert Mullins, and Yiren Zhao. 2025. LLM4DV: Using Large
+     arXiv:2603.12634 (2026).                                                                       Language Models for Hardware Test Stimuli Generation. In 2025 IEEE 33rd Annual
+[16] Mingjie Liu, Teodor-Dumitru Ene, Robert Kirby, Chris Cheng, Nathaniel Pinck-                   International Symposium on Field-Programmable Custom Computing Machines
+     ney, Rongjian Liang, Jonah Alben, Himyanshu Anand, Sanmitra Banerjee, Ismet                    (FCCM). 133–137.
+     Bayraktaroglu, Bonita Bhaskaran, Bryan Catanzaro, Arjun Chaudhuri, Sharon                 [37] Huichi Zhou, Yihang Chen, Siyuan Guo, Xue Yan, Kin Hei Lee, Zihan Wang,
+     Clay, Bill Dally, Laura Dang, Parikshit Deshpande, Siddhanth Dhodhi, Sameer                    Ka Yiu Lee, Guchun Zhang, Kun Shao, Linyi Yang, and Jun Wang. 2025. Me-
+     Halepete, Eric Hill, Jiashang Hu, Sumit Jain, Ankit Jindal, Brucek Khailany, George            mento: Fine-tuning LLM Agents without Fine-tuning LLMs. arXiv preprint
+     Kokai, Kishor Kunal, Xiaowei Li, Charley Lind, Hao Liu, Stuart Oberman, Su-                    arXiv:2508.16153 (2025).
+     jeet Omar, Ghasem Pasandi, Sreedhar Pratty, Jonathan Raiman, Ambar Sarkar,                [38] Huichi Zhou, Siyuan Guo, Anjie Liu, Zhongwei Yu, Ziqin Gong, Bowen Zhao,
+     Zhengjiang Shao, Hanfei Sun, Pratik P Suthar, Varun Tej, Walker Turner, Kaizhe                 Zhixun Chen, Menglong Zhang, Yihang Chen, Jinsong Li, Runyu Yang, Qiangbin
+     Xu, and Haoxing Ren. 2023. ChipNeMo: Domain-Adapted LLMs for Chip Design.                      Liu, Xinlei Yu, Jianmin Zhou, Na Wang, Chunyang Sun, and Jun Wang. 2026.
+     arXiv preprint arXiv:2311.00176 (2023).                                                        Memento-Skills: Let Agents Design Agents. arXiv preprint arXiv:2603.18743
+[17] Mingjie Liu, Nathaniel Pinckney, Brucek Khailany, and Haoxing Ren. 2023. Ver-                  (2026).
+     ilogEval: Evaluating Large Language Models for Verilog Code Generation. In
+     Proceedings of the IEEE/ACM International Conference on Computer-Aided Design
+     (ICCAD).
+[18] Shang Liu, Wenji Fang, Yao Lu, Qijun Zhang, Hongce Zhang, and Zhiyao Xie.
+     2024. RTLCoder: Outperforming GPT-3.5 in Design RTL Generation with Our
+     Open-Source Dataset and Lightweight Solution. In 2024 IEEE LLM Aided Design
+     Workshop (LAD). 1–5.
+[19] Yao Lu, Shang Liu, Qijun Zhang, and Zhiyao Xie. 2024. RTLLM: An Open-
+     Source Benchmark for Design RTL Generation with Large Language Model. In
+     Proceedings of the Asia and South Pacific Design Automation Conference (ASP-
+     DAC).
+
+
+                                                                                           7
+

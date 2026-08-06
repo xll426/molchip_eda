@@ -1,0 +1,615 @@
+                                           SpecAlign: A Semantic Alignment Framework for
+                                                 SystemVerilog Assertion Generation
+                                                               Jaime Rafael Imperial                                                Hao Zheng
+                                               Bellini College of Cybersecurity, AI, and Computing            Bellini College of Cybersecurity, AI, and Computing
+                                                            University of South Florida                                    University of South Florida
+                                                                   Tampa, USA                                                     Tampa, USA
+                                                                 imperialj@usf.edu                                              haozheng@usf.edu
+
+
+
+                                            Abstract—Existing Large Language Model (LLM) approaches             A concrete example is the following LLM-generated asser-
+arXiv:2605.25181v1 [cs.AI] 24 May 2026
+
+
+
+
+                                         to SystemVerilog Assertion (SVA) generation primarily focus         tion:
+                                         on syntactic validity and formal verification outcomes, while
+                                         semantic alignment between generated assertions and natural           •   @(posedge wb clk i) disable iff (arst i !== ARST LVL
+                                         language specifications remains difficult to quantify. As a re-           || wb rst i) !$isunknown(wb clk i);
+                                         sult, hallucinated or misaligned SVAs can reduce confidence
+                                         and increase debugging efforts in the absence of golden RTL.           This assertion states that, on the positive edge of wb clk i
+                                         This paper presents S PEC A LIGN, a framework for semantic          and outside reset, wb clk i is not unknown. Although it may
+                                         evaluation and refinement of LLM-generated SVAs. SpecAlign          pass syntax checking and be proven by FV, it is semantically
+                                         introduces two iterative alignment loops that assess both natural
+                                         language properties and SVAs against the design specification       ineffective because it samples the same clock on the edge that
+                                         using entailment-based classification. We improve alignment         triggers the property. Thus, the assertion can be formally valid
+                                         decisions by generating multiple reasoning paths using chain-of-    while providing little useful evidence that the generated SVA
+                                         thought prompting and aggregating them via a self-consistency       captures the intended design behavior.
+                                         voting mechanism. Misaligned assertions are analyzed to generate
+                                         actionable feedback for refinement. We further define a quan-          This example shows that FV-based evaluation alone is insuf-
+                                         titative alignment score to measure semantic consistency across     ficient for assessing LLM-generated SVAs. Formal verification
+                                         iterations. Experimental results demonstrate that SpecAlign ef-     determines whether an assertion holds on a particular RTL
+                                         fectively detects semantic inconsistencies and improves assertion   model under given assumptions, while semantic alignment
+                                         alignment without relying on golden RTL, providing a scalable       determines whether the assertion expresses behavior supported
+                                         complement to traditional formal verification evaluation metrics.
+                                                                                                             by the natural language specification. In the absence of
+                                            Index Terms—Large Language Model, SystemVerilog Asser-           golden RTL, manual inspection of the generated SVAs reduces
+                                         tion                                                                confidence and increases debugging efforts [3]. Furthermore,
+                                                                                                             FV engines face scalability limitations such as state-space
+                                                               I. I NTRODUCTION                              explosion, making it difficult to use formal proof alone as
+                                            The increasing complexity of modern hardware designs             a scalable evaluation mechanism for large sets of generated
+                                         has motivated the use of Large Language Models (LLMs)               assertions targetting large complext designs [4].
+                                         in the VLSI design flow, particularly for verification tasks           This paper introduces SpecAlign, a specification-centric
+                                         such as Assertion-Based Verification (ABV) [1]. ABV uses            framework for evaluating and refining the semantic alignment
+                                         formal properties, commonly written as SystemVerilog Asser-         of LLM-generated SVAs without relying on golden RTL.
+                                         tions (SVAs), to capture expected design behavior and check         SpecAlign uses two iterative alignment loops: a Property
+                                         whether the Register-Transfer Level (RTL) implementation            Alignment Loop, which checks natural language properties
+                                         satisfies the intended specification.                               against the design specification, and an SVA Alignment Loop,
+                                            LLM-generated SVAs are useful only if they are both              which checks generated SVAs after converting them into
+                                         syntactically valid and semantically aligned with the design        natural language summaries. Each loop performs alignment
+                                         specification. Syntactic validity can be checked automatically,     checking and inconsistency analysis to identify unsupported
+                                         and formal verification (FV) tools can determine whether an         or contradictory behavior and generate structured feedback
+                                         assertion is proven or produces a counterexample on a given         for refinement. By separating semantic correctness from RTL
+                                         RTL implementation. However, these outcomes do not directly         proof outcomes, SpecAlign provides a scalable complement
+                                         answer whether the generated assertion correctly reflects the       to traditional FV-based evaluation and improves confidence in
+                                         behaviroal semantics captured in the natural language spec-         LLM-generated assertions.
+                                         ification. This distinction is important because LLMs can
+                                                                                                                Our contributions are as follows:
+                                         hallucinate unsupported behavior, introduce incorrect timing
+                                         or signal relationships, or generate assertions that are formally     •   We propose a novel semantic alignment evaluation frame-
+                                         provable but semantically ineffective [2].                                work for LLM-generated SVAs that assesses their validity
+      against natural language specifications, without relying on   chain-of-thought paths and aggregating their outputs to select
+      FV applied to golden RTL.                                     the most consistent answer [12]. The method is based on the
+  •   We develop a semantic alignment framework for iterative       observation that correct reasoning paths often converge on
+      refinement consisting of Alignment Checking, Inconsis-        the same conclusion, and it improves performance on arith-
+      tency Analysis, and SVA Summary Extraction, designed          metic, commonsense, and symbolic reasoning tasks without
+      to be easily integrated into existing LLM-based SVA           additional training or supervision. We adapt this idea to Judge
+      generation frameworks.                                        LLMs by sampling multiple semantic-alignment verdicts for
+  •   We define an alignment scoring metric based on semantic       LLM-generated properties or SVAs and aggregating the clas-
+      entailment classification to quantitatively measure spec-     sifications. n our alignment loops, self-consistency acts as a
+      ification alignment, providing a scalable alternative to      semantic validation mechanism that improves the reliability of
+      traditional FV-based correctness evaluation.                  misalignment detection and downstream feedback generation.
+  •   We present a semantic inconsistency analysis mechanism
+      that generates feedback for contradicting properties and      C. Self-Refine
+      SVAs, supporting manual review or automated refine-              Madaan et al. introduce SELF-REFINE, an iterative frame-
+      ment, and improving confidence in LLM-generated SVAs.         work in which a single LLM generates an output, critiques
+  •   Experiments on designs including APB and UART show            it with natural-language feedback, and refines it accordingly
+      that semantic refinement reduces contradictory assertions,    [13]. The key idea is that LLMs can serve as their own
+      converting 58 and 71 contradictory SVAs for APB and           critics, producing actionable feedback without supervised
+      UART, respectively, into semantically aligned SVAs.           data, external reward models, or additional training. SELF-
+                     II. R ELATED W ORK                             REFINE improves performance across tasks such as code
+                                                                    optimization, reasoning, and natural-language generation. Our
+A. SVA Generation using LLMs                                        work similarly uses iterative feedback, but for a different
+   Several approaches have explored various strategies to di-       purpose. Rather than directly refining outputs to improve
+rectly synthesize assertions from design specifications [5]–        general task performance, we use structured feedback within a
+[8] while other incorporate RTL into the generation process         specification-centric semantic alignment framework for LLM-
+[9]–[11]. These methods typically treat SVA generation as           generated SVAs. Alignment Checking and Inconsistency Anal-
+a sequence-to-sequence translation task, mapping informal           ysis identify mismatches between the specification and gener-
+requirements to formal properties using carefully engineered        ated properties or assertions, then provide guidance for correc-
+prompts or instruction-tuned models. While promising, such          tion. Unlike SELF-REFINE, our framework uses feedback to
+approaches largely rely on implicit reasoning within the LLM        assess and improve confidence in semantic correctness without
+and do not explicitly validate semantic alignment between the       requiring golden RTL.
+generated assertions and the underlying specification.
+   A SSERT LLM [5] is a representative example of                          III. A NALYSIS OF SVA G ENERATION W ORK
+specification-driven SVA synthesis. It focuses on extracting
+                                                                       One explicit issue with current formal verification outcomes
+properties directly from natural language descriptions
+                                                                    can be shown within Table I which illustrates the difference
+using LLM prompting and post-processing techniques.
+                                                                    comparing JasperGold outcomes with SpecAlign semantic
+Although effective in generating syntactically valid assertions,
+                                                                    labels for LLM-generated SVAs.
+its pipeline does not explicitly incorporate structured
+intermediate representations or systematic semantic validation
+                                                                                              TABLE I
+mechanisms to detect inconsistencies or contradictions in             C OMPARISON BETWEEN JASPER G OLD OUTCOMES AND S PEC A LIGN
+generated properties.                                                               SEMANTIC ALIGNMENT LABELS .
+   More recently, A SSERTION F ORGE [9] introduces a
+                                                                         SpecAlign Label   JasperGold Proven   JasperGold CEX
+knowledge-graph-based framework that explores structured in-             Entails                  55                  23
+formation extracted from both RTL code and natural language              Contradicts              46                  43
+specifications. By constructing a unified structured represen-           Unknown                  51                  63
+tation, A SSERTION F ORGE enables multi-resolution context
+synthesis for improved prompt construction. This structured            The 46 cases in which JasperGold proves assertions labeled
+grounding significantly improves the quality and relevance of       as Contradicts by SpecAlign demonstrate that formal provabil-
+generated SVAs. However, its primary focus lies in improving        ity is not equivalent to semantic correctness. These assertions
+generation quality through structured context integration rather    may be logically true over the RTL implementation but still
+than explicitly quantifying semantic alignment or iteratively       encode behavior that is unsupported, incorrectly scoped, over-
+refining assertions based on contradiction analysis.                constrained, or vacuous with respect to the specification.
+                                                                    Therefore, proof success alone can overestimate the quality
+B. Self-Consistency Checking                                        of LLM-generated assertions because it treats any RTL-valid
+   Wang et al. propose self-consistency, a decoding strategy        property as useful, even when the property does not capture
+that improves LLM reasoning by sampling multiple diverse            meaningful specification intent.
+   Conversely, the 23 cases labeled as Entails by SpecAlign         descriptions Xi that can be treated uniformly in alignment
+but producing counterexamples in JasperGold can represent           checking.
+errors in the RTL, however, the use of golden RTL can rule            The loops are composed of 3 key stages: Alignment Check-
+this out. Thus, these represent false positives in classification   ing, Inconsistency Analysis, and Evidence Extraction.
+which are not within the scope of the current work.                   1) Alignment Checking: Performs classification on normal-
+   The large number of Unknown labels highlights another lim-             ized natural language description Xi . A given natural
+itation of direct SVA generation which is that LLM-generated              language description moves on to Evidence Extraction
+assertions frequently contain implementation-specific assump-             if the verdict is aligned or unknown, or to Inconsistency
+tions that are neither explicitly supported nor contradicted by           Analysis if the verdict is misaligned.
+the natural-language specification. These are assumed to be           2) Evidence Extraction: Uses each natural language de-
+timing behaviors, reset behavior, signal stability requirements,          scription Xi and set of reasoning traces Ri to extract
+or internal implementation constraints and therefore not within           evidence for specification supported elements of Xi
+the scope of the current work. Rather than forcing these                  while identifying the elements that are neither supported
+cases into correct or incorrect categories, SpecAlign separates           nor unsupported in unknown cases.
+them as Unknown to identify where the specification lacks             3) Inconsistency Analysis: Uses each natural language de-
+enough information for semantic validation. This category                 scription Xi and set of reasoning traces Ri to generate
+is useful because it distinguishes true contradictions from               structured feedback Fi . Fi is used to guide regeneration
+underspecified behavior and can guide either manual review                of Pi or Ai in order to get a semantically consistent
+or specification refinement.                                              property Pi′ or A′i .
+   Overall, this motivates the need for a semantic evaluation
+layer that reduces the number of contradicting assertions           B. Alignment Checking
+through iterative refinement to result in an entailing case.           Effective SVAs should be able to formalize functional
+Formal verification remains necessary for determining whether       descriptions into SVA syntax while maintaining the semantics
+assertions hold on RTL, but it does not directly determine          written in a natural language specification. As such, the goal
+whether those assertions express the intended behavior de-          of Alignment Checking would be to verify that a natural
+scribed in the specification.                                       language description Xi of an SVA does not contradict any
+                                                                    statement in S. SVAs frequently contain implementation-
+                     IV. M ETHODOLOGY                               specific constraints that are not explicitly described in S, but
+                                                                    may be useful for verification. These implementation-specific
+  In this section, we introduce the architecture for SpecAlign      constraints cannot be verified with the specification alone and
+(Figure 1), a framework for semantic evaluation and refine-         are therefore categorized as UNKNOWN.
+ment of LLM-generated SVAs                                             SVAs can be classified into three categories:
+                                                                       • CONTRADICTS: At least one element within the natural
+A. Problem Setup and Architectural Overview
+                                                                          language description is contradicted in the specification.
+   Given a design specification S, a typical SVA generation            • ENTAILS: All elements within the natural language
+methodology first extracts a set of natural language properties           description are supported in the specification.
+P = {P1 , ..., Pn } from S, then maps those properties to a set        • UNKNOWN: At least one element within the natural
+of corresponding SystemVerilog Assertions A = {A1 , ..., An }.            language description is neither supported nor contradicted
+In general, validity is evaluated as a post-generation step using         in the specification.
+golden RTL and formal verification tools such as Cadence               In the SVA Alignment Loop, the first step is to perform the
+JasperGold.                                                         aforementioned normalization which is described in Section
+   In our proposed framework, we embed validity into SVA            III-D. Once normalized, alignment checking is done with a
+generation by enforcing semantic alignment throughout the           reasoning model using Chain-of-Thought (COT) prompting in
+generation process. This enables semantic alignment assess-         order to generate k reasoning traces that are used as a basis
+ment without the presence of golden RTL while improving             for specification exploration within the Inconsistency Analysis
+explainability through the form of evidence-based SVA ex-           and Evidence Extraction stages. Given a natural language
+planations. The framework operates on two representations of        description Xi and a reference file such as the specification
+behavioral intent: properties P and assertions A.                   S, the reasoning model is prompted along k reasoning paths
+   While the representations P and A are syntactically differ-      to provide a sub-verdict vi,j of 0, 1, or 2, for CONTRADICTS,
+ent, both representations describe the functional behavior of       ENTAILS, and UNKNOWN respectively. The sub-verdicts are
+the design implementation relative to S. To unify the align-        aggregated together to get a final verdict Vi using majority
+ment checking task between representations, each assertion Ai       voting. The final verdict by majority voting is defined as
+is normalized into a natural language summary Ni during a           follows:
+process referred to as Natural Language Summary Extraction.                               k
+After normalization, both Pi and Ni are on equal semantic
+                                                                                         X
+                                                                             Vi = argmax(   1[vij = y], y ∈ {0, 1, 2})
+levels and combined into one term called natural language                                   j=1
+      Standard SVA Method
+
+
+                                                               Property Extraction                                                                SVA Generation
+                                                                                                                                                                                           Final Set of
+                                                                Extract relevant                                                             Use the NL properties to                      Assertions
+                                                          information from the spec
+                                                                                                                                              generate a list of SVAs
+                                                            to create NL properties
+                                                                                                      Property
+                   Design
+                                                                                                    Specification
+                 Specification
+                                                                                                        Bank
+
+
+
+                                                                                  Fig. 1. Standard SVA Generation Workflow
+
+                                    Property Alignment Loop                                                                                  SVA Alignment Loop
+
+                                                           Alignment Checking                                                             Alignment Checking
+
+                                                           Classify property on                                                            Classify summary on
+       𝑷’                                                  alignment with spec                                                            alignment with spec or                                     𝑨’
+                Inconsistency Analysis                                                                                                    aligned property bank             Inconsistency Analysis
+
+                Generate feedback and                                𝑷, 𝑽, 𝑹                                                                                                Generate feedback and
+                                                   𝑵𝒐                                                                                          𝑨, 𝑵, 𝑽, 𝑹              𝑵𝒐
+                  refine the property                                                                                                                                          refine the SVA
+
+                                                    Aligned?                                                                                                    Aligned?
+
+                                                                                                    Aligned
+                 Evidence Extraction                                                                Property                                                                 Evidence Extraction
+                                                  𝒀𝒆𝒔                                                 Bank                                                          𝒀𝒆𝒔
+                 Extract evidence from                                                                                                                                       Extract evidence from
+                          spec                                                                                                                                                    design spec
+       𝑷, 𝑬                                                                                                                                                                                          𝑨, 𝑬
+
+
+
+                                                                                                SVA Method
+
+                                          Property Extraction                                                     SVA Generation
+
+                                               Extract relevant                                                Use the NL properties to
+                                         information from the spec                                              generate a list of SVAs
+                                           to create NL properties
+              Design                                                           Property Bank                                                                SVA Bank                 Aligned SVA
+            Specification                                                                                                                                                                Bank
+
+
+
+
+                                                                                  Fig. 2. Overview of SpecAlign Architecture
+
+
+
+With three possible verdicts, ties may take place between                                                 of semantically entailed assertions among the total amount.
+verdicts so the most conservative verdict is chosen where                                                                                E
+CONTRADICTS is given the highest priority, followed by                                                                                                        at =
+                                                                                                                                          n
+UNKNOWN, then ENTAILS.
+                                                                                                          The goal of the refinement loops is to increase the alignment
+   The reference file for comparison is dependent on which                                                score a within a fixed number of iterations.
+alignment loop is currently being executed.
+                                                                                                          C. Inconsistency Analysis and Evidence Extraction
+  •   The Property Alignment Loop uses the design specifica-
+      tion S as the reference file.                                                                          While distinct, these two stages use similar inputs in the
+  •   The SVA Alignment Loop uses the aligned property                                                    form of the set of reasoning traces Ri produced during the
+      bank if it is available by verifying if a natural language                                          Alignment Checking stage and the specification S in order
+      description Xi does not contradict within any property in                                           to generate structured feedback Fi or evidence Ei . The set
+      the bank. This is done because specification documents                                              of reasoning traces serve as contextual guidance as these
+      can contain scattered information on relevant properties                                            summarize key behaviors and information during comparison,
+      and noise irrelevant to any given Xi [9]. If there is no                                            but do not contain all the information required to provide
+      property bank available, then the SVA alignment loop                                                evidence to support or correct an SVA. An example of a
+      may use the design specification S as the reference file.                                           reasoning trace is provided in Appendix A that demonstrates
+                                                                                                          the basic information that is presented within a reasoning trace.
+The prompts for the different loops are listed in Appendix B.                                                1) Inconsistency Analysis: In the contradicting case, the
+   An alignment score a will be calculated for a given iteration                                          feedback is designed so that it can be specific and actionable.
+using the ratio of final verdicts labeled as ENTAILS E over the                                           Previous work on iterative refinement for LLMs have found
+total number of assertions n. This score reflects the proportion                                          that specific, actionable feedback improves outputs in tasks
+like Code Optimization [13]. Thus, the prompt instructs the          •    TRIGGER is identified as the clock in which a property is
+LLM to identify the contradicting elements of the natural                 evaluated and will be combined with disableiff to identify
+language description, identify the correct behavior defined               when a property should be triggered.
+in the specification, and generate the specific and actionable       •    ANTECEDENT is a boolean expression that defines
+instructions to correct the intent of the SVA or natural lan-             when a conditional obligation should be activated, op-
+guage property. The prompt used for contradicting feedback                tionally being inverted with not.
+generation is provided in Appendix C.                                •    IMPLICATION OP represent |-> and |=> which re-
+   The next step is to refine the natural language summary                lates to the temporal relationship of the antecedent and
+Ni or SVA Ai using the structured feedback Fi and the                     consequent.
+design specification S. The LLM in this stage is instructed          •    CONSEQUENT is a boolean expression that defines the
+to regenerate the property to be semantically consistent and              obligation that must hold given the antecedent.
+explicitly define categories typically specified in assertions        Each of these components are explicitly identified from
+such as the trigger condition without introducing any new          the SVA and converted into equivalent phrases in natural
+signals, behaviors, or conditions that are not present in the      language, composing into a single structured natural language
+specification or feedback. The prompt used for refinement is       description of the SVA. The prompt for extracting the natural
+provided in Appendix D.                                            language summary is in Appendix F.
+   The refined property is returned back to the alignment
+checking stage to determine if it is aligned with the specifica-                           V. E XPERIMENTS
+tion after refinement. This loop can repeat until a fixed number
+of iterations or until all properties or SVAs are semantically     A. Datasets
+aligned and can be added to the aligned banks.
+                                                                      We evaluate our approach on three hardware designs: APB
+   2) Evidence Extraction: In the entailment case, support-        and UART. These designs represent two common communi-
+ing evidence is extracted from the specification to facilitate     cation protocols that represent a range of complexity. Table II
+optional human inspection and strengthen confidence in the         introduces the number of pages and tokens that are associated
+conclusion by identifying specification elements that directly     with each file.
+justify the SVA or property. This process prompts an LLM
+to generate a semantic summary of the SVA or property
+                                                                                              TABLE II
+and to extract relevant supporting quotes, along with their          OVERVIEW OF H ARDWARE D ESIGNS USED IN E VALUATION . T OKEN
+corresponding locations in the specification document. The           C OUNTS ARE OBTAINED USING THE CL 100 K BASE TOKENIZER [15]
+extracted evidence enables manual review of entailment cases
+to further validate the results. The prompt used for evidence            Design   Source   Description             #Pages   #Tokens
+extraction is provided in Appendix E.                                    APB      [16]     APB to I2C Interface     12       2,746
+   In the unknown case, a LLM is prompted to identify and                UART     [5]      UART to Bus Interface    10       3,160
+categorize which elements are explicitly supported by the
+specification and which elements are ambiguous or undefined.
+Direct quotes and location information is extracted for ex-        B. Implementation Details and Baseline
+plicitly supported elements. Any assumptions that need to be
+                                                                      For SpecAlign, we use GPT-5 [17] as the LLM backend. For
+true for the SVA to be semantically aligned is identified and
+                                                                   baseline performances, we used the provided results for I2C in
+multiple interpretations of the SVA or property are generated
+                                                                   SANGAM [6] and reproduced the results for AssertionForge
+for it to be either aligned or misaligned.
+                                                                   [9] using the default settings. We use a maximum of 3
+D. Natural Language Summary Extraction                             refinement iterations for both the Property and SVA Alignment
+                                                                   Loops and sampled the majority along 3 reasoning paths with
+   In this stage, natural language summaries Ni are generated
+                                                                   ”high” reasoning effort. Additionally, we compared the SVA
+for each SVA A⟩ ∈ A. This is done in order to normalize
+                                                                   alignment loop to the original specification document, not
+the representation of formally-specified SVAs into natural
+                                                                   to the property bank. We compare SpecAlign against Asser-
+language summaries so that these can be compared on equal
+                                                                   tionForge [9] as a baseline. An LLM-based SVA generation
+functional levels. Natural language summaries Ni are intended
+                                                                   method that implements a Knowledge Graph to construct
+to preserve the behavioral intent of the SVA while enabling
+                                                                   SVAs from natural language specifications and RTL.
+flexibility with its syntactic structure.
+   The LLM is prompted to explicitly identify individual com-
+                                                                   C. Evaluation Protocol
+ponents of an SVA based on a generalized structure, including
+the antecedent, consequent, temporal operators, and trigger           We measure the number of total SVAs to be included
+conditions [14]. The general structure of an SVA property is       in the final set (#SVA) and the alignment score (AS) with
+as follows:                                                        its breakdown between entailing SVAs (E), the number of
+   @[TRIGGER] [not] [ANTECEDENT] [IMPLICA-                         contradicting SVAs (C), and the number of unknown SVAs
+TION OP] [disableiff EXP] [not] [CONSEQUENT]                       (U).
+                           TABLE III
+       E VALUATION RESULTS AFTER 3 ALIGNMENT ITERATIONS
+                                                                                              APB
+         Model            #SVA    AS
+                                              Category                                        UART
+                                                                                  0.25
+                                         E      C        U
+                                APB
+                                                                                  0.20
+         AssertionForge   442     0.02    8    148       286
+
+
+
+
+                                                                    Align Score
+         SpecAlign        442     0.15   66     0        376
+                                                                                  0.15
+                             UART
+         AssertionForge   325     0.06   21    142       162
+         SpecAlign        319     0.28   92     6        227                      0.10
+
+                                                                                  0.05
+D. Results and Analysis
+   In both cases, SpecAlign judges a large amount as Unknown                             0              1               2        3
+                                                                                                            Iteration
+which is explained by the use of both the Specification and
+RTL in AssertionForge. Manual review of unknown cases
+                                                                                                     Fig. 3. UART and APB
+shows that the large majority of given assertions demonstrate
+behavior not present within the specification.
+   For APB, AssertionForge generated a large set of 342            key conclusion is that SpecAlign reduces the number of clearly
+SVAs, but only 8 were classified as semantically entailing the     contradicting assertions while preserving cases that require
+specification, resulting in a very low alignment score of 0.02.    additional specification support as unknown. This distinction
+In contrast, 148 assertions were classified as contradicting and   is important because unknown assertions may still represent
+286 were classified as unknown. This suggests that the APB         useful verification intent, but they should not be treated as
+assertions produced by the baseline are largely not recoverable    specification-supported without further evidence. Additionally,
+from the natural-language specification alone. Many of these       the inclusion of RTL in AssertionForge likely causes many
+assertions either encode behavior that directly conflicts with     assertions to capture implementation-specific behavior that
+the specification or introduce implementation-specific details     is visible in the RTL but absent from the natural-language
+that are not explicitly described. Therefore, the APB results      specification. Overall, the results support the need for semantic
+highlight the limitation of relying on structured generation       alignment that distinguishes between entailed, contradicting,
+which produce many SVAs that do not necessarily imply              and unknown behavior in LLM-generated SVA workflows.
+specification-aligned semantics.
+   For UART, AssertionForge also produced a large number of                                  VI. C ONCLUSION AND F UTURE W ORK
+SVAs, with 325 total assertions, but only 21 were classified          This paper introduced SpecAlign, a semantic alignment
+as entailing, giving an alignment score of 0.06. The baseline      framework for evaluating and refining LLM-generated Sys-
+also produced 142 contradicting assertions and 162 unknown         temVerilog Assertions by checking whether they are seman-
+assertions, showing a similar issue where many generated           tically aligned with natural-language design specifications
+SVAs are either misaligned or not directly supported by the        rather than relying only on syntax or formal verification
+specification. After applying SpecAlign, the UART alignment        outcomes. The experimental results on two designs show that
+score increased to 0.28, with 92 entailing assertions and          semantic alignment is able to improve cases where the SVA
+only 6 contradicting assertions out of 319 total SVAs. This        contradicts the design specification, particularly in cases that
+sharp reduction in contradictions suggests that SpecAlign’s        formal verification does not cover. SpecAlign reduces clearly
+refinement loop is effective at removing or correcting clearly     contradictory assertions and improves alignment quality, while
+unsupported behavior. Although the number of unknown cases         the increase in Unknown cases reveals that many generated
+increases to 227, this reflects a more conservative classifi-      SVAs depend on implementation-specific details not explicitly
+cation strategy in which implementation-specific behavior is       defined in the specification. While our work is a promising
+separated from clearly specification-supported behavior rather     improvement, future works involves a more sophisticated
+than being incorrectly treated as entailed.                        classification methodology, improving the refinement process
+   Taken together, the APB and UART results demonstrate            to better capture syntactical errors, and extension to other
+that LLM-generated SVAs require semantic evaluation beyond         hardware design automation tasks such as RTL generation and
+syntactic correctness or assertion volume. APB shows that the      debugging.
+baseline can generate many assertions while producing very
+few specification-entailing properties, and UART shows that
+the same pattern can be improved through iterative semantic
+refinement. Figure 3 demonstrates the effectiveness of the
+refinement loops and the reduction of contradicting cases. The
+                                R EFERENCES
+ [1] B. Mali, K. Maddala, V. Gupta, S. Reddy, C. Karfa, and R. Karri,
+     “Chiraag: Chatgpt informed rapid and automated assertion generation,”
+     in 2024 IEEE Computer Society Annual Symposium on VLSI (ISVLSI),
+     pp. 680–683, 2024.
+ [2] Z. Ji, N. Lee, R. Frieske, T. Yu, D. Su, Y. Xu, E. Ishii, Y. J. Bang,
+     A. Madotto, and P. Fung, “Survey of hallucination in natural language
+     generation,” ACM Comput. Surv., vol. 55, Mar. 2023.
+ [3] D. N. Gadde, A. Kumar, T. Nalapat, E. Rezunov, and F. Cappellini, “All
+     artificial, less intelligence: Genai through the lens of formal verification,”
+     2024.
+ [4] H. Witharana, Y. Lyu, S. Charles, and P. Mishra, “A survey on assertion-
+     based hardware verification,” ACM Comput. Surv., vol. 54, Sept. 2022.
+ [5] Z. Yan, W. Fang, M. Li, M. Li, S. Liu, Z. Xie, and H. Zhang, “Assertllm:
+     Generating hardware verification assertions from design specifications
+     via multi-llms,” in Proceedings of the 30th Asia and South Pacific
+     Design Automation Conference, ASPDAC ’25, (New York, NY, USA),
+     p. 614–621, Association for Computing Machinery, 2025.
+ [6] A. Gupta, B. Mali, and C. Karfa, “Sangam: Systemverilog assertion
+     generation via monte carlo tree self-refine,” in 2025 IEEE International
+     Conference on LLM-Aided Design (ICLAD), pp. 180–187, 2025.
+ [7] E. Tian, Y. Ci, Q. Yang, Y. Li, and Z. Lyu, “Assertcoder: Llm-based
+     assertion generation via multimodal specification extraction,” 2025.
+ [8] F. Wu, E. Pan, R. Kande, M. Quinn, A. Tyagi, D. K. Houngninou,
+     J. Rajendran, and J. Hu, “Spec2assertion: Automatic pre-rtl assertion
+     generation using large language models with progressive regularization,”
+     2025.
+ [9] Y. Bai, G. B. Hamad, S. Suhaib, and H. Ren, “Assertionforge: Enhancing
+     formal verification assertion generation with structured representation of
+     specifications and rtl,” in 2025 IEEE International Conference on LLM-
+     Aided Design (ICLAD), pp. 85–92, 2025.
+[10] S. Paul, A. Banerjee, S. Ghosh, S. Surendran, and R. K. Gajavelly, “Lisa:
+     Llm informed systemverilog assertion generation with rag and chain-of-
+     thought,” in 2025 IEEE Computer Society Annual Symposium on VLSI
+     (ISVLSI), vol. 1, pp. 1–6, 2025.
+[11] H. Lyu, Y. Wang, Y. Du, M. Shi, Z. Chao, W. Li, T. Wang, and H. Li,
+     “Assertgen: Enhancement of llm-aided assertion generation through
+     cross-layer signal bridging,” 2025.
+[12] X. Wang, J. Wei, D. Schuurmans, Q. Le, E. Chi, S. Narang, A. Chowdh-
+     ery, and D. Zhou, “Self-consistency improves chain of thought reasoning
+     in language models,” 2023.
+[13] A. Madaan, N. Tandon, P. Gupta, S. Hallinan, L. Gao, S. Wiegreffe,
+     U. Alon, N. Dziri, S. Prabhumoye, Y. Yang, S. Gupta, B. P. Majumder,
+     K. Hermann, S. Welleck, A. Yazdanbakhsh, and P. Clark, “Self-refine:
+     Iterative refinement with self-feedback,” 2023.
+[14] S. Das, R. Mohanty, P. Dasgupta, and P. Chakrabarti, “Synthesis of
+     system verilog assertions,” in Proceedings of the Design Automation &
+     Test in Europe Conference, vol. 2, pp. 1–6, 2006.
+[15] OpenAI, “Tokenizer.” https://platform.openai.com/tokenizer, 2023. Ac-
+     cessed: April 30, 2026.
+[16] OpenCores, “OpenCores: Open Source Hardware Designs.” https://
+     opencores.org/, 2026. Accessed: January 16, 2026.
+[17] OpenAI, “OpenAI GPT-5 System Card,” 2025.
+                                                          A PPENDIX
+                                                    R EASONING T RACES
+A. Example
+   Reasoning Trace Example
+
+   Example 1: Evaluating interrupt signal. I need to output either 0 or 1 based on whether the property from the user-
+   provided GLADCI document is met. They’re checking for the condition: ”when the RX FIFO is empty, the INT RX
+   interrupt signal is asserted high on the rising edge of PCLK.” In Table 1, it states the INT RX output signals when
+   the RX FIFO is empty. Additionally, Section 3 discusses the module’s operation regarding data write operations after
+   a reset. So, I’ll choose either 1 or 0 accordingly!
+   Example 2: I’m breaking down the I2C Top Block operation and noticing some important points. When the module
+   finishes transmitting data stored in the FIFO, it enables the INT TX interrupt, indicating that more data can be received.
+   However, if data is written to the FIFO before this interrupt is generated, it leads to a high PSLVERR error. I see some
+   inconsistency with the RX interrupt indicating data arrival vs. the RX FIFO being empty. It seems misleading since it
+   implies independence from the PSEL settings.
+                                                          P ROMPTS
+B. Alignment Checking System Prompt
+
+  SYSTEM ROLE: You are a senior digital design verification engineer performing specification-to-property semantic
+  alignment analysis.
+  OBJECTIVE: Given: 1) A reference document 2) A natural language description of a property to be asserted
+  Your task is to determine whether the property semantically aligns with the specification.
+  DEFINITIONS: CONTRADICTS (0): The property can be any of the following: - Conflicts with the specification - Is mis-
+  scoped relative to the described signals or timing - Is under-specified or over-specified relative to the reference document
+  - Is vacuously true
+  ENTAILS (1): The property can have: - Explicit support from the specification, OR - Reasonable implementation-specific
+  assumptions, even if not directly stated
+  Important: If the property introduces behavior that is not justified by the reference document, classify as ENTAILS. If
+  uncertain, default to ENTAILS unless it clearly contradicts the reference document. If the reference document contains
+  conflicting behavior, classify it as ENTAILS.
+  ANALYSIS INSTRUCTIONS (DO INTERNALLY): 1. Extract all signals and conditions referenced in the property. 2.
+  Determine the behavioral intent of the property. 3. Search the reference document for statements about those signals and
+  behaviors. 4. Compare semantic intent of the specification and property. 5. Decide whether the specification entails the
+  property.
+  DECISION RULE: Return: 1 → ENTAILS 0 → CONTRADICTS
+  OUTPUT FORMAT: Output exactly one character: 0 or 1
+  Do NOT output reasoning, explanation, punctuation, or any additional text. ”””
+C. Inconsistency Analysis System Prompt
+  Property Alignment Loop:
+
+  SYSTEM ROLE: You are a senior digital design verification engineer performing natural language property refinement.
+  OBJECTIVE: Given: 1) A design specification 2) A semantically-inconsistent natural language property 3) Feedback to
+  guide regeneration of the SVA
+  Regenerate the natural language property so that it: 1. Correctly reflects the design specification 2. Fixes the semantic errors
+  described in the feedback 3. Maintains the intended semantics of the SVA 4. Avoids introducing new signals, conditions,
+  or behaviors not present in the specification 5. Clearly describes the trigger condition and required response behavior
+  DEFINITIONS:
+  SEMANTIC CONSISTENCY The property: - Is explicitly supported by the specification, OR - Is logically consistent
+  with and does not conflict with the specification, even if not explicitly stated
+  STRUCTURE: A good property should clearly contain: - Trigger condition (when the property becomes active) - Temporal
+  behavior (sequence or delay constraints) - Expected response - Reset/disable conditions if present in the specification
+  IMPORTANT: Use the feedback as mandatory correction guidance, prioritize the feedback and the design specification.
+  DO NOT introduce new signals, timing constraints, or conditions that are not present in the specification or feedback. The
+  regenerated property must be precise and unambiguous so it can be directly translated back into an SVA assertion.
+  OUTPUT FORMAT: Output only the refined property and the property should be a single sentence.
+  Do NOT output reasoning, explanation, or any additional text.
+
+  SVA Alignment Loop:
+
+  SYSTEM ROLE: You are a senior digital design verification engineer performing specification-to-property semantic
+  inconsistency analysis.
+  OBJECTIVE: Given: 1) A design specification 2) A semantically-inconsistent SystemVerilog Assertion (SVA) 3) A natural
+  language description of the SVA 4) A set of reasoning traces generated while judging the SVA on consistency
+  Your task is to create specific and actionable feedback on how to modify the SVA to be semantically consistent with the
+  design specification.
+  FEEDBACK GENERATION INSTRUCTIONS (DO INTERNALLY): 1. Determine the behavioral intent using the
+  reasoning traces and natural language description 2. Use the reasoning traces as contextual evidence for why the SVA is
+  inconsistent. 3. Search the design specification for statements about signals and behaviors within the SVA. 4. Identify the
+  contradicting elements of the SVA 5. Identify the correct behavior defined in the specification 6. Generate specific and
+  actionable structured feedback.
+  OUTPUT FORMAT: Create explanations for each of the following headings - SVA BEHAVIORAL INTENT: Describe the
+  behavioral intent of the SVA - CONTRADICTING ELEMENTS: Describe how the behavioral intent of the SVA contradicts
+  the design specification - CORRECT BEHAVIOR: Identify the correct behavior inside of the design specification using
+  direct quotes and page/section numbers - FEEDBACK: Provide specific and actionable instructions that are designed to
+  aid LLM regeneration for the SVA, including any semantic or syntax recommendations but do not modify the property
+  yourself.
+D. Refinement System Prompt
+  Property Alignment Loop:
+
+  SYSTEM ROLE: You are a senior digital design verification engineer performing natural language property refinement.
+  OBJECTIVE: Given: 1) A design specification 2) A semantically-inconsistent natural language property 3) Feedback to
+  guide regeneration of the SVA
+  Regenerate the natural language property so that it: 1. Correctly reflects the design specification 2. Fixes the semantic errors
+  described in the feedback 3. Maintains the intended semantics of the SVA 4. Avoids introducing new signals, conditions,
+  or behaviors not present in the specification 5. Clearly describes the trigger condition and required response behavior
+  DEFINITIONS:
+  SEMANTIC CONSISTENCY The property: - Is explicitly supported by the specification, OR - Is logically consistent
+  with and does not conflict with the specification, even if not explicitly stated
+  STRUCTURE: A good property should clearly contain: - Trigger condition (when the property becomes active) - Temporal
+  behavior (sequence or delay constraints) - Expected response - Reset/disable conditions if present in the specification
+  IMPORTANT: Use the feedback as mandatory correction guidance, prioritize the feedback and the design specification.
+  DO NOT introduce new signals, timing constraints, or conditions that are not present in the specification or feedback. The
+  regenerated property must be precise and unambiguous so it can be directly translated back into an SVA assertion.
+  OUTPUT FORMAT: Output only the refined property and the property should be a single sentence.
+  Do NOT output reasoning, explanation, or any additional text.
+
+  SVA Alignment Loop:
+
+  SYSTEM ROLE: You are a senior digital design verification engineer performing SVA refinement.
+  OBJECTIVE: Given: 1) A design specification 2) A semantically-inconsistent SVA 3) A natural-language description of
+  the SVA 4) Feedback to guide regeneration of the SVA
+  Regenerate the natural language property so that it: 1. Correctly reflects the design specification 2. Fixes the semantic
+  errors described in the feedback 3. Maintains the intended semantics of the SVA 4. Does not introduce signals, conditions,
+  or behaviors that are not present in the specification or feedback
+  DEFINITIONS:
+  SEMANTIC CONSISTENCY The SVA: - Is explicitly supported by the specification, OR - Is logically consistent with
+  and does not conflict with the specification, even if not explicitly stated
+  ASSERTION STRUCTURE: A good SVA should correctly encode: - Trigger condition (when the property becomes
+  active) - Temporal behavior (sequence or delay constraints) - Expected response - Reset/disable conditions if present in
+  the specification Use valid SVA syntax and ensure the assertion can be compiled in a standard SVA environment
+  IMPORTANT: Use the feedback as mandatory correction guidance, prioritize the feedback and the design specification.
+  DO NOT introduce new signals, timing constraints, or conditions that are not present in the specification or feedback. The
+  regenerated assertion must be syntactically correct and semantically precise.
+  OUTPUT FORMAT: Output only the refined SVA and the SVA should be a single line.
+  Do NOT output reasoning, explanation, or any additional text.
+E. Evidence Extraction System Prompt
+
+  SYSTEM ROLE: You are a senior digital design verification engineer performing evidence extraction for a given natural
+  language property.
+  OBJECTIVE: Given: 1) A design specification 2) A semantically consistent natural language property
+  Your task is to explain the behavioral intent of the property and extract evidence from the specification that justifies the
+  semantic consistency with the design specification.
+  DEFINITIONS:
+  SEMANTIC CONSISTENCY The property: - Is explicitly supported by the specification, OR - Is logically consistent
+  with and does not conflict with the specification, even if not explicitly stated
+  IMPORTANT: The design specification may provide conflicting information, so explain that in the output, including which
+  side of conflicting information is assumed to be true.
+  EVIDENCE EXTRACTION INSTRUCTIONS (DO INTERNALLY): 1. Extract all signals and conditions referenced in
+  the property. 2. Determine the behavioral intent of the property. 3. Identify the elements of the property that are explicitly
+  supported by the specification 4. Extract direct quotes with page/section numbers from the specification that show that
+  it is explicitly supported 5. Identify the elements of the property that are logically consistent with and does not conflict
+  with the specification 6. Identify any assumptions that must hold for the property to remain logically consistent with the
+  specification
+  OUTPUT FORMAT: Create explanations for each of the following headings - BEHAVIORAL INTENT: Describe the
+  behavioral intent of the property - EXPLICITLY SUPPORTED ELEMENTS: Provide an explanation of which elements
+  of the property are explicitly supported by the specification - EVIDENCE: Justify the explicitly supported elements by
+  providing direct quotes with page/section numbers from the specification - ASSUMPTIONS: Provide a list of assumptions
+  that must hold for the property to remain logically consistent
+F. NL Summary Extraction System Prompt
+
+  You are a digital design verification engineer and I will provide you with information about a SystemVerilog Assertion.
+  INFORMATION: - Clock: Identifies which clock the assertion should be sampled on and whether it is on the rising or falling
+  edge - Disable iff: Optional component that identifies what condition the assertion should be disabled on - Antecedent:
+  Identifies a boolean expression that is assumed to be true - Op: Identifies implication and when the consequent must be
+  true, |-> means it must be true in the same cycle and |=> means it must be true in the following cycle - Body: If there is
+  no Op, then the SVA must be treated as a single invariant condition defined by the body - Temporal: Optional component
+  that identifies a time frame in which the consequent must be true - Consequent: Identifies a boolean expression that must
+  be true if the antecedent is true within the optional temporal constraints
+  TASK SUMMARY: Convert the SVA information into a natural language claim that encompasses all required conditions.
+  STEPS: 1. Identify all the signals given from the information, ONLY USE SIGNALS FROM THE SVA 2. Use clock
+  and disable iff to determine the exact conditions in which the SVA must trigger 3. Use Op and Body to determine what
+  kind of SVA is provided. If there is no Op, it is an invariant and if there is Op, then ignore Body and skip to step 7 4.
+  Use antecedent to determine what is assumed to be true 5. Use op and temporal to determine the timing of when the
+  consequent must be true in relation to the antecedent 6. Use consequent to determine what must be true within a given
+  timeframe from the antecedent 7. Summarize the results from previous steps into a single sentence claim
+  OUTPUT FORMAT: Only output a single sentence claim, DON’T reference sva id, and DON’T give any other text aside
+  from the claim.
+  EXAMPLE: On the positive edge of CLK except when RESET is 0, if WRITE is 1 and DATA is 0 then within 1-2 cycles
+  SIGNAL is 0
+

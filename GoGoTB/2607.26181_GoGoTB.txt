@@ -1,0 +1,584 @@
+                                          GoGoTB: Agentic RTL Verification with Specification-Grounded
+                                                               Coverage Closure
+                                                                 Xin Xin1,† , Jincheng Lou2,† , Junhui Li3 , Jinglin Yan1 , Panda Xiao1 , Di Wu1 , Haixiao Li1
+                                                               Weicong Lu1 , Weijian Fan2 , Xinyu Qu2 , Yuxiang Zhao2 , Min Yu2 , Zhixiong Di3 , Yibo Lin2,4,5
+                                                                                            1 Tencent 2 School of Integrated Circuits, Peking University, Beijing
+                                                                         3 Southwest   Jiaotong University 4 Institute of Electronic Design Automation, Peking University, Wuxi
+                                                                                                5 Beijing Advanced Innovation Center for Integrated Circuits
+                                                                                      {wukongxin,lyndayan,pandaxiao,woodywdwu,stevehxli,lukewclu}@tencent.com
+                                                                                              {jinchenglou,wjfan25,xyqu25,yuxiangzhao}@stu.pku.edu.cn
+                                                                                    ssfortynine@gmail.com yum@pku.edu.cn dizhixiong2@126.com yibolin@pku.edu.cn
+
+
+                                         Abstract
+                                         Functional verification dominates integrated circuit (IC) front-end
+                                         engineering effort, and a single missed bug that escapes to sil-
+                                         icon can trigger a costly respin. Recent large language models
+                                         (LLMs) offer new opportunities to automate this process, yet ex-
+                                         isting LLM-based approaches generate each component through
+                                         independent single-turn calls with no shared context, leaving inter-
+arXiv:2607.26181v1 [cs.AI] 28 Jul 2026
+
+
+
+
+                                         face mismatches undetected and reported coverage disconnected
+                                         from specification requirements. To address these challenges, we
+                                         present GoGoTB, an agentic framework that achieves end-to-end                          Figure 1: Four-level verification coverage hierarchy. Prior
+                                         verification closure through three subsystems: an agentic execution                    work covers L1–L2. GoGoTB delivers L3–L4.
+                                         control layer, an evolvable knowledge system, and specification-
+                                         grounded coverage closure. The execution control layer separates                       specification requirements. No existing framework delivers end-to-
+                                         deterministic enforcement from LLM reasoning at every tool and                         end verification closure without human intervention, with coverage
+                                         stage boundary. The knowledge system dispatches methodology                            tied to specification behaviors.
+                                         and design-specific expertise on demand. The coverage framework                           The root cause is structural. Existing approaches [5–7] generate
+                                         anchors every bin to a named specification behavior so that each                       each component through an independent single-turn LLM call with
+                                         residual gap has a diagnosable root cause and a targeted remedy.                       no shared context, so interface mismatches go undetected and cross-
+                                         Tested on 8 register transfer level (RTL) designs without any human                    component errors cannot be resolved. Coverage models are built
+                                         intervention, GoGoTB achieves 100% environment generation suc-                         from RTL signal ranges rather than specification behaviors, so two
+                                         cess and averages 98.4% line, 97.2% branch, 97.0% toggle, and 83.2%                    designs with the same port list produce the same model regardless
+                                         functional coverage. No prior work successfully generates a com-                       of their actual behavior. These two structural gaps give rise to three
+                                         plete verification environment or achieves meaningful coverage on                      unresolved challenges.
+                                         the same benchmarks.                                                                      Challenge 1: Execution reliability. Assembling a verification
+                                                                                                                                environment needs iterative compilation, simulation, and repair.
+                                         Keywords                                                                               An agentic loop provides feedback closure, but agents without
+                                                                                                                                guardrails invoke the wrong tools, propagate poor artifacts across
+                                         Digital IC Verification, Large Language Models, Testbench Genera-
+                                                                                                                                stages, and repeat incorrect repairs without progress [12–14]. Prior
+                                         tion, Coverage-Driven Verification, Agentic Workflows
+                                                                                                                                work [7] does not address these failure modes. LLM reasoning
+                                                                                                                                and deterministic enforcement must therefore be architecturally
+                                         1       Introduction                                                                   separated, with each failure mode handled by a dedicated layer.
+                                                                                                                                   Challenge 2: On-demand domain knowledge injection. No
+                                         Functional verification consumes the majority of front-end engi-
+                                                                                                                                existing LLM-based verification framework provides a structured
+                                         neering effort in IC development [1, 2], and assembling a com-
+                                                                                                                                domain knowledge base. LLMs rely on general training knowl-
+                                         plete UVM environment demands weeks of specialized effort per
+                                                                                                                                edge alone, which is insufficient for complex modules. Injecting
+                                         design [3, 4]. Recent LLMs have motivated a wave of work on
+                                                                                                                                the full knowledge base inflates the context window, and inject-
+                                         automated testbench generation [5–7] and formal assertion synthe-
+                                                                                                                                ing irrelevant knowledge actively misleads the model. Knowledge
+                                         sis [8–10]; see [11] for a comprehensive survey.
+                                                                                                                                injection is therefore an on-demand dispatch problem. Each task
+                                            Verification is not a best-effort task. An undetected bug that
+                                                                                                                                requires different methodology knowledge and each design cate-
+                                         escapes to silicon costs orders of magnitude more to fix than one
+                                                                                                                                gory requires different domain knowledge, both of which can be
+                                         caught before tape-out [2]. Existing LLM-based approaches fall
+                                                                                                                                dispatched deterministically.
+                                         short of the quality bar this demands. Environment generation
+                                                                                                                                   Challenge 3: Specification-traceable coverage closure. Cov-
+                                         success rates remain low and reported coverage does not reflect
+                                                                                                                                erage models built from RTL signals measure stimulus breadth
+                                                                                                                                rather than specification compliance. When gaps remain, supple-
+                                         † Xin   Xin and Jincheng Lou contributed equally to this work.                         ment strategies add stimulus without diagnosing why bins were
+                                                                                                                                           Xin et al.
+
+
+
+
+Figure 2: GoGoTB is an eight-stage agentic framework built on three subsystems. It includes agentic execution control, an
+evolvable knowledge system, and specification-grounded coverage closure.
+
+missed, so the loop stalls without convergence. Tying every cov-          2     Preliminaries
+erage bin to a named specification behavior solves both problems.         This section introduces the concepts underlying GoGoTB and sur-
+Each gap then has a root cause and a targeted remedy, making con-         faces the observations that motivate each architectural choice in
+vergence achievable. As shown in Fig. 1, prior work [5, 6] reaches        Section 3.
+at most L1 with code coverage only, while UVM2 [7] advances to
+L2 with signal-range functional coverage. GoGoTB targets L3–L4
+by grounding coverage bins in specification behaviors.
+   We present GoGoTB, an agentic framework that achieves end-
+                                                                          2.1    Digital IC Functional Verification
+to-end verification closure with coverage tied to specification be-       IC design flow and verification. Functional verification confirms
+haviors. Given RTL source, a natural-language specification, and an       that an RTL implementation satisfies its specification before syn-
+optional reference model, GoGoTB autonomously constructs and              thesis sign-off. Because an undetected bug at this stage propagates
+refines a verification environment until coverage targets are met.        into silicon and costs orders of magnitude more to fix after fabrica-
+We summarize our key contributions as follows.                            tion [2], verification constitutes the dominant fraction of front-end
+                                                                          engineering effort [1, 2]. A complete UVM environment comprises
+• We develop a three-layer execution control architecture that sepa-
+                                                                          a driver, monitor, scoreboard, functional coverage model, and refer-
+   rates deterministic enforcement from LLM reasoning at tool-call,
+                                                                          ence model [1], all traditionally hand-authored [3] and consuming
+   stage, and failure-recovery boundaries, achieving 100% environ-
+                                                                          weeks per design.
+   ment generation success across 8 designs and 7 backbone LLMs
+                                                                             Testpoint decomposition. A verification campaign begins with
+   (Section 3.2).
+                                                                          testpoint decomposition, enumerating every verifiable behavior in
+• We design a two-tier knowledge system that dispatches method-
+                                                                          the specification [15]. A testpoint is a tuple ⟨𝑠, 𝑟, 𝑐, 𝑑⟩ where 𝑠 is the
+   ology modules by deterministic stage-level mapping and his-
+                                                                          stimulus, 𝑟 is the expected response, 𝑐 is the check method, and 𝑑 is
+   torical environments by similarity gating, injecting domain
+                                                                          the verification dimension. Testpoint completeness therefore sets a
+   knowledge on demand while suppressing irrelevant context (Sec-
+                                                                          hard ceiling on verification quality. Any behavior not enumerated
+   tion 3.3).
+                                                                          at this stage cannot be verified downstream.
+• We propose a specification-grounded coverage closure frame-                Coverage metrics. Verification coverage falls into two cat-
+   work that derives testpoints across seven behavioral dimensions,       egories. Code coverage tracks structural exercise through line,
+   classifies each residual gap into a seven-category root-cause          branch, and toggle metrics. Functional coverage [16] measures which
+   taxonomy, and drives targeted remediation with a bounded stall-        specification-defined scenarios have been exercised using cover-
+   aware loop (Section 3.4).                                              points and bins.
+• The complete GoGoTB framework and its evaluation benchmark                 Coverage model quality is determined at authoring time, not at
+   of 8 open-source RTL designs will be open-sourced at a later           measurement time. A model built from RTL signal ranges can reach
+   date.                                                                  100% bin coverage while leaving critical specification behaviors
+   The rest of this paper is organized as follows. Section 2 introduces   unverified. Two designs with the same port list produce identi-
+preliminaries. Section 3 presents the methodology. Section 4 reports      cal models despite doing entirely different things. Coverage must
+experimental results. Section 5 concludes the paper.                      therefore be grounded in the specification before simulation begins.
+GoGoTB: Agentic RTL Verification with Specification-Grounded Coverage Closure
+
+
+Once every bin is anchored to a specification behavior, gaps become              is worse than injecting nothing. Design-specific knowledge must
+diagnosable and closure becomes principled.                                      therefore be controlled by similarity gating and suppressed when
+   Simulation stack. The dominant commercial stack pairs Syn-                    confidence is insufficient.
+opsys VCS [17] or Cadence Xcelium [18] with SystemVerilog/UVM
+testbenches. Prior LLM-based approaches [7] follow the same                      3 Methodology
+path and generate SystemVerilog components directly. LLMs pro-
+duce substantially lower first-pass correct code in SystemVerilog                3.1 GoGoTB Overview
+than in Python, making Python-based cocotb [19] a better fit for                 GoGoTB takes RTL source, a natural-language specification, and a
+LLM-driven generation. Verilator [20] emits structured, machine-                 reference model as input. Fig. 2 illustrates the eight-stage pipeline,
+parseable diagnostics that enable deterministic error classification             which runs in four phases. Specification Analysis covers S1–S2 and
+without LLM involvement.                                                         parses the specification into a design profile and derives a testpoint
+                                                                                 inventory across seven behavioral dimensions. Environment Con-
+2.2     From Language Models to Agentic Systems                                  struction covers S3–S5 and builds the coverage model, reference
+                                                                                 model, and testbench from those testpoints. Stochastic Simulation
+LLMs and their structural limitation. An LLM autoregressively
+                                                                                 covers S6–S7 and runs test stimuli under an adaptive seed policy and
+samples an output sequence given a fixed prompt:
+                                                                                 accumulates code and functional coverage. Coverage Closure covers
+                                      𝑚
+                                      Ö                                          S8 and diagnoses residual gaps by root cause and drives targeted
+                𝑃 (𝑦1:𝑚 | 𝑥 1:𝑛 ) =          𝑃 (𝑦𝑡 | 𝑥 1:𝑛 , 𝑦1:𝑡 −1 ).    (1)   remediation until closure criteria are met. Each stage runs as an
+                                      𝑡 =1
+                                                                                 agentic node. Deterministic quality checks at each stage boundary
+Here 𝑥 1:𝑛 is the input prompt, 𝑦1:𝑚 is the generated output sequence,           block broken outputs before they reach the next stage.
+and each token 𝑦𝑡 is sampled conditioned on the prompt and all                      Reliable closure across this pipeline requires three subsystems,
+previously generated tokens. This is a single stateless mapping with             each realizing one design insight from Section 1.
+no memory across turns and no mechanism to act on the world. All                 (1) An agentic execution control layer (Section 3.2) addresses three
+prior LLM-based verification works [5–7, 11, 21, 22] operate within                  independent failure modes through three dedicated layers.
+this paradigm, which is structurally insufficient for verification                   Each layer targets one failure mode: tool-call boundaries, stage
+environment construction.                                                            boundaries, and repeated repair attempts.
+   The LLM agent abstraction. An agent augments an LLM with                      (2) An evolvable knowledge system (Section 3.3) injects the right
+persistent state, tool access, and a reasoning-action-observation                    knowledge at the right stage. A Skill Library dispatches method-
+loop [12, 13]. At each step the agent produces an action conditioned                 ology modules by stage and design category. A Reference Li-
+on accumulated context and updates its state from the observed                       brary selects past environments by structural similarity and
+result. This feedback closure enables the iterative repair and failure-              suppresses dispatch when no close match exists.
+adaptive recovery that verification construction requires.                       (3) Specification-grounded coverage closure (Section 3.4) anchors
+   The agent abstraction alone is insufficient. Unconstrained agentic                every coverage bin to a named specification behavior before
+loops corrupt protected design files, disable checking logic, and loop               simulation begins. When gaps remain, each uncovered bin has
+indefinitely without progress. These are control failures from the                   an unambiguous root cause and a targeted remedy drawn from
+absence of an enforcement layer. LLM reasoning and deterministic                     a seven-category taxonomy.
+enforcement must therefore be architecturally separated so that
+                                                                                    The execution control layer wraps all eight stages. The knowl-
+reliability depends on the control architecture rather than on any
+                                                                                 edge system injects domain knowledge at the entry point of each
+particular model.
+                                                                                 stage. Coverage closure runs across stages S1–S3 and S6–S8.
+   Knowledge injection and the case for a domain knowl-
+edge base. Industrial verification demands two types of expertise.
+The first is methodology knowledge covering how to structure                     3.2    Agentic Execution Control
+testbenches, apply constrained-random patterns, analyze RTL, and                 Reliable loop execution requires that every LLM action passes
+close coverage. The second is design-specific knowledge covering                 through a deterministic enforcement boundary. GoGoTB intro-
+protocol timing, FSM sequencing, cryptographic patterns, and sim-                duces three dedicated layers for this (Fig. 3). Layer 1 controls every
+ulator constraints for a particular design category. Neither type is             tool call, output, and session boundary so the LLM always reasons
+reliably captured in LLM training data and no existing LLM-based                 from clean, structured information. Layer 2 checks every stage
+verification framework provides a structured domain knowledge                    boundary and blocks broken outputs before they reach the next
+base.                                                                            stage. Layer 3 classifies each failure pattern and escalates repair
+   Injecting the full knowledge base at every stage inflates the                 scope rather than repeating the same action.
+context window and dilutes the relevant signal, so injection must                   Layer 1: Tool-Call Interception. Without an intermediary
+be on demand. These two types of knowledge also require different                between the LLM and its tools, the LLM invokes the wrong tools,
+dispatch mechanisms. Methodology knowledge is predictable from                   reads raw output directly, and decides when a session is done. All
+the pipeline stage definition and can be dispatched deterministically.           three contact points are sources of unreliable behavior. Every tool
+Design-specific knowledge depends on how closely the current                     call therefore passes through three steps in sequence (Fig. 3). The
+design matches past ones. A low-similarity reference causes the                  Guard step checks that the LLM is invoking the right tool for
+LLM to apply the wrong template with high confidence, which                      the current stage and blocks incorrect calls before execution. The
+                                                                                                                                          Xin et al.
+
+
+
+
+                                                                           Figure 4: Two-tier evolvable knowledge system. The Skill
+                                                                           Library dispatches methodology modules by a determinis-
+                                                                           tic stage-level map. The Reference Library selects historical
+                                                                           environments by similarity gating and suppresses dispatch
+                                                                           when no close match exists.
+
+
+                                                                           threshold, the repair automatically escalates to the next level along
+Figure 3: Three-layer agentic execution control. Layer 1 in-               the L1–L4 chain. L1 applies a minimal patch to a single file. L2 reads
+tercepts every tool call with guard, structuring, and valida-              full cross-file context before editing. L3 refactors the problematic
+tion steps. Layer 2 enforces quality gates at stage boundaries             component entirely. L4 falls back to a minimal-correct implemen-
+with deterministic auto-repair. Layer 3 escalates repair scope             tation. Each escalation step expands the repair scope so the loop
+through four levels when earlier fixes fail. Boundary enforce-             converges rather than stalls.
+ment applies as a cross-cutting constraint across all layers.                  Boundary Enforcement. Boundary Enforcement applies across
+                                                                           all three layers as a cross-cutting constraint (Fig. 3). Each stage can
+Structuring step converts raw compiler or simulator output into a          only access the artifacts it needs. The RTL source and the reference
+clean structured diagnostic so the LLM reasons from root causes            model are immutable to all later stages. The reference model is
+rather than surface noise. The Validation step verifies at the ses-        derived from the specification alone and has no visibility into RTL
+sion boundary that the session produced complete and compilable            implementation details. This isolation guarantee ensures that any
+artifacts before it closes. If the same command fails three times in       simulation mismatch cannot originate from a corrupted oracle and
+a row with no change, a redirect prompt is injected to break the           therefore points to a real design defect.
+stuck loop. The structured result is returned to the LLM through
+the observation loop. All three steps run independently of LLM
+decisions.                                                                 3.3    Evolvable Knowledge System
+   Layer 2: Quality Gates. Poor artifacts from one stage propagate         Knowledge injection is an on-demand dispatch problem. Stage-level
+silently to the next, causing failures that are attributed to the wrong    methodology knowledge is predictable from the stage definition
+stage and making diagnosis impossible. Layer 2 first runs an Auto-         and can be dispatched deterministically. Design-specific knowledge
+Repair pass that fixes common structural errors without LLM                depends on structural similarity to the current design and must
+involvement. The output then passes through three gates in order           be controlled by similarity gating. Both dispatch mechanisms re-
+of strictness. The Hard Gate checks for compilation success and            quire no LLM involvement and cannot silently apply the wrong
+mandatory artifacts and always blocks on failure. The Soft Gate            knowledge. The two-tier architecture in Fig. 4 realizes these two
+checks for testpoint completeness and signal-name consistency.             mechanisms separately.
+It blocks on failure in early attempts and softens to a warning               Skill Library. The Skill Library delivers stage-level methodol-
+as attempt count rises. The Advisory Gate performs a semantic              ogy knowledge through deterministic dispatch. It holds ten skill
+review without blocking progress. On failure, the output is returned       modules covering testbench construction, test planning, coverage
+to the LLM through the retry loop and re-enters the gates on the           closure, RTL analysis, simulator backend, cryptographic design pat-
+next attempt.                                                              terns, serial protocol patterns, and more. Before each pipeline stage
+   Layer 3: Failure Recovery. When a repair attempt fails, repeat-         runs, a stage-level map selects which modules apply (Fig. 4). Selec-
+ing the same action without changing scope makes no progress and           tion requires no LLM involvement. To keep context small, only a
+exhausts the retry budget. Layer 3 first passes the failure through a      table of contents arrives at stage start and full module content loads
+classifier that identifies the error category and injects targeted feed-   on demand. Adding a new design category requires only adding a
+back into the next attempt. Each time the attempt count crosses a          new file to the knowledge directory.
+GoGoTB: Agentic RTL Verification with Specification-Grounded Coverage Closure
+
+
+    Reference Library. The Reference Library delivers design-                   Table 1: Gap root-cause taxonomy and remediation routing
+specific historical knowledge through similarity gating. A design-              in S8.
+category trigger activates the library based on the design category
+                                                                                           Root-cause category   Targeted remedy
+detected at specification-parse time. Each entry holds the RTL, spec-
+ification, testbench, and testpoints from a real verified design. When                     Stimulus Gap          Directed test generation
+a new design arrives, the system scores it against the library across                      Seqence Gap           Multi-transaction directed tests
+                                                                                           Cross Hole            Constraint refinement
+three structural levels. A close match dispatches the reference as
+                                                                                           State Unreached       State-routing sequences
+a direct template. A partial match dispatches it as a style guide.
+                                                                                           Timing Dependent      Cycle-precise stimulus
+A poor match suppresses dispatch entirely so the LLM receives                              Transition Gap        Edge-condition tests
+nothing rather than a misleading reference. This suppression is the                        Seed Insufficient     Additional seed expansion
+key design choice. The LLM only receives historical knowledge
+when that knowledge genuinely applies.
+                                                                                4     Experimental Evaluation
+                                                                                RQ1 (Sec. 4.2): Does the three-layer execution control architecture
+                                                                                achieve reliable environment generation across diverse designs and
+                                                                                LLM backends?
+                                                                                RQ2 (Sec. 4.3): Does specification-grounded testpoint decomposi-
+                                                                                tion produce a richer coverage model and higher functional cover-
+3.4     Specification-Grounded Coverage Closure                                 age than signal-space generation?
+Coverage quality is determined at model authoring time, not at                  CS1 (Sec. 4.4): Does domain knowledge injection resolve total func-
+measurement time. Grounding every bin in a specification behav-                 tional coverage failure caused by a knowledge gap rather than a
+ior before simulation makes gaps diagnosable and convergence                    model capability gap?
+achievable, because the reason a bin is uncovered must belong to a
+                                                                                CS2 (Sec. 4.5): Does specification-grounded closure converge
+finite set of root causes. As listed in Table 1, these causes include
+                                                                                through root-cause diagnosis across all seven gap categories?
+insufficient stimulus, missing multi-step sequences, cross-coverage
+constraint mismatches, unreached FSM states, timing-dependent
+conditions, edge transitions, and inadequate seed sampling. Each
+                                                                                4.1    Experimental Setup
+cause demands a different targeted remedy. The loop terminates                  Platform. Intel Xeon Gold 6248R with 48 cores, 512 GB DDR4,
+when no addressable cause remains. Without specification ground-                and Ubuntu 22.04 LTS. Verilator 5.024 [20] with cocotb 2.0.1 [19].
+ing, none of these categories is diagnosable and the supplement                 GoGoTB is implemented on the CodeBuddy Agent SDK [23]. RQ1
+loop runs without principled convergence.                                       evaluates seven backbone LLMs: Kimi-K2.5, GLM-5.1, Minimax-
+   Testpoint decomposition (S1–S2). To anchor every bin to a                    M2.7, Claude Opus 4.6, Claude Sonnet 4.6, GPT-5.4, and DeepSeek-
+named specification behavior before simulation begins, S1 parses                V3.2. RQ2 and all case studies use Kimi-K2.5 as the primary model.
+the RTL and specification into a design profile. S2 derives testpoints             Benchmark suite. Table 2 lists eight benchmark designs rang-
+across seven behavioral dimensions. D1 covers data boundaries,                  ing from 291 to 1,424 lines and 1 to 9 modules, spanning combina-
+D2 control flow, D3 timing constraints, D4 FSM state transitions,               tional datapaths, pipelined cryptographic cores, serial protocols,
+D5 protocol compliance, D6 error injection, and D7 microarchi-                  and stateful memory controllers.
+tectural interaction. These seven dimensions cover all verifiable                  AES and ALU are taken from the UVM2 benchmark suite, the
+behavior types in a design specification. The resulting testpoint set           only two designs that UVM2 makes publicly available. The remain-
+establishes the ceiling on verification completeness.                           ing six designs were selected from high-quality open-source RTL
+   Coverage model and simulation (S3, S6–S7). With testpoints                   repositories to cover a broad range of design categories not rep-
+in place, S3 converts each one into a coverage model element where              resented in UVM2 . The complete benchmark package, including
+every bin carries a named behavioral claim traceable to the speci-              specifications, verification environments, and testpoints for all eight
+fication. This transforms the coverage model from a signal-value                designs, will be open-sourced at a later date. All experiments run
+partition into a set of behavioral assertions. S6 then generates test           fully automated without human intervention and provide a refer-
+cases per testpoint group. S7 runs them under an adaptive seed                  ence model as input.
+policy and stops when consecutive batches yield no gain, marking                   Metrics. SRG measures whole-environment success requiring
+the boundary of what stochastic simulation can reach on its own.                zero-error compilation, deadlock-free simulation, and non-zero
+   Gap diagnosis and closure (S8). Because every bin is                         coverage. For design 𝑑𝑖 under model M:
+specification-grounded, each residual gap maps directly to a cause                                     𝑁
+                                                                                                    1 ∑︁
+in Table 1. S8 classifies each uncovered bin and directs it to the                     SRG(M) =           1[ compile ∧ simulate ∧ cov > 0 ].        (2)
+                                                                                                    𝑁 𝑖=1
+targeted remedy. Structurally unreachable bins are removed from
+the denominator. A stall detector terminates the loop when two con-             Code coverage reports per-design line, branch, and toggle ra-
+secutive rounds show no improvement. The sign-off report records                tios under Kimi-K2.5. Functional coverage reports the fraction of
+evidence for every covered bin and a root-cause disposition for                 specification-derived bins hit after stochastic simulation. Coverage
+every residual gap. The verification outcome is fully auditable with            model richness reports coverpoint and cross-coverage counts per
+no gap silently dropped.                                                        design, compared against UVM2 .
+                                                                                                                                                                                                  Xin et al.
+
+
+                                                  Table 2: Benchmark designs used for evaluation († = minor Verilator patch).
+
+                                                                                                                                                      Source                        Module          Line
+Design             Description
+                                                                                                                                                                                    Counts         Counts
+
+                   Encrypts a 128-bit plaintext with a 128-bit key using the AES algorithm, outputting 128-bit
+AES†                                                                                                                                                  UVM2 [7]                         8             684
+                   ciphertext.
+                   A 32-bit unit performing IEEE 754 FP arithmetic, logical operations (OR, AND, XOR), shifts, and
+ALU†                                                                                                                                                  UVM2 [7]                         7             409
+                   FP-to-integer conversion.
+                   Facilitates serial communication between a host and peripherals, supporting configurable baud
+UART                                                                                                                                                  [24]                             4             387
+                   rates and stop bits.
+                   A lightweight SPI controller supporting Master mode with FIFO-based data transfer and interrupt-
+SPI                                                                                                                                                   This work                        3             291
+                   driven operation.
+                   An I2C slave controller handling address detection, data transfer, clock stretching, and ACK/NACK
+I2C                                                                                                                                                   [25]                             3             470
+                   signaling.
+                   A cryptographic unit that computes a 256-bit hash value from an input message using the SHA-
+SHA256                                                                                                                                                [26]                             4            1,142
+                   256 algorithm.
+                   A synchronous SM4 encryption/decryption core supporting both modes via a 128-bit key and
+SM4                                                                                                                                                   [27]                             9            1,424
+                   data interface.
+                   A synchronous DRAM controller managing ACTIVATE, READ, WRITE, and PRECHARGE
+SDRAM                                                                                                                                                 [28]                             1             433
+                   commands with timing enforcement.
+
+
+                                                        GoGoTB                                                               UVM2     in isolation diverge in interface assumptions and the assembled en-
+                                                                                                                                      vironment fails even when each component passes its own syntax
+                                                                                                                                      check.
+                                                      2.7              4.6                4.6                           .2
+                        .5        -5.1         ax-M              pus                net            -5.4             -V3                  UVM2 achieves 0% SRG on all eight designs. We cloned the
+                    i-K2                                      eO                 Son            GPT            See
+                                                                                                                   k            All
+               Kim             GLM       Min
+                                             im            ud                e                                p
+                                                       Cla             Claud                              Dee                         UVM2 [7] repository and ran each design four to six times. UVM2
+         AES 6m17s 18m10s 9m48s 12m05s 9m17s 14m08s 18m32s                                                                      ×     generates each component through a single LLM call with no shared
+                                                                                                                                ×
+                                                                                                                                      context and no generate-debug-iterate loop. Compilation failures
+         ALU 5m30s 15m12s 12m40s 10m52s 12m02s 22m54s 20m22s
+                                                                                                                                      and simulation deadlocks accumulate without any recovery mech-
+        UART 9m18s 26m04s 15m36s 16m15s 14m12s 34m03s 46m55s                                                                    ×     anism. These failures are architectural and follow directly from the
+                                                                                                                                      absence of enforcement and iteration, not from the capability of
+         SPI 7m41s 19m15s 11m00s 12m04s 10m55s 25m02s 40m52s                                                                    ×     any specific LLM.
+                                                                                                                                         The 100% vs. 0% contrast across seven LLMs confirms that the
+         I2C 8m52s 19m48s 18m08s 19m25s 14m19s 24m27s 34m15s                                                                    ×     three-layer enforcement architecture drives loop convergence re-
+
+                                                                                                                                ×
+                                                                                                                                      gardless of model choice.
+      SHA256 8m05s 15m59s 11m27s 21m58s 12m15s 29m08s 48m10s
+
+        SM4 7m33s 26m49s 21m57s 13m19s 11m24s 36m34s 25m54s                                                                     ×
+      SDRAM 9m56s 33m10s 17m49s 33m10s 14m45s 21m54s 37m21s                                                                     ×     4.3    RQ2: Coverage Achievement and Model
+                                                                                                                                             Quality
+             Fastest (Green)                                Build time                                      Slowest (Red)
+                                                                                                                                      Table 3 presents results under Kimi-K2.5. UVM2 is the only prior
+           5m30s                                             26m50s                                                    48m10s         system that attempts functional coverage, making it the only valid
+                                                                                                                                      baseline. GoGoTB derives every coverpoint from a named speci-
+Figure 5: Environment generation success rate and build time                                                                          fication behavior. Each bin tests whether a specific design intent
+across designs and backbone LLMs.                                                                                                     was exercised. UVM2 partitions transaction signal ranges into bins
+                                                                                                                                      with no connection to specification meaning.
+                                                                                                                                         GoGoTB averages 98.4% line, 97.2% branch, 97.0% toggle, and
+                                                                                                                                      83.2% functional coverage. Five designs reach ≥99% line coverage
+4.2       RQ1: Environment Generation Reliability                                                                                     and all exceed 91% branch coverage.
+Fig. 5 reports SRG and wall-clock build time for both systems.                                                                           UVM2 achieves 0% SRG, so no functional coverage numbers are
+GoGoTB achieves 100% SRG on 8 of 8 designs across all seven                                                                           available. We compare coverage model quality on AES and ALU,
+backbone LLMs. Build times range from 5m30s to 48m10s. The                                                                            the only two designs UVM2 open-sources. UVM2 produces 3 cover-
+result holds across model families, parameter scales, and training                                                                    points and 1 cross on AES. GoGoTB produces 6 coverpoints and 2
+corpora. The enforcement layers drive convergence, not the back-                                                                      crosses. Each GoGoTB coverpoint maps to a named specification
+bone LLM.                                                                                                                             behavior such as key shape, NIST anchor hit, and plaintext change.
+   SRG measures whole-environment success. A high per-                                                                                Each UVM2 bin is a numeric interval on a raw signal with no be-
+component generation rate does not imply that components assem-                                                                       havioral claim. For the remaining six designs UVM2 provides no
+ble into a runnable environment, because components generated                                                                         coverage model at all.
+GoGoTB: Agentic RTL Verification with Specification-Grounded Coverage Closure
+
+
+Table 3: RQ2: cross-system coverage results under Kimi-K2.5 (× = compile/sim failed; — = not available; † UVM2 SRG 0/8; UVM2
+subscriber open-sourced only for AES and ALU).
+
+                                                                       GoGoTB                                                                         UVM2†
+DUT             Cat.
+                              Coverpoint            Cross          Line          Branch           Toggle             Func           Coverpoint            Cross          L/Br/T/F
+
+AES             CC                 6                  2             99.3            93.7             93.7            84.2                3                  1                ×
+ALU             CS                 7                  4             92.2            96.9             96.8            95.6                3                  0                ×
+UART            SP                 12                 2             98.7           100.0            100.0            75.3                —                  —                ×
+SPI             SP                 11                 3            100.0           100.0            100.0            93.3                —                  —                ×
+I2C             SP                 14                 3             99.1            95.2             94.7            84.1                —                  —                ×
+SHA256          SC                 10                 2             99.8            99.9            100.0            89.9                —                  —                ×
+SM4             SC                 20                 7             98.9           100.0             99.4            72.3                —                  —                ×
+SDRAM           MC                 9                  3             99.0            91.9             91.2            85.3                —                  —                ×
+Avg.                              10.8               3.0           98.4            97.2             97.0             83.2                —                  —                0/8
+
+         Cat.: CC = Comb. crypto; CS = Comb./seq.; SP = Serial proto.; SC = Sequential crypto; MC = Memory ctrl.   — = UVM2   subscriber not open-sourced for this design.
+
+
+                                                                                            shown in Fig. 6. The stimulus drives raw signal transitions without
+                                                                                            protocol framing, so the DUT never sees a valid UART frame. The
+                                                                                            observer samples asynchronously instead of synchronizing to the
+                                                                                            START_BIT boundary, so it produces bit-shifted data that never
+                                                                                            matches the expected output. A single reference model serves both
+                                                                                            TX and RX paths and generates wrong expectations even when the
+                                                                                            DUT responds correctly. These three failures form a closed chain
+                                                                                            from stimulus to oracle. The environment compiles and simulates
+                                                                                            without error, yet the coverage report shows all functional bins at
+                                                                                            0%.
+                                                                                               GoGoTB injects three domain contracts before the LLM session
+                                                                                            to eliminate these failures. The protocol-framing contract enforces
+                                                                                            correct UART frame construction with start bit, parity, and stop bits.
+                                                                                            The synchronization contract aligns the observer to the mid-bit
+                                                                                            sampling point at 0.5 × BAUD_PERIOD. The independent-models
+                                                                                            contract instructs the LLM agent to model TX and RX behavior
+                                                                                            separately so that it captures direction-specific expectations. Func-
+Figure 6: CS1: Three silent failures (left) caused by missing                               tional coverage rises from 0% to 75.3%. The only variable changed is
+domain knowledge and the corresponding fixes (right) from                                   the knowledge system, confirming that the failure was a knowledge
+GoGoTB domain contracts. Each row addresses one failure:                                    gap, not a model capability gap. Functional coverage does not reach
+protocol framing (top), observer synchronization (middle),                                  100% because the LLM agent still struggles to generate directed
+and reference model separation (bottom).                                                    tests for protocol-specific corner cases such as multi-frame error
+                                                                                            recovery and baud-rate edge conditions.
+   Code coverage exceeds 97% while functional coverage averages
+83.2%. This gap reflects the inherent difficulty of specification-level
+verification. Reaching a code line is easier than hitting the precise
+                                                                                            4.5     CS2: Coverage-Driven Closure on I2C
+multi-signal condition that a specification-derived bin requires.                           CS2 examines whether specification-grounded closure remains prin-
+Closing this gap requires advances in LLM-driven directed test                              cipled and convergent across all seven root-cause categories. We
+generation.                                                                                 select I2C because its stateful protocol behavior exercises all seven
+                                                                                            categories simultaneously.
+                                                                                                After the initial test suite completes regression, functional cover-
+4.4      CS1: Knowledge-Driven Environment                                                  age reaches 56.0% across 132 specification-derived bins. The system
+         Construction on UART                                                               then classifies every uncovered bin by root cause, routes each to
+CS1 examines whether domain knowledge injection resolves cov-                               its targeted remedy, and generates new tests. This first supplement
+erage failures caused by a knowledge gap rather than a model                                round advances coverage to 71.6%. The loop repeats the same root-
+capability gap. We select UART because its protocol framing, baud-                          cause analysis and targeted generation over multiple iterations until
+rate timing, and direction-specific TX/RX behavior are domain                               coverage converges at 84.1%, a total gain of +28 pp. Each decision
+conventions that no general-purpose LLM reliably encodes.                                   follows from the root-cause label on the uncovered bin, not from a
+   We first run GoGoTB on UART with the knowledge system                                    generic retry strategy.
+disabled. All other subsystems remain active. Under this configura-                             After the loop terminates, the system analyzes the 24 residual
+tion, the LLM agent generates a testbench with three silent failures                        bins. Stimulus Gap and Sequence Gap account for 16, Cross Hole
+                                                                                                                                Xin et al.
+
+
+                                                                           On the current benchmark, GoGoTB averages 98.4% line, 97.2%
+                                                                         branch, 97.0% toggle, and 83.2% functional coverage with fully
+                                                                         auditable sign-off reports.
+
+
+
+
+Figure 7: CS2: I2C coverage progression and root-cause dis-
+tribution of 24 residual gaps. Stimulus and sequence gaps
+dominate, indicating that the system correctly identifies what
+to test but the LLM agent cannot yet produce the required
+directed tests.
+
+and State Unreached account for 5, and the remaining 3 are Timing
+Dependent, Transition Gap, and Seed Insufficient. Stimulus and
+sequence gaps mean that the system identified the correct bin and
+knew what stimulus was needed, but the LLM agent could not
+produce a test that hits the required condition. The coverage model
+itself is not the bottleneck. The bottleneck is the ability of the LLM
+agent to generate precise directed tests for complex multi-step
+protocol scenarios.
+
+5   Conclusion
+GoGoTB demonstrates that fully automated IC functional verifi-
+cation with coverage tied to specification behaviors is achievable
+when a single system co-designs an agentic execution control layer,
+an evolvable knowledge system, and specification-grounded cover-
+age closure.
+   The three-layer execution control makes environment gener-
+ation succeed across all 8 designs and 7 backbone LLMs. The
+evolvable knowledge system eliminates domain knowledge failures
+that would otherwise cause silent coverage collapse, as demon-
+strated by the 0% to 75.3% functional coverage recovery on UART.
+Specification-grounded coverage closure drives functional coverage
+to an average of 83.2% across all designs, with a +28 pp gain through
+iterative root-cause diagnosis on I2C alone.
+   The primary limitation is directed test generation for complex
+multi-step protocol scenarios. Stimulus Gap and Sequence Gap ac-
+count for the majority of residual bins across designs. Improving
+LLM-driven directed test generation and integrating formal meth-
+ods to cover structurally hard-to-reach states are the most impactful
+directions for future work.
+GoGoTB: Agentic RTL Verification with Specification-Grounded Coverage Closure
+
+
+References                                                                                  [22] Zixi Zhang, Balint Szekely, Pedro Gimenes, Greg Chadwick, Hugo McNally,
+ [1] 2017. IEEE Standard for Universal Verification Methodology Language Reference               Jianyi Cheng, Robert Mullins, and Yiren Zhao. 2025. LLM4DV: Using Large
+     Manual. IEEE Std 1800.2-2017 (2017), 1–472. doi:10.1109/IEEESTD.2017.7932212                Language Models for Hardware Test Stimuli Generation. In 2025 IEEE 33rd Annual
+ [2] Harry D. Foster. 2015. Trends in functional verification: a 2014 industry study.            International Symposium on Field-Programmable Custom Computing Machines
+     In Proceedings of the 52nd Annual Design Automation Conference (San Francisco,              (FCCM). 133–137. doi:10.1109/FCCM62733.2025.00048 arXiv:2310.04535.
+     California) (DAC ’15). Association for Computing Machinery, New York, NY,              [23] Tencent Cloud. 2025. CodeBuddy Documentation: IDE User Guide Overview.
+     USA, Article 48, 6 pages. doi:10.1145/2744769.2744921                                       Tencent Cloud. https://www.codebuddy.ai/docs/zh/ide/User-guide/Overview
+ [3] Janick Bergeron. 2003. Writing Testbenches: Functional Verification of HDL Models.          Official documentation. Accessed: 2026-04-01.
+     Springer, Boston, MA, USA. doi:10.1007/978-1-4615-0302-6                               [24] Tim Rudy. 2020. uart-verilog. https://github.com/TimRudy/uart-verilog GitHub
+ [4] Chris Spear. 2008. SystemVerilog for Verification: A Guide to Learning the Testbench        repository. Accessed: 2026-04-01.
+     Language Features. Springer.                                                           [25] Alex Forencich. 2017. verilog-i2c. https://github.com/alexforencich/verilog-i2c
+ [5] Ruidi Qiu, Grace Li Zhang, Rolf Drechsler, Ulf Schlichtmann, and Bing Li. 2024.             GitHub repository. MIT License. Accessed: 2026-04-01.
+     AutoBench: Automatic Testbench Generation and Evaluation Using LLMs for                [26] Joachim Strömbergson. 2013. sha256. https://github.com/secworks/sha256
+     HDL Design. In Proceedings of the 2024 ACM/IEEE International Symposium on                  GitHub repository. BSD-2-Clause License. Accessed: 2026-04-01.
+     Machine Learning for CAD (Salt Lake City, UT, USA) (MLCAD ’24). Association            [27] gongxunwu. 2020. sm4-verilog. https://github.com/gongxunwu/sm4-verilog
+     for Computing Machinery, New York, NY, USA, Article 18, 10 pages. doi:10.1145/              GitHub repository. Accessed: 2026-04-01.
+     3670474.3685956                                                                        [28] Terasic Inc. 2012. DE0-Nano SDRAM Controller. Terasic Inc. https://www.terasic.
+ [6] Ruidi Qiu, Grace Li Zhang, Rolf Drechsler, Ulf Schlichtmann, and Bing Li. 2025.             com.tw/cgi-bin/page/archive.pl?Language=English&No=593 Official reference
+     CorrectBench: Automatic Testbench Generation with Functional Self-Correction                design archive. Accessed: 2026-04-01.
+     using LLMs for HDL Design. In 2025 Design, Automation & Test in Europe Con-
+     ference (DATE). 1–7. doi:10.23919/DATE64628.2025.10992873
+ [7] Junhao Ye, Yuchen Hu, Ke Xu, Dingrong Pan, Qichun Chen, Jie Zhou, Shuai
+     Zhao, Xinwei Fang, Xi Wang, Nan Guan, and Zhe Jiang. 2025. From Concept
+     to Practice: an Automated LLM-aided UVM Machine for RTL Verification. In
+     2025 IEEE/ACM International Conference On Computer Aided Design (ICCAD).
+     1–9. doi:10.1109/ICCAD66269.2025.11240679 arXiv:2504.19959.
+ [8] Zhiyuan Yan, Wenji Fang, Mengming Li, Min Li, Shang Liu, Zhiyao Xie, and
+     Hongce Zhang. 2025. AssertLLM: Generating Hardware Verification Asser-
+     tions from Design Specifications via Multi-LLMs. In Proceedings of the 30th
+     Asia and South Pacific Design Automation Conference (Tokyo, Japan) (ASP-
+     DAC ’25). Association for Computing Machinery, New York, NY, USA, 614–621.
+     doi:10.1145/3658617.3697756 arXiv:2402.00386.
+ [9] Fenghua Wu, Evan Pan, Rahul Kande, Michael Quinn, Aakash Tyagi, David Kebo
+     Houngninou, Jeyavijayan Rajendran, and Jiang Hu. 2025. Spec2Assertion: Auto-
+     matic Pre-RTL Assertion Generation using Large Language Models with Progres-
+     sive Regularization. arXiv:2505.07995 [cs.AR] https://arxiv.org/abs/2505.07995
+[10] Marcelo Orenes-Vera, Margaret Martonosi, and David Wentzlaff. 2023. Using
+     LLMs to Facilitate Formal Verification of RTL. arXiv:2309.09437 [cs.AR] https:
+     //arxiv.org/abs/2309.09437
+[11] Hongduo Liu, Yuntao Lu, Mingjun Wang, Xufeng Yao, and Bei Yu. 2026. LLM-
+     Assisted Circuit Verification: A Comprehensive Survey. In 2026 31st Asia and
+     South Pacific Design Automation Conference (ASP-DAC). 439–446. doi:10.1109/
+     ASP-DAC66049.2026.11420692
+[12] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R Narasimhan,
+     and Yuan Cao. 2023. ReAct: Synergizing Reasoning and Acting in Language
+     Models. In The Eleventh International Conference on Learning Representations.
+     https://openreview.net/forum?id=WE_vluYUL-X
+[13] Lei Wang, Chen Ma, Xueyang Feng, Zeyu Zhang, Hao Yang, Jingsen Zhang,
+     Zhiyuan Chen, Jiakai Tang, Xu Chen, Yankai Lin, Wayne Xin Zhao, Zhewei Wei,
+     and Jirong Wen. 2024. A survey on large language model based autonomous
+     agents. Frontiers of Computer Science 18, 6 (2024), 186345. doi:10.1007/s11704-
+     024-40231-1
+[14] Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and
+     Shunyu Yao. 2023. Reflexion: Language agents with verbal reinforcement learn-
+     ing. Advances in Neural Information Processing Systems 36 (2023), 8634–8652.
+[15] Bruce Wile, John Goss, and Wolfgang Roesner. 2005. Comprehensive functional
+     verification: The complete industry cycle. Morgan Kaufmann.
+[16] Andrew Piziali. 2008. Functional verification coverage measurement and analysis.
+     Springer.
+[17] Synopsys, Inc. 2023.         VCS Functional Verification Solution.           Synop-
+     sys, Inc.      https://www.synopsys.com/content/dam/synopsys/gated-assets/
+     verification/vcs-ds.pdf Official datasheet. Accessed: 2026-04-01.
+[18] Cadence Design Systems, Inc. 2023. Xcelium Logic Simulator. Cadence Design
+     Systems, Inc. https://www.cadence.com/content/dam/cadence-www/global/
+     zh_CN/documents/tools/system-design-verification/secured/xcelium-logic-
+     simulator-ds.pdf Official datasheet. Accessed: 2026-04-01.
+[19] cocotb contributors. 2025. Welcome to cocotb’s Documentation! cocotb. https:
+     //docs.cocotb.org/ Version 2.0.1. Accessed: 2026-03-21.
+[20] The Verilator Project 2026. Verilator Documentation. The Verilator Project.
+     https://veripool.org/verilator/documentation/ Version 5.024. Accessed: 2026-04-
+     01.
+[21] Yuchen Hu, Junhao Ye, Ke Xu, Jialin Sun, Shiyue Zhang, Xinyao Jiao, Dingrong
+     Pan, Jie Zhou, Ning Wang, Weiwei Shan, Xinwei Fang, Xi Wang, Nan Guan, and
+     Zhe Jiang. 2025. UVLLM: An Automated Universal RTL Verification Framework
+     using LLMs. In 2025 62nd ACM/IEEE Design Automation Conference (DAC). 1–7.
+     doi:10.1109/DAC63849.2025.11435108 arXiv:2411.16238.
+

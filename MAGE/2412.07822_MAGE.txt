@@ -1,0 +1,512 @@
+MAGE: A Multi-Agent Engine for Automated RTL
+              Code Generation
+                          Yujie Zhao* , Hejia Zhang* , Hanxian Huang, Zhongming Yu, Jishen Zhao
+                                                 University of California San Diego
+                                                     La Jolla, CA 92093, USA
+                                         {yuz285, hez024, hah008, zhy025, jzhao}@ucsd.edu
+
+
+
+   Abstract—The automatic generation of RTL code (e.g., Ver-                However, previous studies using a single LLM or a single
+ilog) through natural language instructions has emerged as a             agent face substantial limitations. First, these approaches fall
+promising direction with the advancement of large language               short of the context-switch between tasks, programming lan-
+models (LLMs). However, producing RTL code that is both
+syntactically and functionally correct remains a significant chal-       guages, and knowledge domains. As a result, the quality of
+lenge. Existing single-LLM-agent approaches face substantial             RTL design suffers: for instance, a single Claude-3.5-sonnet
+limitations because they must navigate between various program-          agent [9] has a functionality pass rate of only 75.0% even for
+ming languages and handle intricate generation, verification,            simple design tasks [19]–[21]. Second, HDLs are specifically
+and modification tasks. To address these challenges, this paper          designed to describe the logic and architecture of digital
+introduces MAGE, the first open-source1 multi-agent AI system
+designed for robust and accurate Verilog RTL code generation.            hardware at a low level, focusing on the flow of data between
+We propose a novel high-temperature RTL candidate sampling               registers, the timing of operations, and hardware characteristics
+and debugging system that effectively explores the space of code         such as propagation delays and signal dependencies. Directly
+candidates and significantly improves the quality of the candi-          adopting general-purpose LLM or multi-agent designs will
+dates. Furthermore, we design a novel Verilog-state checkpoint           produce low-accuracy RTL code that fails to meet timing
+checking mechanism that enables early detection of functional
+errors and delivers precise feedback for targeted fixes, signif-         constraints, resulting in wrong designs [10], [16], [19], [20].
+icantly enhancing the functional correctness of the generated               To address these challenges, we propose MAGE, the first
+RTL code. MAGE achieves a 95.7% rate of syntactic and                    open-source Multi-AGent Engine to achieve automatic high-
+functional correctness code generation on VerilogEval-Human              quality RTL code generation. Different from the existing
+v2 benchmark, surpassing the state-of-the-art Claude-3.5-sonnet          single-agent RTL code generation frameworks [13], [17], [18],
+by 23.3%, demonstrating a robust and reliable approach for AI-
+driven RTL design workflows.                                             MAGE enables specialized agents to handle distinct aspects
+                                                                         in the RTL development pipeline. Inspired by real-world RTL
+                        I. INTRODUCTION                                  design workflows, where specialists focus on distinct stages,
+                                                                         our approach, MAGE, employs a specialized multi-agent
+   Digital hardware design usually requires engineers to define          architecture composed of four types of key agents: the RTL
+the architecture and functionality of hardware by writing code           code generation agent, testbench generation agent, judge agent,
+in hardware description languages (HDLs), such as Verilog                and debug agent. Each type plays a specific role, working
+and VHDL. As VLSI designs become more complex, hard-                     collaboratively within our tailored recursive framework to
+ware design workflows using HDLs are increasingly time-                  generate optimized and reliable RTL code.
+consuming and error-prone [1]–[3], often requiring multiple                 MAGE consists of three key design principles. First,
+iterations to debug functional correctness. Although electronic          mimicking the iterative nature of human RTL design teams
+design automation (EDA) tools have advanced to support this              in addressing complex design challenges, we developed a
+workflow [4]–[7], the demand for more efficient and automated            high-efficiency collaboration workflow with a delicate design
+hardware design solutions remains crucial.                               context communication protocol. Second, we propose a novel
+   Large Language Models (LLMs) [8], [9] have recently                   high-temperature RTL candidate sampling and debugging sys-
+shown promising potential in assisting and improving hard-               tem, which leverages both high-temperature sampling and
+ware design [10]–[13]. Recent studies explored leveraging                simulation-based scoring to identify promising candidates. Our
+LLMs to improve the correctness of RTL code generation                   key insight is that higher temperatures result in more diverse
+through model fine-tuning [10], [14], [15], training of domain-          LLM outputs, while also increasing the likelihood of including
+adaptive models [16], and single-agent methods [13], [17],               the highest-quality candidates for optimization in the next
+[18] that augment LLMs by incorporating results and feedback             stage. Finally, we propose a novel Verilog-state checkpointing
+from compilers or simulators to refine the generated code.               and validation scheme, which substantially improves the func-
+                                                                         tional correctness. Unlike conventional methods that provide
+ * Equal Contribution
+ 1 MAGE      is      open-sourced at    https://github.com/stable-lab/   feedback only on the final output mismatch [13], [17], [18],
+MAGE-A-Multi-Agent-Engine-for-Automated-RTL-Code-Generation.             MAGE validates an RTL design by comparing state values
+with expected outputs at each clock edge. This enables early         In contrast, multi-agent systems distribute tasks among
+detection of functional errors and provides precise feedback      agents with independent conversation histories, enabling spe-
+for targeted fixes.                                               cialized task handling and greater modularity. However,
+   In summary, we make the following contributions:               Aivril [24] only implements a basic two-agent division be-
+ • We design MAGE, the first open-source LLM-based multi-         tween code generation and review, still requiring a single
+    agent system for robust and accurate Verilog RTL code         agent to handle both synthesizable RTL and non-synthesizable
+    generation. By decomposing a complex hardware design          verification code, thus failing to address the fundamental
+    into manageable sub-tasks, we design LLM agents to            context-switching challenges. Verilogcoder [25] further con-
+    handle sub-tasks and design the system to enable effective    strains accessibility and system adaptability through its closed-
+    agent communication and collaboration.                        source implementation and reliance on proprietary components
+ • We propose a novel high-temperature RTL candidate sam-         (e.g., its Abstract Syntax Tree and Waveform Tracing Tool).
+    pling system, notably enhancing generated code quality by     Temperature Sampling for LLM-based RTL Design. Given
+    exploring the benefits of high-randomness generation.         an input requirement, LLMs rely on a specific decoding strat-
+ • We propose a novel Verilog-state checkpoint checking           egy to generate the code auto-regressively. Temperature sam-
+    mechanism, which provides precise feedback for targeted       pling method [26] uses a temperature coefficient T (usually
+    fixes, significantly improving the RTL code quality.          ∈ [0, 1]) to control the sampling randomness. Increasing the
+ • MAGE achieves a 95.7% rate of syntactic and functional         temperature avoids overly conservative results and promotes
+    correctness code generation on the VerilogEval- Human v2      diversity in code generation, thus enhancing the chance of
+    benchmark, surpassing all existing methods, representing      exploring the correct answers. However, this comes at the
+    a critical step toward automating and optimizing hardware     cost of introducing more noise and errors in the generation
+    design workflows, offering a more robust methodology for      results. Recent studies [27], [28] show that high-temperature
+    AI-driven RTL design.                                         sampling can improve correctness in software code genera-
+                                                                  tion through multiple sampling iterations. However, higher
+           II. BACKGROUND AND M OTIVATION
+                                                                  temperatures tend to result in poorer performance for RTL
+A. Characteristics and challenges of LLM-based RTL design         design as explored in recent studies [10], [21]. We found a
+Decomposing Complex Traditional RTL Design. Traditional           key reason for this is that single-agent mechanisms restrict
+digital hardware design flows necessitate hardware engineers      the ability to design independent and efficient sampling and
+to iteratively perform: (1) implement Verilog code to spec-       feedback, thereby hindering the optimization potential of high-
+ify hardware architectures and behaviors, (2) customize test      temperature sampling for RTL code.
+benches to rigorously verify the correctness of these hardware
+descriptions (3) iterate between Verilog simulations, signal      B. Opportunity on Effective Code Generation
+waveform reasoning, and code refining until all output signals
+match expected behavior. This iterative loop among design,           To tackle the aforementioned limitations of both existing
+verification, and refinement makes the RTL design process         single-agent and multi-agent systems for RTL code generation,
+not only challenging but also highly demanding in terms           we identify potential opportunities to develop effective RTL
+of both time and expertise. The complexity of traditional         code generation frameworks to improve correctness.
+Verilog RTL design calls for decomposing the whole process           First, to further reduce the mutual influence between non-
+into multiple manageable sub-stages and adopting different        synthesizable testbenches and synthesizable RTL code gener-
+specialists (agents) for different sub-stages.                    ation, as well as to decrease the complexity of tasks assigned
+Related Work on LLM-based RTL Design. Recent works                to each agent, we recognize the necessity of appropriately dis-
+[10], [15], [16], [22], [23] train or fine-tune general code      tributing tasks among multiple agents and organizing the work-
+generation LLMs by incorporating RTL domain knowledge             flow effectively. Specifically, previous works (e.g., [17], [24])
+to enhance the correctness of RTL code generation. Single-        employed a single agent to generate both non-synthesizable
+agent methods [13], [17], [18] further integrate simulation       testbenches and synthesizable RTL code simultaneously. How-
+results and introduce more stages in the code generation          ever, [29] found that generating testbenches and code together
+process, such as planning, verification, and code refining        within the same conversation may lead to a corresponding
+based on the feedback from simulation. However, this process      decrease in effectiveness. Moreover, test cases generated in
+involves generating both synthesizable and non-synthesizable      this manner can become biased and influenced by the code,
+code for RTL generation and verification, and context switches    resulting in a loss of objectivity and diversity.
+among different sub-tasks in multiple iterations, necessitating      Second, based on our analysis in Sec. II-A, we thoroughly
+different domain knowledge and problem-solving abilities.         reviewed existing multi-agent systems [24], [25], where we
+Thus, adopting a single agent for all these tasks in the          found that all of them are closed-source and dependent
+hardware design process leads to sub-optimal results, as they     on third-party proprietary tools that are not LLM-directly-
+have to process such complex contexts in each interaction         adapted. This inevitably limits system extensibility and trans-
+and maintain consistency through a long unified conversation      parency. Therefore, we identify the need for an open-sourced
+history.                                                          multi-agent system.
+     STEP       TestBench Generation                                  STEP
+                                                                                                      TestBench Agent           RTL Agent          Judge Agent         Debug Agent           Tools
+                         Parse           Output     Test                            RTL
+                                                   Bench                         Generation
+                                                                                                                                       (b) Legend Specification
+              Waveform           WF-TextLog
+                                                                                                                                                                 score=0.95
+                                                                                                                 Candidate r1                                Candidate r2
+                                                                                                                                                                 score=0.82
+     STEP       Simulate and Evaluate TestBench
+                                                                                                                 Candidate r2                                Candidate r3
+      If TestBench is incorrect,                                                                    High-                                                        score=0.68        Top-K    Output
+                                         Test
+      regenerate an optimized           Bench                                                   Temperature                                                                       Selected
+                                                                                                                 Candidate r3                                Candidate r4
+      testbench.                                                                                  Sampling                                                                       Candidates          Debug
+                                                Judge              Re-Generate                                                                                   score=0.51                           Step
+                                                                                              e.g. c=4, T=0.85
+                                                                                                                 Candidate r4       Simulator  Score         Candidate r1
+                                                                                                                                              and Rank
+
+              STEP        RTL High-Temperature Sampling & Ranking
+                                                                                                         (c) Details of High-Temperature Sampling and Ranking (Step 4)
+                 Simulate, Score and Rank
+                                                           Gen                Parse
+                 the candidates generated
+                  sampled by RTL agent.
+                                                                 Candidates                               CLK
+                                                                                                                                    checkpoint'1
+
+                                                                                                                 Check Passed a_in=1,b_in=0, and=0, q=1                                              iter-1
+     STEP      RTL Debugging with Verilog-State Checkpoint                                     mismatched
+                                                                                                    info                                                  checkpoint'2
+       Analyze RTL with Verilog-State                                                                 +
+                                                                                              sliding window
+                                                                                                                 Checkpointed         Check Passed       a_in=0,b_in=1, and=1, q=0                   iter-2
+       Checkpoints, refine RTL, simulate
+       to update checkpoints, and decide                                                             log
+       to accept or rollback refinements                                                              +
+                                                                              Rollback        previous code
+                                                                                                                                Checkpointed                                  Check Passed           iter-3
+
+
+
+                      (a) Overall architecture of MAGE                                                      (d) Details of RTL Debugging with State Checkpoint (Step 5)
+Fig. 1: (a) The overview of MAGE, (b) the roles of four types of agents, (c) state check module, and (d) sampling and debugging module.
+
+   Finally, to address the limitation of high-temperature sam-                                                                           III. MAGE D ESIGN
+pling for RTL code generation described in Sec. II-A, we sum-
+                                                                                                        We present MAGE, a multi-agent engine designed specifi-
+marize the key to efficiently sampling RTL code candidates
+                                                                                                     cally for RTL. This system integrates an RTL-specific context
+process to mitigate the impact of randomness while leveraging
+                                                                                                     communication protocol with high-efficiency, LLM-adapted
+the exploration benefits. Given that RTL code is synthesizable
+                                                                                                     tools for fine-tuning RTL, all within a productive and orches-
+and a practical miscount scoring method is applicable, we
+                                                                                                     trated process.
+prioritize candidate selection at an early stage by identifying
+top-scoring candidates. This approach allows us to reduce the
+                                                                                                     A. Multi-Agent System Overview
+exploration cost by filtering suboptimal results early.
+                                                                                                        Figure 1 depicts a comprehensive overview of the workflow
+                                                                                                     implemented in MAGE. Inspired by the collaborative division
+C. Opportunity on Effective Code Debugging
+                                                                                                     of work approaches of human RTL design teams, our frame-
+   Most existing LLM approaches for RTL code genera-                                                 work incorporates four types of agents, each playing a specific
+tion [13], [17], [18] rely on the direct application of original                                     and concrete role in the automation process. Figure 1 (b)
+golden testbenches, which can only provide pass rates. This                                          specifically delineates the responsibilities and tasks assigned
+provides very limited feedback to LLMs in fine-tuning RTL                                            to each agent, ensuring a clear understanding of the workflow.
+code as pass rates alone lack detailed insights into crucial as-                                     (1) A Testbench Generation Agent is responsible for creating
+pects such as timing analysis, signal interactions, variable val-                                    optimized test benches in a textual-waveform-output format
+ues, and mismatch information, all of which are essential for                                        based on the natural language specifications and any available
+ensuring high-quality RTL design. VerilogCoder [25] applies                                          golden test benches. (2) A RTL Generation Agents convert
+closed-source Abstract Syntax Tree (AST) analysis, which                                             these specifications along with the optimized test bench into
+significantly restricts flexibility and transparency. Furthermore,                                   Verilog code, incorporating syntax checking to ensure code
+the introduction of tools that output in graphical form, which                                       validity. (3) A Judge Agent then takes over by simulating
+LLM can not directly apply, increases the complexity of                                              and evaluating the generated RTL code against the optimized
+tasks for LLMs and reduces their effectiveness. Therefore, we                                        test bench. It scores the RTL code candidates and decides
+identify the requirement for an optimized testbench, which                                           whether any require debugging or if the test bench needs to be
+will output a log resembling a simulated waveform in text                                            regenerated. (4) A Debug Agent performs iterative refinements
+form, which can be directly adaptable by LLMs. This shifts the                                       on any code that fails initial tests, using textual waveform-like
+reliance on closed-source tools to a fully open-source LLM-                                          simulation outputs as feedback for improvements. Our method
+based textual protocol, alongside significant improvements                                           mimics the division of labor in human teams and enhances the
+in LLM RTL code debug effectiveness, improving both the                                              efficiency and accuracy of automated RTL design. It should be
+extension of the framework and the quality of the analysis.                                          noted that, whether in RTL code generation or debugging, the
+agent will perform at most s = 5 iterations to automatically
+fix syntax errors.
+   Based on the distinct and specific roles of multiple agents,
+we have designed an efficient workflow to ensure that each
+agent’s unique contributions are seamlessly integrated, fa-
+cilitating a coherent progression throughout the workflow.
+Figure 1 (a) demonstrates the entire process is systematically
+divided into five main steps as depicted as follows:
+Step 1 – Generate initial textual-waveform-output test-
+benches. To reduce the limitations of pass-rate-output golden
+testbenches, which is analyzed in Sec. II-C, we directly
+utilize natural language specifications to generate optimized
+testbenches that can output State Checkpoints, which will be
+used in Step 5 (see Figure 1 (d) and Sec. III-C). Furthermore,
+since natural language specifications may contain ambiguities,
+we combine the input with the golden testbench if available.
+Step 2 – Based on the natural language specifications and
+the optimized testbench, we generate an initiate RTL code.
+Step 3 – If the initial RTL code cannot pass the optimized
+testbench, the judge agent evaluates the testbench and regen-
+erates it if deemed incorrect.
+Step 4 – If the RTL code is deemed correct, we will employ                   Fig. 2: Normalized mismatch count of generated testbenches at
+an High-Temperature RTL Sampling and Scoring Process                         different stages under varying temperature configurations (Low tem-
+(see Figure 1 (c) and detailed in Sec. III-B) to generate and                perature: T = 0, n = 1; High temperature: T = 0.85, n = 20),
+ranking RTL code Candidates.                                                 using the Claude 3.5 Sonnet model (dated 2024-10-22) across two
+Step 5 – If the RTL code candidates still have function errors,              benchmarks: VerilogEval-v1-Human [20] and VerilogEval-v2 [21].
+                                                                             Problems that directly passed before Step 4 and those with zero
+we will employ a RTL Debugging with State Checkpoint
+                                                                             mean mismatches in both configurations are not shown in the figure.
+Mechanism (see Figure 1 (d) and Sec. III-C) to make effective                The blue violin plot shows that candidates (blue dots) generated
+debug trials and debug the selected RTL code candidates.                     with high-temperature sampling typically have lower mean mismatch
+                                                                             counts across most problems compared to those generated with low
+B. High-Temperature RTL Sampling and Scoring                                 temperatures (purple dots).
+   As depicted in Sec. II-B, high-temperature sampling has a
+better chance of exploring the correct code. However, in prior
+studies on Temperature Sampling for RTL code generation like                 specification of the issue i, and T Bi is the corresponding
+[27], [28], it is commonly acknowledged that high-temperature                testbench. The term PT (r | psys , SPi , T Bi ) represents the
+sampling introduces significant randomness, often resulting in               probability distribution of the generated RTL code given the
+reduced correctness. To address this issue, we first explore the             temperature, system prompt, specification, and testbench.
+potential opportunity of using multiple RTL code generation                  2. We select the Top-K candidates from Ri based on their
+candidates in high-temperature sampling to reduce simulated                  scores. Specifically, each candidate in Ri is evaluated to obtain
+mismatch counts in one iteration. Fig. 2 shows the distribution              a normalized mismatch-based score as follows:
+of normalized mismatch counts for the best candidates at two                                                     m(r)
+                                                                                                     s(r) = 1 −                            (2)
+different temperatures. We observe that the best candidate                                                       tc(r)
+with high temperature has a lower mismatch count for most
+                                                                             where m(r) is the mismatch count and tc(r) is the total
+problems. This suggests that, despite increased randomness,
+                                                                             number of checks of the generated RTL code r. We then select
+high-temperature sampling yields better performance when the
+                                                                             the K candidates with the highest scores, denoted as follows:
+sampling is sufficiently extensive. The improvement in pass
+                                                                                                                 X
+rates at each stage, as shown in Fig. 2, indicates the potential                            R⋆i,0 = arg max          s(r)              (3)
+benefits of performing an effective sampling policy at high                                            A⊆Ri ,|A|=K r∈A
+temperatures.
+                                                                             3. We employ a debug agent to perform debugging trials,
+   Based on the above observation, we propose a High-                                                       ⋆
+                                                                             generating a new candidate rtrial    = D(r⋆ ) for each selected
+Temperature Sampling and Ranking Process as follows:                                    ⋆
+                                                                             candidate r , where D(r) denotes the debug trial for RTL code
+1. We sample c RTL code candidates for issue i:
+                                                                             r. The selected candidate set at iteration m is then updated as:
+   Ri = {ri1 , ri2 , . . . , ric }, ri ∼ PT (r | psys , SPi , T Bi )   (1)
+                                                                                        ⋆
+Here, T is the temperature, psys denotes the system prompt                             Ri,m = { arg max s(r) | r⋆ ∈ R⋆i,m−1 }               (4)
+of the RTL code generation, SPi is the natural language                                          r∈{D(r ⋆ ),r ⋆ }
+And this process repeats until max
+                                 ⋆
+                                   s(r) = 1 or the iteration       n=20). Here, temperature T is described in Sec. II-A. Top p
+                               r∈Ri,m
+                                                                   limits the output pool to a cumulative probability threshold. n
+limit is reached.
+                                                                   represents the number of evaluation runs. Metrics. Following
+C. RTL Debugging with State Checkpoint Mechanism                   prior works [17], [18], [21], the Pass@1 metric is computed
+   Our objective is to design a mechanism that is entirely         as:                               "           #
+                                                                                                            n−cp
+LLM-based, independent of third-party closed-source tools,                                                    k
+                                                                                 pass@k = EProblems 1 −       n                (7)
+and effective in improving RTL debugging efficiency. To                                                       k
+achieve this, we propose the RTL Debugging with State              where k = 1, and cp is the number of passing runs. This
+Checkpoint Mechanism, which follows these steps:                   Pass@1 metric, which accounts for multiple runs, reflects
+1. Utilizing the optimized testbench generated in Step 1 and       the expected percentage of problems that the system solves
+ 2 , we extract the input vector I, the DUT, and the output O,     correctly when executed once for each problem.
+and subsequently identify the earliest mismatch point as:
+                                                                   TABLE I: Pass rates of different temperature configurations in
+         tm = min{t | ODU T (t) ̸= Oexp (t), t ≥ 0}          (5)   MAGE.
+                                                                       Config    VerilogEval-Human Pass@1   VerilogEval-V2 Pass@1
+where ODUT (t) is the output vector from the DUT at time t,          High Temp              94.8                     95.7
+and Oexp (t) is the expected output vector at time t.                Low Temp               89.1                     93.6
+2. We generate the State Checkpoint and collect the textual
+waveform window as:                                                  As shown in Table I, the High Temperature setting achieves
+                  n                                                higher Pass@1, so it is adopted for subsequent experiments.
+           W = I(t′ ), ODU T (t′ ), Oexp (t′ ) |
+                                              
+
+                                                o                 B. Key Results
+                    t′ ∈ max(tm − LW , 0), tm
+                        
+                                                        (6)           Table II shows the comparison of MAGE and base-
+                                                                   lines. For a fair comparison, we select the highest pass
+where W represents the textual waveform window, LW is the
+                                                                   rate among their experiment configuration. MAGE achieves
+window length parameter, and I(t′ ) is the input vector at clock
+                                                                   the best performance on both benchmarks, delivering con-
+edge t′ .
+                                                                   sistent improvements over specialized (e.g., VerilogCoder)
+3. The debugging agent then takes the textual waveform win-
+                                                                   and general-purpose systems(e.g., GPT-4, CodeQwen). Specif-
+dow W and the original testbench as inputs, generates a new
+                                                                   ically, MAGE obtains a Pass@1 score of 94.8% on
+trial of debugged RTL code, and performs replacement actions
+                                                                   VerilogEval-Human and 95.7% on VerilogEval-V2, surpassing
+to correct the identified faults in the RTL. The simulation is
+                                                                   all baselines. These results underline the effectiveness of
+subsequently rerun to verify if the mismatch is resolved in the
+                                                                   MAGE in advancing the capabilities of LLM-driven coding
+updated State Checkpoint.
+                                                                   systems.
+                     IV. E XPERIMENTS                                 MAGE not only outperforms closed-source systems but also
+                                                                   demonstrates substantial improvement over accessible solu-
+A. Experimental Setup
+                                                                   tions, including vanilla models and open-source coding sys-
+Benchmarks. Two widely used benchmarking datasets:                 tems. For instance, compared to the highest-performing vanilla
+VerilogEval-v1-Human [20] and VerilogEval-v2 [25]. Model.          LLMs (e.g., Claude 3.5 Sonnet), MAGE achieves a relative
+Claude 3.5 Sonnet 2024-10-22 [9]. Baselines. i. Vanilla mod-       improvement of +19.8% on VerilogEval-Human and +23.3%
+els: Generating RTL code in a single pass using language           on VerilogEval-V2. Similarly, against open-source systems
+models, including both general-purpose LLMs (e.g. GPT-             like OriGen (54.4% Pass@1 on VerilogEval-Human), MAGE
+4o [30], Claude 3.5 Sonnet [9]) and RTL-specified models           significantly improves the functional correctness, showcasing
+(e.g. ITERTL [22], CodeV [23]). ii. LLM Agent systems:             its superior performance in scenarios where accessible and
+Agent-based systems designed to enhance LLM performance            reproducible solutions are prioritized.
+for RTL code generation, including open-source solutions
+(OriGen [13]) and closed-source ones (e.g. VeriAssist [17],        C. Ablation Study
+AutoVCoder [18], VerilogCoder [25], AIVRIL [24]). Config-          Multi-Agent System. We conducted an ablation study to
+urations. Our implementation of MAGE integrates the open-          assess the effectiveness of task distribution among multiple
+source Verilog compiler and simulator Icarus Verilog [31]          agents. The study compared three configurations: (a) Vanilla
+with an LLM-agnostic API interface offered by the open-            LLM, which involves one-pass RTL code generation using a
+source framework LlamaIndex [32]. Based on the superior            single LLM; (b) Single-Agent, where different agents in the
+performance [24], [33], [34] of Claude 3.5 Sonnet [9] in           MAGE system were merged into a single agent by sharing a
+multiple coding tasks, we choose to run experiments with           common generation history; and (c) Multi-Agent, the proposed
+that language model. In accordance with the VerilogEval V1         system that assigns tasks to specialized agents based on their
+[20] and V2 [21] benchmark, we conducted experiments to            roles. As shown in Table III, the multi-agent configuration
+measure Pass@1 under 2 settings: Low Temperature (T=0,             achieves the highest pass rate (93.6%), outperforming both
+top p=0.01, n=1) and High Temperature (T=0.85, top p=0.95,         the vanilla (72.4%) and single-agent (83.9%) setups. These
+TABLE II: Pass rates of recent LLMs and Coding Systems. The                                  TABLE III: Multi-Agent task distribution ablation study: Pass Rates
+highest Pass@1 among different temperature settings is reported.                             with Claude 3.5 Sonnet 2024-10-22, Low-Temperature Setting.
+                                                             VerilogEval-     VerilogEval-            Config            Type        VerilogEval-V2 Pass@1
+                         System
+         System                           LLM Model            Human               V2               Vanila LLM         Pass%                 72.4
+                          Type
+                                                               Pass@1           Pass@1
+                           N/A             GPT-4o                51.3             N/A
+                                                                                                                       Pass%                 83.9
+                                                                                                    Single-Agent
+                           N/A       Claude 3.5 Sonnet∗          60.3             N/A                              Improvement(∆)           +11.5
+      Generic LLM                                                                                                      Pass%                 93.6
+                                      Claude 3.5 Sonnet
+                           N/A                                   75.0             72.4              Multi-Agent
+                                         2024-10-22                                                                Improvement(∆)           +21.2
+     RTL-specified        N/A           ITERTL [22]              42.9             N/A
+        LLM               N/A            CodeV [23]              53.2             N/A
+                          Open       DeepSeek-Coder-7B
+      OriGen [13]                                                54.4             N/A
+                         Source           + LoRA
+                         Closed
+     VeriAssist [17]                        GPT-4                50.5             N/A
+                         Source
+                         Closed
+    AutoVCoder [18]                   CodeQwen1.5-7B             48.5             N/A
+                         Source
+                         Closed
+    VerilogCoder [25]                     GPT-4 Turbo            N/A              94.2
+                         Source
+                         Closed
+      AIVRIL [24]                    Claude 3.5 Sonnet∗          64.7             N/A
+                         Source
+                                      Claude 3.5 Sonnet
+                          Open                                   94.8             95.7
+     MAGE (ours)                         2024-10-22
+                         Source
+                                      Improvement(∆)†           +19.8             +23.3
+∗ Claude 3.5 Sonnet has two versions: 2024-06-20 and 2024-10-22. The cited
+paper [24] does not specify which version was used.
+† The improvement is directly compared to the performance of the same
+model without employing the MAGE system.
+
+      (a) RTL Module With Bugs                      (c) Debug With Checkpoint
+
+    always @(*) begin                            Log With Checkpoint
+      mux_in[0] = (~c & d) | (c & ~d);
+      mux_in[1] = 1’b0;                          First mismatch at time 50:
+      mux_in[2] = (~c & ~d) | (c & ~d);          Inputs: c=1, d=1
+      mux_in[3] = (c & d);                       Got mux_in=1000 (8), Expected
+    end                                          mux_in=1001 (9).
+
+
+    (b) Debug Without Checkpoint                 Reasoning                                   Fig. 4: Score S(r) improvement of RTL by sampling and debugging.
+                                                 Let's analyze the mismatch for              (a) Score distribution: generated RTL without sampling versus sam-
+                                                 cd=11: mux_in[0] should be 1                pled and selected best RTL candidate; (b) Score distribution and the
+        Log Without Checkpoint                   Current output 1000, expected 1001
+        Output 'mux_in' has 11                   Problem with mux_in[0]:                     mean score of generated RTL in each debug round. Data of problems
+        mismatches. First                        mux_in[0] should be 1 for:                  fixed before entering the debug stage are not included.
+        mismatch occurred at time                  - cd=01: (~c & d)
+        50.                                        - cd=10: (c & ~d)
+                                                   - cd=11: (c & d) <-- missing this
+                                                 term                                        the problematic location in the buggy RTL code, making it
+        Wrong Debug Action                                                                   unlikely to identify and fix the issue. In contrast, with state
+        Replace                                  Correct Debug Action                        checkpoints included in the log, the LLM Debug Agent can
+        mux_in[2] = (~c & ~d) |                  Replace                                     reason more effectively, pinpointing mismatches in the output
+        (c & ~d);                                mux_in[0] = (~c & d) | (c & ~d);
+        With                                     With                                        and identifying missing logic terms. This leads to a more
+        mux_in[2] = (~c & ~d) |                  mux_in[0] = (~c & d) | (c & ~d) | (c
+        (c & ~d) | (c & d);                      & d);                                       accurate and efficient bug-fixing process.
+                                                                                             Sampling and Debugging Mechanisms. Our experimental
+                                                 Update Checkpoint                           data demonstrates the effectiveness of the proposed sampling
+          SIMULATION FAILED
+                                                      SIMULATION PASSED                      and debugging mechanisms in enhancing the quality of gener-
+                                                                                             ated RTL. Fig. 4(a) illustrates that the RTL generated with the
+              Failure                                        Success                         sampling strategy consistently outperforms the RTL without
+Fig. 3: The Case Study of RTL Code State Checkpoint on Prob093-
+                                                                                             sampling across different problems. The score distribution
+ece241-2014-q3.                                                                              indicates that, without sampling, the RTL scores are nearly
+                                                                                             uniformly spread across the range [0, 1]. However, after apply-
+results indicate that effective task partitioning can significantly                          ing the sampling method, the scores are concentrated near 1,
+enhance the performance of LLM-based systems, particularly                                   reflecting a significant quality improvement. Fig. 4 (b) depicts
+for complex tasks like RTL code generation, which require                                    the improvement in the mean score across multiple rounds of
+handling both synthesizable RTL code and non-synthesizable                                   debugging, starting from an initial score of 0.669 and reaching
+testbenches.                                                                                 0.890 after sufficient refinement. This consistent increase in
+                                                                                             score demonstrates the cumulative benefit of iterative debug-
+RTL Code State Checkpoint Mechanism. We also conducted
+                                                                                             ging, leading to more optimal RTL solutions.
+case studies to evaluate the effectiveness of the proposed RTL
+                                                                                                                     V. C ONCLUSION
+Code State Checkpoint mechanism. For example, Fig. 3 illus-
+trates a debugging case study with and without state check-                                    In this paper, we propose MAGE, the first open-source
+points. Without checkpoints, when only the log is provided                                   LLM-based multi-agent system designed for automated and
+to the LLM Debug Agent, the agent can only approximate                                       accurate Verilog RTL code generation. Integrated with a
+novel High-Temperature RTL Sampling and Scoring process,                        [18] M. Gao, J. Zhao, Z. Lin, W. Ding, X. Hou, Y. Feng, C. Li, and
+MAGE effectively explores more potentially correct candi-                            M. Guo, “Autovcoder: A systematic framework for automated Verilog
+                                                                                     code generation using llms,” arXiv preprint arXiv:2407.18333, 2024.
+dates, leading to higher pass rates than prior studies. Aug-                    [19] Y. Lu, S. Liu, Q. Zhang, and Z. Xie, “RTLLM: An open-source
+mented with RTL Debugging with State Checkpoint Mecha-                               benchmark for design rtl generation with large language model,” in 2024
+nism, MAGE further optimizes the code with more precise                              29th Asia and South Pacific Design Automation Conference (ASP-DAC).
+                                                                                     IEEE, 2024, pp. 722–727.
+feedback. Our system represents a critical step toward au-                      [20] M. Liu, N. Pinckney, B. Khailany, and H. Ren, “Verilogeval: Evaluating
+tomating and optimizing hardware design workflows, offering                          large language models for verilog code generation,” in 2023 IEEE/ACM
+a more robust methodology for AI-driven RTL design.                                  International Conference on Computer Aided Design (ICCAD). IEEE,
+                                                                                     2023, pp. 1–8.
+                                                                                [21] N. Pinckney, C. Batten, M. Liu, H. Ren, and B. Khailany, “Revisiting
+                             R EFERENCES                                             verilogeval: Newer LLMs, in-context learning, and specification-to-RTL
+ [1] G. Dessouky, D. Gens, P. Haney, G. Persyn, A. Kanuparthi, H. Khattri,           tasks,” arXiv preprint arXiv:2408.11053, 2024.
+     J. M. Fung, A.-R. Sadeghi, and J. Rajendran, “HardFails: Insights          [22] P. Wu, N. Guo, X. Xiao, W. Li, X. Ye, and D. Fan, “Itertl: An iterative
+     into software-exploitable hardware bugs,” in 28th USENIX Security               framework for fine-tuning llms for rtl code generation,” arXiv preprint
+     Symposium (USENIX Security 19), 2019, pp. 213–230.                              arXiv:2407.12022, 2024.
+ [2] B. Ahmad, S. Thakur, B. Tan, R. Karri, and H. Pearce, “On hardware         [23] Y. Zhao, D. Huang, C. Li, P. Jin, Z. Nan, T. Ma, L. Qi, Y. Pan, Z. Zhang,
+     security bug code fixes by prompting large language models,” IEEE               R. Zhang et al., “Codev: Empowering LLMs for verilog generation
+     Transactions on Information Forensics and Security, 2024.                       through multi-level summarization,” arXiv preprint arXiv:2407.10424,
+ [3] K. Laeufer, B. Fajardo, A. Ahuja, V. Iyer, B. Nikolić, and                     2024.
+     K. Sen, “RTL-repair: Fast symbolic repair of hardware design               [24] H. Sami, P.-E. Gaillardon, V. Tenace et al., “Aivril: Ai-driven rtl gen-
+     code,” in Proceedings of the 29th ACM International Conference                  eration with verification in-the-loop,” arXiv preprint arXiv:2409.11411,
+     on Architectural Support for Programming Languages and Operating                2024.
+     Systems, Volume 3, ser. ASPLOS ’24. New York, NY, USA:                     [25] C.-T. Ho, H. Ren, and B. Khailany, “Verilogcoder: Autonomous Verilog
+     Association for Computing Machinery, 2024, p. 867–881. [Online].                coding agents with graph-based planning and abstract syntax tree (AST)-
+     Available: https://doi.org/10.1145/3620666.3651346                              based waveform tracing tool,” arXiv preprint arXiv:2408.08927, 2024.
+ [4] L. Lavagno, L. Scheffer, and G. Martin, EDA for IC implementation,         [26] D. H. Ackley, G. E. Hinton, and T. J. Sejnowski, “A learning algorithm
+     circuit design, and process technology. CRC press, 2018.                        for boltzmann machines,” Cognitive science, vol. 9, no. 1, pp. 147–169,
+ [5] L. Scheffer, L. Lavagno, and G. Martin, EDA for IC system design,               1985.
+     verification, and testing. CRC press, 2018.                                [27] Q. Zheng, X. Xia, X. Zou, Y. Dong, S. Wang, Y. Xue, Z. Wang,
+ [6] K. Wakabayashi and T. Okamoto, “C-based soc design flow and eda                 L. Shen, A. Wang, Y. Li et al., “Codegeex: A pre-trained model for
+     tools: An asic and system vendor perspective,” IEEE Transactions on             code generation with multilingual evaluations on humaneval-x,” arXiv
+     Computer-Aided Design of Integrated Circuits and Systems, vol. 19,              preprint arXiv:2303.17568, 2023.
+     no. 12, pp. 1507–1522, 2000.                                               [28] Y. Zhu, J. Li, G. Li, Y. Zhao, Z. Jin, and H. Mei, “Hot or cold? adaptive
+ [7] R. Nane, V.-M. Sima, C. Pilato, J. Choi, B. Fort, A. Canis, Y. T. Chen,         temperature sampling for code generation with large language models,”
+     H. Hsiao, S. Brown, F. Ferrandi et al., “A survey and evaluation of             in Proceedings of the AAAI Conference on Artificial Intelligence, vol. 38,
+     fpga high-level synthesis tools,” IEEE Transactions on Computer-Aided           no. 1, 2024, pp. 437–445.
+     Design of Integrated Circuits and Systems, vol. 35, no. 10, pp. 1591–      [29] D. Huang, Q. Bu, J. M. Zhang, M. Luck, and H. Cui, “Agentcoder:
+     1604, 2015.                                                                     Multi-agent-based code generation with iterative testing and optimisa-
+ [8] J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman,             tion,” arXiv preprint arXiv:2312.13010, 2023.
+     D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat et al., “Gpt-4          [30] OpenAI, “Hello GPT-4o,” 2024, [Online; accessed 15-November-2024].
+     technical report,” arXiv preprint arXiv:2303.08774, 2023.                       [Online]. Available: https://openai.com/index/hello-gpt-4o/
+ [9] Anthropic, “The claude 3 model family: Opus, sonnet,                       [31] S. Williams, “The icarus verilog compilation system,” 2008. [Online].
+     haiku,” 2024. [Online]. Available: https://www-cdn.anthropic.com/               Available: https://github.com/steveicarus/iverilog
+     de8ba9b01c9ab7cbabf5c33b80b7bbc618857627/Model Card Claude                 [32] J. Liu, “LlamaIndex,” 11 2022. [Online]. Available: https://github.com/
+     3.pdf                                                                           jerryjliu/llama index
+[10] S. Thakur, B. Ahmad, Z. Fan, H. Pearce, B. Tan, R. Karri, B. Dolan-        [33] Anthropic, “Raising the bar on SWE-bench Verified with Claude
+     Gavitt, and S. Garg, “Benchmarking large language models for auto-              3.5 Sonnet,” 2024, [Online; accessed 15-November-2024]. [Online].
+     mated verilog rtl code generation,” in 2023 Design, Automation & Test           Available: https://www.anthropic.com/research/swe-bench-sonnet
+     in Europe Conference & Exhibition (DATE). IEEE, 2023, pp. 1–6.             [34] S. Swaroopa, R. Mukherjee, A. Debnath, and R. S. Chakraborty,
+[11] Z. Pei, H.-L. Zhen, M. Yuan, Y. Huang, and B. Yu, “Betterv: Con-                “Evaluating large language models for automatic register transfer logic
+     trolled verilog generation with discriminative guidance,” arXiv preprint        generation via high-level synthesis,” arXiv preprint arXiv:2408.02793,
+     arXiv:2402.03375, 2024.                                                         2024.
+[12] Y. Tsai, M. Liu, and H. Ren, “Rtlfixer: Automatically fixing rtl syntax
+     errors with large language model,” in Proceedings of the 61st ACM/IEEE
+     Design Automation Conference, 2024, pp. 1–6.
+[13] F. Cui, C. Yin, K. Zhou, Y. Xiao, G. Sun, Q. Xu, Q. Guo, D. Song,
+     D. Lin, X. Zhang et al., “Origen: Enhancing RTL code generation
+     with code-to-code augmentation and self-reflection,” arXiv preprint
+     arXiv:2407.16237, 2024.
+[14] H. Pearce, B. Tan, and R. Karri, “Dave: Deriving automatically verilog
+     from english,” in Proceedings of the 2020 ACM/IEEE Workshop on
+     Machine Learning for CAD, 2020, pp. 27–32.
+[15] S. Liu, W. Fang, Y. Lu, J. Wang, Q. Zhang, H. Zhang, and Z. Xie, “Rtl-
+     coder: Fully open-source and efficient llm-assisted rtl code generation
+     technique,” IEEE Transactions on Computer-Aided Design of Integrated
+     Circuits and Systems, 2024.
+[16] M. Liu, T.-D. Ene, R. Kirby, C. Cheng, N. Pinckney, R. Liang, J. Alben,
+     H. Anand, S. Banerjee, I. Bayraktaroglu et al., “ChipNemo: Domain-
+     adapted LLMs for chip design,” arXiv preprint arXiv:2311.00176, 2023.
+[17] H. Huang, Z. Lin, Z. Wang, X. Chen, K. Ding, and J. Zhao, “To-
+     wards LLM-powered Verilog RTL assistant: Self-verification and self-
+     correction,” arXiv preprint arXiv:2406.00115, 2024.
+

@@ -1,0 +1,434 @@
+                                              MechMem-RTL: Reusing Verified Mechanism Memories for
+                                                            LLM-Based RTL Repair
+                                                                           Mingyu Cheng, Junjie Gao, Jinhua Cui, Kuncai Zhong*
+                                                                           College of Semiconductors, Hunan University, China
+                                                                   Email: {mycheng, junjie1, jhcui, kczhong}@hnu.edu.cn; * Corresponding author
+
+                                         Abstract                                                                    A common approach to providing this past experience is retrieval-
+                                         Large language models (LLMs) can automatically repair register-          augmented generation (RAG) based on task-text similarity [5, 6].
+                                         transfer-level (RTL) designs. However, fixing complex sequential         However, in sequential RTL debugging, textual similarity is a weak
+                                         logic errors requires reusing past debugging experience. Existing        proxy for hardware execution behavior. Tasks with completely
+                                         retrieval-augmented generation (RAG) relies on task-text similarity      different descriptions can fail due to the same state-update error.
+                                         to provide this experience. This text-based approach often mis-          Conversely, similar task descriptions can fail for entirely differ-
+                                         guides the model because natural language poorly reflects cycle-         ent cycle-level reasons. Therefore, reusing repair experience based
+                                         level hardware execution semantics. To address this, we present          merely on text similarity often misguides the LLM.
+                                         MechMem-RTL, a repair framework that reuses verifier-confirmed              To address this limitation, we present MechMem-RTL, an auto-
+                                         repair records instead of text similarity. Each stored record strictly   mated framework that extracts and reuses verifier-confirmed repair
+                                         links trigger evidence, a diagnosed failure mechanism, a local re-       mechanisms. Upon a successful repair, the system constructs a
+arXiv:2607.17053v1 [cs.SE] 19 Jul 2026
+
+
+
+
+                                         pair action, preservation constraints, and a verification summary.       structured mechanism memory record. Each record explicitly links
+                                         For a new failure, MechMem-RTL injects a past record only when           trigger evidence, a diagnosed failure mechanism, a localized repair
+                                         deterministic verifier evidence is strictly compatible with the stored   action, preservation constraints, and a verification summary. For
+                                         trigger. Otherwise, the system uses only current verifier evidence.      subsequent repairs, a deterministic evidence filter injects a stored
+                                         We evaluate MechMem-RTL on 48 public sequential RTL tasks                record into the prompt only when the current compiler or simulator
+                                         across six repair models. With at most two repair attempts per task,     diagnostics are strictly compatible with the stored trigger. Other-
+                                         MechMem-RTL successfully resolves 180 out of 288 task-model              wise, the context is constructed from current verifier evidence.
+                                         pairs, outperforming standard feedback repair (109 pairs) and task-         Specifically, we make the following contributions.
+                                         similarity RAG (107 pairs).                                                    • We introduce a verifier-confirmed mechanism memory de-
+                                                                                                                          signed for sequential RTL repair. It formally encapsulates
+                                         Keywords                                                                         five key elements: verification trigger evidence, a diagnosed
+                                         Automated RTL repair, Large language models, Retrieval-augmented                 failure mechanism, a targeted repair action, behavior preser-
+                                         generation, Verification feedback, Sequential logic.                             vation constraints, and a verification summary (see Sec-
+                                                                                                                          tion 3).
+                                         1   Introduction                                                               • We design a hardware-aware deterministic evidence filter.
+                                         Large language models (LLMs) have emerged as practical tools                     It selects past records using strict compiler and simulator di-
+                                         for register-transfer-level (RTL) design [1–4]. However, because                 agnostics rather than task-text similarity or language model
+                                         their initial outputs rarely pass all verification checks on the first           heuristics, ensuring high-fidelity guidance (see Section 3).
+                                         attempt, automated RTL workflows rely heavily on an iterative                  • We curate SeqRTL, an evaluation set of 48 public sequential
+                                         repair loop. Within this loop, the model proposes localized revisions            RTL tasks with failing initial designs. We thoroughly com-
+                                         based on compiler or simulator feedback. These revisions are highly              pare our approach against standard feedback repair and
+                                         constrained, as a valid repair must strictly preserve the original               task-similarity RAG across six different repair models (see
+                                         module interface and match cycle-accurate behavior under the                     Sections 4 and 5).
+                                         target testbench.                                                           Experimental results confirm the effectiveness of MechMem-RTL.
+                                            Satisfying these cycle-accurate constraints makes fixing sequen-      Given a strict limit of two repair attempts per task, our method
+                                         tial logic particularly difficult. A single functional mismatch can      successfully resolves 180 out of 288 task-model pairs. Under identi-
+                                         stem from flawed finite-state machine (FSM) transitions, incor-          cal conditions, standard feedback repair and task-similarity RAG
+                                         rect event priorities, or misaligned protocol boundaries. Current        resolve only 109 and 107 pairs, respectively. We will make our
+                                         verifiers usually report the immediate failing symptom, such as a        framework code and evaluation artifacts publicly available.
+                                         signal mismatch at a specific clock cycle. They do not identify the
+                                         structural root cause. Since LLMs do not directly model hardware         2   Background and Motivation
+                                         semantics, they struggle to map these surface symptoms to the            In this section, we explain why automated RTL repair requires
+                                         correct code edit. Closing this gap requires the repair system to        reusable knowledge grounded in verifier evidence rather than task
+                                         reuse prior debugging experience rather than relying solely on the       text.
+                                         latest error message.                                                       RTL generation and evaluation. Recent studies establish a
+                                                                                                                  standard paradigm for LLM-aided RTL design using executable
+                                                      Verifier Evidence and Repair Context Selection                                                         Verified mechanism memories
+                                                                                                                                     Memory context                     verified prior repairs
+                                1
+               task spec                                                                                                                repair plan               trigger          stage and kind
+                                      Evidence         2      Failure             3       Memory             4       Compatible
+                                                                                                                                                                 context           signals and timing
+               failing RTL             parsing               signature                    retrieval                  evidence?
+                                     stage and kind        signals and timing          stored memories              include memory                             mechanism           failure cause
+                                                                                                                                     Current verifier
+           verifier report                                                                                                                                     repair action       targeted edit
+                                                                                                                                       evidence
+                                                                                                                                     no stored memory       preserved behavior     behavior to preserve
+                                                                                                                                                                verification       before and after
+                                memory guided repair context
+                                                                                                          current failure context
+                                                                                                                                                                   Repair protocol and
+                                                             Patch repair and re-verification                                                                      verification records
+                                                                                                                                                              patch response      patch proposal
+           5
+                                                                                                                                                            repair constraints targeted edit
+                                                                      6                               7                                                 8
+                      Prompt                          LLM                        RTL patch                        Re-verify                                   repair context      selected context
+                                                                                                                                        Pass?
+                selected repair context          patch response                 targeted RTL edit                compile + sim                                 memory use         Provided/not provided
+                                                                                                                                                             changed region       changed lines
+                                                                  fail: new verifier feedback
+                                                                                                                                                             response issues      format or service
+
+
+
+
+ Figure 1: Workflow of MechMem-RTL. Verifier evidence determines whether a stored repair record guides the next repair.
+
+
+checks [1, 2, 7–10]. In this setting, a model proposes an RTL candi-                                                trigger, the diagnosed mechanism, the local repair action, preser-
+date, and an automated harness verifies its functional correctness.                                                 vation constraints, and a verification summary. We formalize the
+Although domain-specific models trained on RTL data improve ini-                                                    structure and filtering of these mechanism memories in the next
+tial generation quality [3, 4], complex designs rarely pass all checks                                              section.
+immediately. Because many candidates fail on the first attempt, the
+design workflow naturally enters a repair stage.                                                                    3      Proposed Method
+   RTL repair and failure mechanisms. Current RTL repair                                                            In this section, we formalize the MechMem-RTL framework. We
+systems guide LLM edits using compiler errors or simulator feed-                                                    first detail how the system creates and reuses verifier-confirmed
+back [11–14], often validated against executable testbenches [15,                                                   repair records. We then formally define the memory record struc-
+16]. However, verifier feedback typically reports a surface symptom                                                 ture, explain the deterministic evidence filter that controls reuse,
+rather than the structural root cause. For example, a simulator may                                                 and describe the final patch-level diagnostics.
+flag an output mismatch at a specific clock cycle, while the actual
+fix requires changing an FSM transition, an event priority rule, or                                                 3.1          Core Workflow
+a protocol boundary. Recent error analyses confirm that effective                                                   Figure 1 illustrates the core workflow of MechMem-RTL. The sys-
+repair must distinguish specific failure mechanisms rather than                                                     tem operates in two distinct phases. These are memory creation
+just binary pass or fail outcomes [17]. This gap between immediate                                                  and memory-guided repair.
+symptoms and structural root causes makes it necessary to reuse                                                         During memory creation, the system extracts knowledge from
+prior debugging experience.                                                                                         successful debugging episodes. A memory record is stored only
+   Limitations of task-similarity RAG. A common approach                                                            when a proposed RTL patch passes the executable testbench. This
+to reusing past experience is task-similarity RAG [5, 6]. For se-                                                   strict rule keeps the memory bank anchored in verified hardware
+quential RTL debugging, however, text similarity is a weak proxy                                                    evidence rather than unverified model hypotheses.
+for hardware execution behavior. Tasks with completely different                                                        During memory-guided repair, the inputs consist of the task
+descriptions can fail due to the same state-update error, while sim-                                                specification, the current faulty RTL candidate, and the latest veri-
+ilar descriptions can fail for entirely different cycle-level reasons.                                              fier report. MechMem-RTL normalizes this verifier evidence and
+Retrieval based solely on task wording often introduces context                                                     retrieves initial candidate records from the memory bank. A deter-
+that looks relevant but mismatches the current failure mechanism.                                                   ministic evidence filter then evaluates whether any retrieved record
+Therefore, the repair context should be selected using evidence tied                                                is strictly compatible with the current failure. If a compatible record
+directly to compiler diagnostics, timing, and signal behavior.                                                      survives this filter, it is injected into the prompt as the selected re-
+   Reusable verification knowledge. Executable RTL checks nat-                                                      pair context. If no compatible memory record is selected, the repair
+urally provide this deterministic evidence. Because RTL repair is                                                   context is constructed from the current verifier evidence without
+strictly constrained by module interfaces and cycle-accurate behav-                                                 reusing stored memory. The model then proposes a localized patch,
+ior, a successful repair is much more than a simple text solution. It is                                            and the verifier evaluates the modified RTL. If the candidate still
+a verifiable debugging episode. General software repair often relies                                                fails, the process repeats using updated verifier feedback until it
+on execution traces or case-based reasoning [18–24]. In contrast,                                                   reaches the predefined iteration limit.
+sequential RTL debugging demands reusable artifacts strictly tied                                                       Crucially, this workflow explicitly targets sequential RTL fail-
+to hardware timing and signal evidence [25]. MechMem-RTL ap-                                                        ures involving control and timing behavior. Such failures include
+plies this principle by capturing each successful repair as a verifier-                                             finite-state machine transitions, output timing delays, protocol
+confirmed mechanism memory record. Each record links the failure                                                    boundaries, counter thresholds, pulse alignments, reset logic, and
+                                                                                                                    state-history updates. Compile and tool-compatibility errors are
+                                                                                                             2
+also addressed when they surface within these repair loops. This                       strict compatibility checks. These features correspond to the parallel
+bounded scope ensures that memory reuse is driven entirely by                          comparison lanes in Figure 2, mapping the current failure evidence
+cycle-level hardware semantics.                                                        directly to the stored trigger 𝑇 . The filter systematically evaluates
+                                                                                       the verification stage, failure kind, affected output signals, and
+3.2      Mechanism Memory Record                                                       temporal diagnostic signatures. To prevent data leakage, it utilizes
+At the core of this workflow is the mechanism memory, a structured                     task metadata to exclude records originating from the same task or
+diagnostic record backed by executable verification. We formalize                      known duplicate tasks.
+it as a five-element tuple 𝑚 = (𝑇 , 𝑀, 𝑅, 𝑃, 𝑉 ). Here, 𝑇 represents the
+trigger evidence. 𝑀 is the diagnosed failure mechanism. 𝑅 specifies                      Current failure evidence         Compatibility checks         Stored trigger T
+the localized repair action. 𝑃 outlines the behavior preservation
+                                                                                              Stage and kind               Same failure class         Recorded stage/kind
+constraints. Finally, 𝑉 provides the verification summary.
+    The trigger 𝑇 captures normalized compiler or simulator diagnos-                          Affected output               Output overlaps            Recorded outputs
+tics. It includes the verification stage, failure kind, affected outputs,
+and first mismatch time if available. The mechanism 𝑀 summarizes                             Timing/diagnostic              Aligns if reported        Recorded diagnostic
+the hardware failure cause, such as a state-output timing delay or a
+serial bit-order inversion. The repair action 𝑅 records the accepted                           Current task                Not same/duplicate           Memory source
+
+localized code edit. The preservation field 𝑃 identifies surrounding                                                Yes                          No
+logic, interface constraints, or timing behavior that must remain                                Compatible evidence                         No compatible memory
+unchanged. The verification summary 𝑉 simply logs the transition                               includes stored memory                     uses current verifier evidence
+from a failing outcome to a passing one.
+    While the mechanism (𝑀) and preservation (𝑃) fields are gener-
+                                                                                       Figure 2: Deterministic evidence filtering. Matched evidence
+ated during the repair attempt, they are never stored in isolation.
+                                                                                       exposes memory; otherwise, repair uses current evidence.
+MechMem-RTL commits the complete five-element record to the
+memory bank only after the associated patch passes the executable
+testbench. This verification-gated process ensures that the reusable                       Compatibility requires a strict set of mechanism-specific con-
+rationale is tied to a concrete and verifiable edit.                                   straints. For example, a compile-stage memory can only be reused
+                                                                                       for a compatible compile-stage diagnostic. A one-cycle output-
+      Table 1: Example verifier-confirmed repair record.                               timing memory requires a matching simulation mismatch pattern
+                                                                                       on a related output port or timing phase. Similarly, a serial bit-order
+ Field                   Stored content                                                memory requires matching signal and phase evidence. These deter-
+ Prior task              VerilogEval shift-count task
+                                                                                       ministic constraints are much stricter than natural language text
+ Trigger evidence        Output q: 1886/2071 mismatched samples; first mis-            similarity. They prevent weakly related hardware contexts from
+                         match at time 10                                              bypassing the filter and misleading the repair model.
+ Mechanism               Wrong direction in MSB-first serial shift
+                                                                                           After filtering, MechMem-RTL constructs the final repair context.
+ Repair action           Replace {data, q[3:1]} with {q[2:0], data}
+ Preserved behavior      Preserve counter behavior, interface, and hold behavior       If compatible memories survive, the prompt includes the surviving
+ Verification            Same testbench: mismatch before repair, pass after            records and requests a targeted patch. If no compatible memories
+                         repair                                                        survive, the retrieved records are withheld from the model, and
+                                                                                       the repair context is constructed from the current verifier evidence
+   Table 1 provides an example of a verifier-confirmed repair record.                  without reusing stored memory. Section 5 reports these context-
+The trigger and verification fields anchor the memory in objective                     selection decisions as explicit repair diagnostics.
+hardware evidence. Meanwhile, the mechanism, repair action, and
+preservation fields specify exactly what knowledge can be reused.                      3.4     Repair Patches and Diagnostics
+Consequently, the reusable unit is not a mere copy of a previous                       Having determined the appropriate repair context, the framework
+solution. Instead, it serves as a focused repair context centered on                   constructs the final prompt. This prompt integrates the current
+one specific failure mechanism.                                                        faulty RTL, the immediate verifier feedback, and any memory
+                                                                                       records that survive the filter. Regardless of the specific context type,
+3.3      Evidence Filtering                                                            the system explicitly instructs the model to diagnose the failure
+With the memory bank populated by these structured records, the                        mechanism and return a localized patch. Furthermore, the prompt
+next critical challenge is accurately identifying the correct repair                   requires the model to identify the modified code region and spec-
+context for a newly encountered failure. As illustrated in Figure 2,                   ify which surrounding behaviors must remain functionally intact.
+this selection process operates in two stages. First, a retrieval mod-                 The expected response is a targeted edit rather than a full-module
+ule proposes initial candidate records based on broad normalized                       rewrite.
+verifier evidence. Second, the deterministic evidence filter rigor-                       Once the language model generates this candidate patch, the
+ously screens these candidates to guarantee strict hardware com-                       system must enforce strict hardware boundaries. The repaired RTL
+patibility with the current failure.                                                   must strictly preserve the original module interface and keep logic
+   Instead of relying on probabilistic language model judgments,                       modifications strictly confined to the diagnosed failure zone. To
+the filter extracts deterministic hardware features to perform these                   monitor adherence to these structural constraints, the framework
+                                                                                   3
+continuously logs key process metrics. These tracked diagnostics                          4.2    Repair Methods
+include response validity, repair-constraint violations, full-module                      We compare three repair methods under a matched design. All
+rewrite attempts, line modification counts, and memory filtering                          methods share the same task specification, current faulty RTL can-
+statistics. While these metrics do not replace the primary verified                       didate, and verifier feedback. The only difference is the additional
+pass rate, they provide essential transparency. Ultimately, this track-                   repair context.
+ing ensures that the automated debugging process strictly adheres                            Standard feedback repair. This baseline relies exclusively on
+to practical hardware engineering standards.                                              the current faulty RTL candidate and the immediate compiler or
+                                                                                          simulator diagnostic report.
+4     Experimental Setup                                                                     Task-similarity RAG. This baseline represents the conven-
+To evaluate the proposed framework, we establish a strictly matched                       tional textual retrieval approach. It retrieves up to three solved task
+repair protocol. By fixing the task set, initial failing designs, itera-                  examples based on lexical overlap across task titles, specifications,
+tion limits, and verification harness across all methods, we ensure                       and module interfaces [5, 6]. To construct the prompt, these re-
+a fair and fully reproducible comparison [1, 2, 15, 26]. Figure 3                         trieved examples provide task descriptions, reference interfaces,
+outlines this shared evaluation pipeline.                                                 and retrieval metadata. The target task and its known duplicates
+                                                                                          are strictly excluded from the retrieval pool to ensure fairness.
+4.1     SeqRTL Evaluation Set                                                                MechMem-RTL. Our proposed method utilizes a separate bank
+Because our focus is automated debugging rather than initial gener-                       of 53 verifier-confirmed mechanism memory records, prepared
+ation, we construct SeqRTL, a dedicated evaluation set of 48 public                       independently from the evaluation runs. To maintain the integrity
+sequential RTL tasks. To guarantee a zero initial pass rate, each task                    of this bank, a source repair episode contributes a record only when
+begins with a recorded faulty design originally generated by GPT-                         its patch successfully passes verification. During the evaluation
+5.2. We include a task only if it features sequential control logic,                      runs, the system injects a stored record into the prompt only if
+has public provenance, and includes a verified reference design.                          the current diagnostic report is strictly compatible with the stored
+   To prevent data leakage, we rigorously exclude any tasks over-                         trigger evidence. If no compatible memory record is selected, the
+lapping with the source pool used to build our mechanism memory                           repair context is constructed from the current verifier evidence
+bank. We also filter out known duplicates, initially passing designs,                     without reusing stored memory.
+and tasks without runnable testbenches. The final 48 tasks and their                         To ensure strict fairness, all methods repair the same 48 starting
+starting failures remain strictly frozen throughout the evaluation.                       designs. Each method receives a maximum of two repair attempts
+These tasks originate from established benchmarks (e.g., HDLBits,                         per task and an 8000-token output limit. All methods use identical
+CodeV-R1, RTLLM) [2, 15] and cover diverse hardware behaviors,                            patch response formats and share the same retry rules for handling
+including protocol handshaking, reset initialization, edge capture,                       invalid formats. Importantly, models are explicitly constrained to
+counter thresholds, and state-history updates.                                            preserve the original module interface, avoid full-module rewrites,
+                                                                                          and restrict edits strictly to the diagnosed failure zone.
+                              SeqRTL evaluation set                                          Every repair attempt utilizes the identical Icarus Verilog simula-
+                          48 public sequential RTL tasks                                  tion harness. The models receive text-based compiler diagnostics
+                  Recorded GPT-5.2 starts: 0/48 passed verification                       and testbench mismatch summaries, but no raw Value Change
+ Sources: HDLBits, CodeV-R1, Fixbench-RTL, RTLLM, VerilogEval v2, VN-26 RTL-LLM           Dump (VCD) traces or formal counterexamples. We evaluate these
+                                                                                          methods across six repair models (GPT-5.2, Claude-Sonnet-4.6,
+                                   Six repair models                                      Gemini-2.5-Pro, DeepSeek-V4-Flash, Qwen3-Coder-Next, and Kimi-
+            GPT-5.2                Claude-Sonnet-4.6            Gemini-2.5-Pro            K2.5), yielding a total of 864 matched evaluation runs.
+
+      DeepSeek-V4-Flash            Qwen3-Coder-Next               Kimi-K2.5               4.3    Metrics
+                                                                                          The primary evaluation metric is the verified repair pass rate, which
+                            Compared repair methods                                       measures the fraction of initially failing designs that successfully
+          Feedback                  MechMem-RTL               Task-similarity RAG         pass the verification harness within the allowed two attempts. We
+                                                                                          report the absolute repair gains of MechMem-RTL compared to
+                                                                                          both baselines across all six models.
+                              Shared repair protocol
+                                                                                             To further interpret the final outcomes, we monitor patch-contract
+    same failed                         2 repair       patch response   8000 output
+                  same verifier
+       RTL                             attempts            format         tokens          diagnostics. As established in Section 3.4, these track invalid re-
+                                                                                          sponse formats, line modification counts, full-module rewrite at-
+                                  Measured outcomes                                       tempts, and repair-constraint violations. While these diagnostics
+                      Input: task spec, failed RTL, verifier report                       do not replace the primary pass rate, they provide essential trans-
+      Output: pass/fail, invalid responses, patch diagnostics, context decisions          parency into system stability and verify that the models adhere to
+                                                                                          practical hardware constraints under identical testing conditions.
+Figure 3: Matched repair protocol for SeqRTL across three
+repair methods and six repair models.
+
+                                                                                      4
+                                                                  Case Setup and Initial Failure
+                                        Design task: search a PS/2 byte stream and assert done one cycle after byte 3.
+                       Initial verifier result: done has 176 mismatches; first mismatch at time 200; 176 of 400 samples mismatch.
+                   Observed failure                                  Retrieved memory                                     Repair action
+                 done timing mismatch                                 done pulse timing                          insert one-cycle S_DONE phase
+
+                           Task-similarity RAG repair                                                    MechMem-RTL repair
+               Final verifier result: failed, 157 mismatches remain                          Final verifier result: passed, 0 mismatches
+          ...                                                                         ...
+          reg done_pending;                                                           S_DONE     = 2'd3;
+          assign done = done_r;
+          ...                                                                         assign done = (state == S_DONE);
+          done_r <= done_pending;                                                     ...
+          done_pending <= 1'b0;                                                       S_B3: begin
+          ...                                                                             state <= S_DONE;
+          S_B3: begin                                                                 end
+               done_pending <= 1'b1;                                                  S_DONE: begin
+               if (in[3])                                                                 if (in[3])
+                 state <= S_B2;         // current byte is a new byte1                      state <= S_B2;       // current byte is a new byte1
+               else                                                                       else
+                 state <= S_SEARCH;     // discard until start found                        state <= S_SEARCH;   // discard until start found
+         Failure cause                                                               Repair mechanism
+         A flag delays done, but S_B3 still decides the next packet state.           Retrieved memory separates byte 3 receipt from the done pulse.
+         No separate phase after byte 3 is created.                                  S_DONE becomes the one-cycle phase after byte 3.
+
+                                                   Icarus verifier outcome under the same repair setting
+                feedback repair                                       task-similarity RAG                                   MechMem-RTL
+            failed; 157 mismatches                                   failed; 157 mismatches                              passed; 0 mismatches
+
+
+                                 Figure 4: PS/2 packet-boundary case study with a separate one-cycle done phase.
+
+
+5       Results and Discussion                                                     pairs. In comparison, standard feedback repair solves 109 pairs,
+This section evaluates repair performance across 864 matched runs                  and task-similarity RAG solves 107 pairs. This yields an aggregate
+on SeqRTL. As established in Section 4, all comparisons share iden-                gain of 65 repairs over the stronger baselines in the six per-model
+tical starting designs, verifiers, repair limits, and token budgets.               comparisons.
+Invalid repair responses are strictly counted as failed attempts. Un-                 Notably, task-similarity RAG fails to improve upon standard feed-
+less stated otherwise, all counts refer to task-model pairs. Table 2               back repair in aggregate. This validates our core motivation: natural
+reports the aggregate repair outcomes, and Figure 4 details a specific             language task text alone is an unreliable proxy for sequential hard-
+packet-boundary repair case.                                                       ware behavior. Retrieved examples often match at the specification
+                                                                                   level but fundamentally mismatch the current cycle-level failure,
+Table 2: Verified repair counts under the matched protocol.                        thereby misleading the model [27, 28].
+Gain is over the stronger baseline for each repair model.                             Figure 4 illustrates this specific failure mode on a PS/2 packet-
+                                                                                   boundary task. Starting from the same faulty design, task-similarity
+                                       Task-sim.
+                                                                                   RAG merely attempts to delay a done flag, leaving 157 simulation
+Repair model           Feedback          RAG         MechMem-RTL        Gain       mismatches unresolved. In contrast, MechMem-RTL retrieves a
+GPT-5.2                     22            23              36             +13       compatible pulse-timing memory. This deterministic context guides
+Claude-Sonnet-4.6           23            21              33             +10       the model to structurally introduce a separate one-cycle S_DONE
+Gemini-2.5-Pro              19            19              26             +7
+DeepSeek-V4-Flash           25            22              29             +4
+                                                                                   phase, completely resolving the mismatch.
+Qwen3-Coder-Next             8            5               23             +15          Figure 5 categorizes these verified repairs by mechanism fam-
+Kimi-K2.5                   12            17              33             +16       ily. The most substantial gains emerge in FSM timing, protocol-
+Total                   109/288         107/288         180/288          +65       boundary, and serial-shift categories. These failures demand precise
+                                                                                   adjustments to cycle-level timing and state transitions, confirm-
+                                                                                   ing that verifier-confirmed memories provide critical structural
+5.1      Matched Repair Results                                                    context. Compile/tool and counter/timer families also exhibit con-
+                                                                                   sistent gains. Performance on state-update pairs remains tied. In-
+Table 2 summarizes the verified repairs under the shared protocol.
+                                                                                   terestingly, standard feedback repair resolves slightly more edge or
+MechMem-RTL achieves the highest verified repair count across all
+                                                                                   sticky-capture pairs. Such localized capture failures typically expose
+six repair models, successfully resolving 180 out of 288 task-model
+                                                                               5
+                                                                                                           reveal how different model architectures interact with identical
+      FSM timing                                                                           +26 58/66       structural repair contexts.
+        Protocol                                                      +14 43/84                               Patch-contract diagnostics further reveal the nature of the gen-
+       boundary
+           Serial                                    +13 28/42
+                                                                                                           erated fixes. On average, MechMem-RTL modifies 7.54 lines per
+              shift
+                                                                                                           task-model pair, slightly higher than the 6.38 and 6.55 lines modi-
+       Compile/                                  +9 23/30
+              tool                                                                                         fied by the two baselines. In sequential logic, this slight increase
+        Counter/
+            timer
+                                    +9 10/18                                                               suggests that MechMem-RTL performs necessary structural refac-
+         Priority/              +1 6/6                                                                     toring rather than trivial signal toggling. Importantly, this structural
+          history
+           State
+                                                                                                           awareness does not degrade overall stability: full-module rewrite at-
+                          1/6
+          update                                                                                           tempts remain extremely rare (3 for MechMem-RTL, 4 for each base-
+           Edge/                         11/36
+           sticky                                                                                          line). Furthermore, MechMem-RTL triggers fewer repair-constraint
+                                                                                                           violations than both baselines, confirming its strict adherence to
+                      0                  16               32             48                   64
+                                verified repairs by family (task and model pairs)
+                                                                                                           hardware boundaries.
+
+                                                                                                           5.4    Use of Stored Memories
+Figure 5: Verified repairs categorized by mechanism family.                                                A critical design principle of MechMem-RTL is to reuse stored mem-
+Bars represent MechMem-RTL while diamonds indicate the                                                     ory only when the current hardware evidence is strictly compatible
+stronger baseline.                                                                                         with the stored trigger. Table 3 tracks these deterministic routing
+                                                                                                           decisions.
+sufficient diagnostic information in the immediate verifier report,
+                                                                                                           Table 3: Context selection and outcomes for MechMem-RTL.
+making historical context less vital. This family-level breakdown
+comprehensively clarifies the source of our aggregate gains.
+                                                                                                                     Repair context               Pairs   Pass     Rate
+5.2     Paired Outcomes                                                                                              With stored memory             162    118    72.8%
+To confirm that the aggregate gain represents a true capability                                                      Without stored memory          126     62    49.2%
+expansion rather than a simple shift in solved tasks, Figure 6 de-
+tails the uniquely resolved pairs. Against standard feedback repair,                                                 Total                          288    180    62.5%
+MechMem-RTL uniquely resolves 87 complex failures, while miss-
+ing only 16 pairs handled by the baseline. Against task-similarity                                            Across the six repair models, 162 task-model pairs receive a
+RAG, the corresponding unique counts are 86 pairs for MechMem-                                             prompt augmented with stored memory, yielding 118 verified passes.
+RTL and only 13 pairs for the RAG baseline. These paired outcomes                                          The remaining 126 task-model pairs use repair contexts constructed
+demonstrate that MechMem-RTL consistently resolves complex                                                 from the current verifier evidence without stored memory, yielding
+structural failures that remain out of reach for both baselines.                                           62 verified passes. This selective routing shows that MechMem-RTL
+                                                                                                           uses historical context only when the current evidence is compati-
+                                                 Both pass            Baseline only                        ble with a stored trigger, reducing the risk of misleading the repair
+                                                 MechMem only         Both fail
+                                                                                                           model with irrelevant context.
+      vs Task-sim. RAG                    94                   86       13            95                      Overall, MechMem-RTL achieves the highest verified repair
+                                                                                                           count across all six repair models under the matched protocol.
+                                                                                                           These results support the central claim that sequential RTL repair
+           vs Feedback                    93                   87       16            92
+                                                                                                           benefits from evidence-based context selection rather than task-text
+                                                                                                           similarity alone.
+                                0         50        100         150       200          250
+                                                   Task and model pairs
+                                                                                                           6     Conclusion
+                                                                                                           This paper presents MechMem-RTL, a framework for reusing verifier-
+Figure 6: Paired outcomes over 288 task-model pairs. Each
+                                                                                                           confirmed experience in automated RTL repair. Instead of relying
+bar compares MechMem-RTL with one baseline.
+                                                                                                           on unreliable text similarity, the system stores successful debugging
+                                                                                                           episodes as structured mechanism memories. It reuses a memory
+                                                                                                           only when the current verifier evidence is strictly compatible with
+5.3     Repair Diagnostics                                                                                 the stored trigger. Across 48 public sequential RTL tasks and six
+To maintain end-to-end transparency under the shared protocol,                                             repair models, MechMem-RTL successfully resolves 180 out of 288
+we track response format failures and count invalid outputs as                                             task-model pairs, outperforming standard feedback repair (109) and
+failed attempts [21, 22]. Format failures are unevenly distributed.                                        task-similarity RAG (107). These results demonstrate that sequen-
+Gemini-2.5-Pro produces 61 invalid responses (mostly empty), and                                           tial RTL repair benefits from selective memory reuse grounded in
+DeepSeek-V4-Flash produces 21 failures (often due to token limits).                                        deterministic verification evidence. This approach is particularly
+Other models produce at most 8 invalid responses. These metrics                                            effective for resolving complex cycle-level functional errors, where
+                                                                                                           task text alone provides weak and misleading guidance.
+                                                                                                       6
+References                                                                                 [15] S. Li et al. 2025. Fixbench-RTL: A Comprehensive Benchmark for Evaluating
+ [1] M. Liu et al. 2023. VerilogEval: Evaluating Large Language Models for Verilog              LLMs on RTL Debugging. In AsianHOST. 1–6.
+     Code Generation. In ICCAD. 1–8.                                                       [16] Y. Tan et al. 2026. AutoVeriFix: Automatically Correcting Errors and Enhancing
+ [2] Y. Lu et al. 2024. RTLLM: An Open-Source Benchmark for Design RTL Generation               Functional Correctness in LLM-Generated Verilog Code. In ASP-DAC. 526–532.
+     with Large Language Model. In ASP-DAC. 722–727.                                       [17] J. Zhang et al. 2026. Understanding and Mitigating Errors of LLM-Generated
+ [3] S. Thakur et al. 2024. VeriGen: A Large Language Model for Verilog Code                    RTL Code. IEEE TCAD (2026), 1–1.
+     Generation. ACM TODAES 29, 3 (2024), 46:1–46:31.                                      [18] A. Aamodt and E. Plaza. 1994. Case-Based Reasoning: Foundational Issues,
+ [4] S. Liu et al. 2025. RTLCoder: Fully Open-Source and Efficient LLM-Assisted RTL             Methodological Variations, and System Approaches. AI Communications 7, 1
+     Code Generation Technique. IEEE TCAD 44, 4 (2025), 1448–1461.                              (1994), 39–59.
+ [5] P. Lewis et al. 2020. Retrieval-Augmented Generation for Knowledge-Intensive          [19] C. S. Xia, Y. Wei, and L. Zhang. 2023. Automated Program Repair in the Era of
+     NLP Tasks. In NeurIPS. 9459–9474.                                                          Large Pre-trained Language Models. In ICSE. 1482–1494.
+ [6] J. Chen et al. 2024. Benchmarking Large Language Models in Retrieval-                 [20] N. Jiang et al. 2023. Impact of Code Language Models on Automated Program
+     Augmented Generation. In AAAI. 17754–17762.                                                Repair. In ICSE. 1430–1442.
+ [7] C. Li et al. 2025. AutoSilicon: Scaling Up RTL Design Generation Capability of        [21] C. S. Xia and L. Zhang. 2024. Automated Program Repair via Conversation:
+     Large Language Models. ACM TODAES 30, 6 (2025), 97:1–97:21.                                Fixing 162 out of 337 Bugs for $0.42 Each using ChatGPT. In ISSTA. 819–831.
+ [8] Y. Wang et al. 2026. VeriAgent: A Tool-Integrated Multi-Agent System with             [22] X. Yin et al. 2024. ThinkRepair: Self-Directed Automated Program Repair. In
+     Evolving Memory for PPA-Aware RTL Code Generation. arXiv:2603.17613.                       ISSTA. 1274–1286.
+ [9] N. R. Pinckney et al. 2025. Revisiting VerilogEval: A Year of Improvements in         [23] F. Li et al. 2025. Hybrid Automated Program Repair by Combining Large Lan-
+     Large-Language Models for Hardware Code Generation. ACM TODAES 30, 6                       guage Models and Program Analysis. ACM TOSEM 34, 7 (2025), 1–28.
+     (2025), 91:1–91:20.                                                                   [24] F. Mu et al. 2026. ExpeRepair: Dual-Memory Enhanced LLM-based Repository-
+[10] Z. Fang et al. 2025. RTLBench: A Multi-Dimensional Benchmark Suite for                     Level Program Repair. arXiv:2506.10484. Accepted by FSE 2026.
+     Evaluating LLM-Generated RTL Code. In ICCD. 566–573.                                  [25] Y. Hu et al. 2025. UVLLM: An Automated Universal RTL Verification Framework
+[11] Y.-D. Tsai, M. Liu, and H. Ren. 2024. RTLFixer: Automatically Fixing RTL Syntax            using LLMs. In DAC. 1–7.
+     Errors with Large Language Model. In DAC. 53:1–53:6.                                  [26] C. E. Jimenez et al. 2024. SWE-bench: Can Language Models Resolve Real-World
+[12] K. Xu et al. 2024. MEIC: Re-thinking RTL Debug Automation using LLMs. In                   GitHub Issues?. In ICLR. 51 pages.
+     ICCAD. 100:1–100:9.                                                                   [27] F. Shi et al. 2023. Large Language Models Can Be Easily Distracted by Irrelevant
+[13] X. Yao et al. 2025. HDLdebugger: Streamlining HDL debugging with Large                     Context. In ICML. 31210–31227.
+     Language Models. ACM TODAES 30, 6 (2025), 102:1–102:26.                               [28] N. F. Liu et al. 2024. Lost in the Middle: How Language Models Use Long Contexts.
+[14] A. Elnaggar and B. Tan. 2025. Adding Context to LLM-Guided Verilog Repair. In              TACL 12 (2024), 157–173.
+     ISQED. 1–7.
+
+
+
+
+                                                                                       7
+

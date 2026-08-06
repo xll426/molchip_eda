@@ -1,0 +1,988 @@
+                                              RTL-BenchLS: A Large-Scale Benchmark for RTL Reasoning
+                                                    and Generation with Large Language Models
+                                                                    Jing Wang† , Shang Liu† , Wenji Fang, Yuchao Wu, Yugao Zhu, Zhiyao Xie*
+                                                                                   Hong Kong University of Science and Technology
+                                                                           {jwangjw,sliudx,hzhoubu}@connect.ust.hk, eezhiyao@ust.hk
+                                        ABSTRACT                                                                                                                  Existing Benchmarks
+                                        LLM-based RTL generation and reasoning is a promising direction                                      Manual work                                Concers & Challenges
+                                        for hardware design automation. High-quality benchmarks are crit-                                Collect designs     draft spec                 Scalability            Diversity
+                                        ical infrastructure for tracking progress in this direction. However,                            Craft testbenches   Iterative test             Effectiveness          Difficulty
+                                        existing RTL benchmarks face inherent limitations in both scale
+arXiv:2606.08976v1 [cs.AI] 8 Jun 2026
+
+
+
+
+                                        and task scope. The designs they cover are typically small and sim-                            Shift to automation                                              Target
+                                                                                                                                                              RTLBench-LS Framework
+                                        ple, and the tasks focus almost entirely on specification-to-RTL
+                                                                                                                                       Data Collection            Data Filtering              Self-supervised tasks
+                                        generation. Frontier models’ performance already saturates on the
+                                        existing benchmarks. Scaling these benchmarks up is fundamen-
+                                        tally difficult because aligned labels are required for benchmarking,
+                                                                                                                           Automated extraction               Self-verification
+                                        such as specifications and testbenches. Such aligned high-quality                  from high-impact repos             Scale&diveristy control                 Verification tools
+                                        data are rarely available for real-world designs. We introduce RTL-
+                                        BenchLS, a large-scale benchmark addressing both limitations               Figure 1: RTL-BenchLS solves limitations of existing bench-
+                                        above. It contains over 10,000 formally verified Verilog designs, cov-     marks by contributing a benchmark with unprecedented
+                                        ering substantially larger and more complex designs than existing          scale and a set of self-supervised tasks.
+                                        benchmarks. Beyond specification-to-RTL generation, we propose
+                                        three novel tasks that jointly evaluate reasoning and generation:          performance continues to saturate. Current scores cannot distin-
+                                        round-trip reasoning, masked-content reasoning, and repository-issue       guish model quality or guide further development. The existing
+                                        reasoning. The first two are self-supervised, which directly resolves      benchmarks are not sufficiently challenging to evaluate current,
+                                        the scaling bottleneck. All tasks are verified through formal equiva-      more advanced LLMs. As a result, the community’s development in
+                                        lence checking without any manual testbenches. We evaluate eight           this direction will be significantly constrained by the lack of new,
+                                        LLMs on RTL-BenchLS. Even the best model reaches only ∼23% on              challenging benchmarks based on high-quality circuit data.
+                                        natural-language round-trip reasoning, ∼28% on masked-content                 A high-quality benchmark hinges on two fundamental aspects:
+                                        reasoning, and ∼12% on repository-issue fixing. RTL-BenchLS is             data and tasks. Existing RTL generation benchmarks fall short on
+                                        substantially more challenging than existing benchmarks. It leaves         both. (1) On the data scale, current benchmarks are limited in
+                                        ample room for future improvement and offers guidance for devel-           both the number and the complexity of designs. (1.1) Regarding
+                                        oping LLM-based methods for hardware design.                               the design number, VerilogEval [17, 26] contains only 156 designs,
+                                                                                                                   RTLLM only 50, and FVEval [15] contributes 192 by generating sim-
+                                        1    INTRODUCTION                                                          ple arithmetic pipelines or FSMs with different parameters. Even
+                                        Large language models (LLMs) are rapidly transforming the field of         CVDP [27], which offers the broadest task scope to date (13 cate-
+                                        hardware design. Recent works [6, 7, 10, 12, 18, 24, 25, 31, 32, 34]       gories, 783 problems), provides only a limited number of designs
+                                        have demonstrated that LLMs can generate synthesizable RTL from            (less than 200) per sub-task. (1.2) Regarding design complexity, these
+                                        natural-language specifications. Both commercial and open-source           designs are predominantly simple, consisting of single-module tasks
+                                        models continue to improve at a remarkable pace. LLM-assisted              with fewer than 100 lines of code (LoC), as depicted in Fig. 2. (2) On
+                                        flows are emerging across hardware design, from specification to
+                                                                                                                                                    RTL-BenchLS               RTLLM                     chipgptv
+                                        verification and debugging.                                                                                 VerilogEval               CreativEval
+                                           To make good use of LLMs’ potential in RTL design automa-
+                                        tion, benchmarks are among the most important infrastructure
+                                                                                                                   Number of designs
+
+
+
+
+                                                                                                                                       103
+                                        for evaluating LLMs’ ability. A series of RTL generation bench-                                                                        103
+                                        marks [8, 13, 15, 17, 19, 20, 26, 27, 35] has been proposed to track the
+                                        progress of LLMs on hardware designs. The most widely adopted                                  101                                     101
+                                        ones, VerilogEval [17, 26] and RTLLM [20], target specification-
+                                        to-RTL generation. More recent efforts probe reasoning-oriented                                                                              1 2-3 4-5 6-7 8-9 10-1215+
+                                                                                                                                         0
+                                                                                                                                      -25
+
+                                                                                                                                   50 0
+                                                                                                                                  10 0
+                                                                                                                                  20 00
+                                                                                                                                        00
+                                                                                                                                       0+
+                                                                                                                                     1-1
+
+
+                                                                                                                                      -5
+                                                                                                                                     -10
+
+
+
+
+                                        abilities: formal verification [15], RTL design understanding [13, 35],
+                                                                                                                                    0-2
+                                                                                                                                    0-5
+                                                                                                                                     50
+                                                                                                                                    10
+                                                                                                                                    25
+
+
+
+
+                                        and repository-level tasks [19, 27]. However, the rapid evolution                                       Lines of Code (LoC)                  Number of modules (NoM)
+                                        of LLMs is outpacing these benchmarks. State-of-the-art models
+                                                                                                                   Figure 2: Statistics on benchmarks’ design scale, including
+                                        already achieve nearly 88% pass@1 on VerilogEval [17, 26], and the
+                                                                                                                   lines of code (LoC) and number of modules (NoM). RTL-
+                                        ∗ Corresponding
+                                                                                                                   BenchLS contributes significantly more designs, covering
+                                                          author.
+                                        † Equal   contribution.                                                    a larger range of design scales.
+the task scope, current benchmarks focus mainly on specification-                                           Table 1: Comparison of RTL benchmarks.
+to-RTL generation. Some works [1, 5, 8, 27] explore additional tasks,                            Benchmark           # Des.
+                                                                                                                              Avg.     Max.
+                                                                                                                                               No Manual       Co-design      LEC/SEC
+including RTL understanding and debugging. Most of these new                                                                  LoC      LoC
+benchmarks focus on a single task and use simple designs. Those                                  VerilogEval [17]     156       16       64
+                                                                                                 RTLLM [20]            50       48      175
+benchmarks are not realistic enough to reveal LLMs’ ability in                                   CreativeEval [8]     119       19       98
+real RTL design automation applications, which involve reasoning,                                RTL-Repo‡ [1]        4k+       18      260          ✓
+context understanding, and generation. CVDP [27] is a pioneering                                 ChipGPT-V [5]         40       49      171
+                                                                                                 CVDP† [27]           783       —        —
+exploration that proposes a considerable number of tasks. However,
+the benchmark is still limited in the number of designs.                                         RTL-BenchLS         10k+       94     495           ✓              ✓             ✓
+   Difficulty of scaling up benchmark. We rethink why existing                                     ‘# Des.’ refers to the number of designs. ‘LoC’ refers to the number of lines. ‘LEC/SEC’
+benchmarks struggle to scale up. A key bottleneck is the scarcity                                  indicates support for formal logic/sequential equivalence checking, which enables
+                                                                                                   rigorous, automated evaluation without manually curated testbenches. † CVDP only
+of aligned data. Spec-to-RTL requires three aligned components:                                    opensource testbenches and specifications for generation tasks, so not all designs
+specifications, RTL code, and manually written testbenches. The                                    are publicly available. ‡ 78% of RTL-Repo entries contain ≤ 5 LoC.
+specification serves as input. The RTL code serves as a reference
+                                                                                                in which both steps (reasoning + generation) must be correct to
+model to generate golden outputs. The golden testbench evalu-
+                                                                                                pass. This paradigm also eliminates the need for aligned labels, thus
+ates the correctness. However, such high-quality circuit data is
+                                                                                                addressing the difficulty of scaling-up. Task 3 is extremely difficult,
+very scarce in the public domain. Even though there are relatively
+                                                                                                demanding in-depth professional knowledge and strong logical
+more Verilog designs available in open-source repositories, they
+                                                                                                reasoning over a large context to pinpoint a minor bug. All three
+lack aligned specifications or testbenches. In this work, we aim to
+                                                                                                tasks are verified through formal equivalence checking, without
+address the long-standing challenge of scaling up RTL-generation
+                                                                                                any manually curated testbenches.
+benchmarks. We point out that effective task design can address
+                                                                                                   Our key contributions are:
+this data alignment problem and thus enable the scaling up of
+benchmarks.                                                                                          • Large-scale benchmark. (1) On design number, we con-
+   In this paper, we introduce RTL-BenchLS, depicted in Fig. 1, a                                      tribute an unprecedented scale with over 10,000 formally
+large-scale benchmark for evaluating LLMs on RTL reasoning and                                         verified Verilog designs. (2) On design complexity, the de-
+generation, addressing limitations in both data and tasks. (1) On                                      signs’ complexity spans a wider range (up to 495 LoC) than
+the data scale, RTL-BenchLS provides an unprecedented scale in                                         prior benchmarks.
+benchmark with over 10,000 functionally verified Verilog designs.                                    • Novel challenging tasks. We propose three tasks: two self-
+(1.1) The number of designs is two orders of magnitude larger than                                     supervised tasks that jointly evaluate reasoning and gener-
+existing benchmarks that support functional verification. (1.2) The                                    ation, and a repository-level issue-fixing task that probes
+design complexity also spans a wider range (avg. 94 LoC), includ-                                      long-context understanding. The self-supervised paradigm
+ing substantially larger designs (maximum 495 LoC), as shown in                                        addresses the difficulty of scaling up and leaves more room
+Fig. 2. (2) On the task scope, we introduce three novel tasks be-                                      for improvement on LLM-based agents.
+yond specification-to-RTL generation, each evaluating reasoning                                      • Evaluation framework. We build a formal-verification-
+and generation jointly. Two of the three tasks are self-supervised,                                    based evaluation infrastructure that rigorously verifies all
+eliminating the need for aligned labels and directly resolving the                                     three tasks without any manually curated testbenches.
+difficulty of scaling up. We also provide an additional realistic                                    • Extensive experiments. We benchmark eight LLMs un-
+task for fixing repository-level issues. For this task, we can directly                                der a unified protocol, revealing substantial gaps in current
+use the issue comment as input and the golden path commit as a                                         models’ RTL reasoning and generation capabilities.
+reference. The extracted data inherently contains aligned data. Our                                In the remaining part of the paper, we will introduce our bench-
+benchmark and toolchain are publicly available1 . Evaluating eight                              mark data in Section 3 and the tasks in Section 4. Section 5 provides
+LLMs on RTL-BenchLS, we find that even the best model achieves                                  an overall experimental result, and Section 6 provides further anal-
+only ∼23% on natural-language round-trip reasoning (Task 1), ∼28%                               ysis and detailed examples.
+on masked-content reasoning (Task 2), and ∼12% on bug fixing
+(Task 3), compared to nearly 88% on VerilogEval’s spec-to-RTL                                   2 RELATED WORK
+task. This gap leaves substantial room for improving LLM-based
+methodologies and offers guidance for developing new LLM agents                                 2.1 RTL Benchmarks
+for hardware design.                                                                            A number of benchmarks [4, 5, 8, 15, 17, 20, 26] have been proposed
+   Our three novel tasks are challenging from different angles. Task                            to evaluate LLMs on RTL tasks, as summarized in Table 1. Verilo-
+1: Round-Trip Reasoning requires the LLM to abstract a design and                               gEval [17, 26] (156 designs, avg. 16 LoC) and RTLLM [20] (50 designs,
+then regenerate functionally equivalent RTL from that abstract.                                 avg. 48 LoC) are the most widely used verifiable benchmarks, but
+Task 2: Masked-Content Reasoning demands understanding of the                                   both are small in scale and limited to simple modules. CVDP [27]
+surrounding code context to compress and reconstruct masked                                     offers broader task coverage (13 categories, 783 problems) but pro-
+logic. Task 3: Repository-Issue Reasoning requires comprehending a                              vides only a handful of designs per sub-task. RTL-Repo [1] collects
+full repository-level context and reasoning over an issue comment                               4k+ files from real repositories for code completion, but 78% of
+to fix a real bug. Tasks 1 and 2 follow a self-supervised paradigm                              entries contain five or fewer lines of code. The task reduces to
+1 The benchmark is open-sourced at https://github.com/hkust-zhiyao/RTL-BenchLS.
+                                                                                                next-line prediction, and no formal verification is provided. Some
+Alongside the data, we will also open-source all related pipelines, including the prompts       works have explored assertion generation [4, 15] and specification
+for LLMs, formal verification scripts, and evaluation scripts, etc.                             generation [13]. Nearly all existing benchmarks rely on manually
+                                                                                            2
+Table 2: RTL-BenchLS data composition. All designs pass                                      remainder of this section, we detail the data sources and the two
+compilation and support verification.                                                        slicing strategies.
+    ID                Source              Count    Avg   Max   Description                      Data source. Table 2 summarizes the final dataset, organized
+                                                   LoC   LoC                                 into five source categories (S1–S5). S1 consists of 971 designs ex-
+                      nvdla/hw [22]          404    41   479   NVIDIA DLA                    tracted from 25+ real-world GitHub repositories, spanning ML accel-
+                      basic [14]             230    19   198   General Verilog library
+    S1: Real-World
+
+
+
+
+                      oh [23]                 85    36   312   Open hardware library
+                                                                                             erators, RISC-V CPUs, network IPs, and analog peripherals. These
+                      hdl [3]                 44    28   165   ADI HDL reference             designs contribute to the complexity and domain-specific idioms.
+                      openc910 [30]           43    86   421   XuanTie C910 CPU              S2–S5 are drawn from four previously proposed LLM-generated
+                      zet [21]                27    52   247   x86 processor
+                      v-ethernet [9]          17    68   285   Ethernet MAC/PHY              training corpora (OriGen, AutoVCoder, RTLPP, MG-Verilog), which
+                      e200 [29]               16    44   189   HummingBird MCU               provide scale and structural diversity after our rigorous filtering.
+                      Others (17 repos)      105    38   395   CPUs, FPU, FIFO, etc.         The combination is deliberate: real-world designs contribute com-
+                      Subtotal               971    38   479                                 plexity that LLM-generated designs lack, while LLM-generated
+    S2                OriGen [7]           2,708    72   189   Augmented RTL corpus          designs provide broader coverage of design patterns.
+    S3                AutoVCoder [10]      2,468    78   331   Auto Verilog generation
+    S4                RTLPP [2]            2,164    82   263   Parallel-processing RTL
+                                                                                                Filtering pipeline. Our pipeline (Figure 4) removes trivial and
+    S5                MG-Verilog [33]      1,717    29   156   Multi-grained dataset         near-duplicate designs based on three metrics: lines of code (LoC),
+                      Total               10,028    63   479                                 number of modules (NoM), and pairwise similarity. For pairwise
+                                                                                             similarity, we compute TF-IDF vectors with character 4-grams over
+                                                                                             all design pairs and apply cosine similarity; any pair above 0.2 is
+written specifications or golden testbenches, making them inher-                             pruned greedily (Figure 3). The retained designs are then formally
+ently difficult to scale.                                                                    validated: each module is verified against itself by Conformal SEC
+                                                                                             for sequential designs and LEC for combinational designs, and only
+2.2                   RTL Datasets                                                           designs passing both compilation and equivalence checking are
+Though RTL datasets also contain RTL designs, even with aligned                              kept, yielding the final 10,028 designs.
+RTL specifications, the datasets differ significantly from the bench-                           Data slice. With 10,028 designs the full benchmark is too large
+marks in data quality. Benchmarks require manual curation of                                 for tight LLM-evaluation loops, and aggregating over all designs
+aligned labels for RTL codes. While RTL datasets [7, 11, 16, 28,                             hides how performance varies with design origin. We therefore
+33, 35] usually contain automatically generated data from LLMs.                              expose two complementary slicing strategies, each serving a distinct
+The datasets are mainly for fine-tuning or training of LLMs. Thus,                           use case. (1) Patch-based splitting: the full dataset is divided into
+these data often lack further functional checks to guarantee label                           10 patches of roughly equal size, where each patch preserves the
+correctness. To further improve the quality of training datasets,                            source ratio of the overall dataset (i.e., each patch contains designs
+CodeV-R1 [35] uses round-trip synthesis as a data-quality filter                             from all five sources in approximately the same proportion). This
+during training. Such training datasets are usually not for bench-                           enables controlled experiments on tractable subsets while keeping
+marking purposes.                                                                            a representative distribution—each patch is a faithful miniature of
+                                                                                             the full benchmark. (2) Source-based splitting: the dataset can also
+3                    BENCHMARK DATA                                                          be partitioned by source category (S1–S5), enabling analysis of how
+                                                                                             design origin affects model performance—for instance, comparing
+In this section, we introduce the data composition of RTL-BenchLS.
+                                                                                             LLM performance on real-world designs (S1) vs. LLM-generated
+We leave the introduction of benchmark tasks in Section 4. Sec-
+                                                                                             designs (S2–S5).
+tion 3.1 describes the self-supervised reasoning data, and Section 3.2
+the repository-issue reasoning data.                                                         3.2    Data for Repository-Issue Reasoning
+                                                                                             Unlike tasks 1 and 2 (self-supervised on isolated designs), task 3:
+3.1                   Data for Self-supervised Reasoning                                     repository-issue fixing requires real-world bug-fix pairs mined from
+Overview. RTL-BenchLS comprises 10,028 Verilog designs aggre-                                active hardware repositories. To support rigorous evaluation, we
+gated from five curated sources (S1–S5) that pair real-world RTL                             collect the issue-fix pairs that are functional fixes and amenable to
+with filtered LLM-generated corpora. S1 contributes 971 modules                              formal equivalence checking.
+harvested from 25+ open-source GitHub repositories—including                                    Collection and Filtering. We crawl PR pairs from the 25 GitHub
+NVDLA, OpenC910, HummingBird E200, zet, and other CPU, ac-                                   repositories collected in Section 3.1 and harvest every merged pull
+celerator, and networking projects—while S2–S5 contribute 9,057                              request linked to a closed issue. This yields 590 raw issue–PR pairs.
+modules distilled from OriGen [7], AutoVCoder [10], RTLPP [2],                               We first apply syntactic filters by dropping image-based issues,
+and MG-Verilog [33]. After filtering on lines of code (LoC), number                          restricting to single-file Verilog/SystemVerilog edits with ≤ 50
+of modules (NoM), and pairwise similarity, the retained designs
+average 63 LoC (max 479 LoC) and span from single-module arith-                               10k×10k
+metic and control blocks to multi-module processor and accelera-                             5.5M                                               Fitting curve
+tor subsystems. Every design compiles cleanly and has been cer-                              3.6M                                               Remove (sim > 0.2)
+                                                                                             1.8M                                               Histogram
+tified by formal logic/sequential equivalence checking (LEC/SEC),
+                                                                                             0.0M
+so the entire benchmark is immediately usable for testbench-free                                 0.0             0.1            0.2            0.3                   0.4
+functional evaluation. Two complementary slicing strategies—ten                                                              Similarity
+source-stratified patches and per-source partitions (S1–S5)—further                          Figure 3: Pairwise similarity distribution of RTL-BenchLS
+support both controlled ablations and origin-aware analyses. In the                          designs. The vast majority of design pairs have similarity
+                                                                                         3   below 0.1. Pairs exceeding the 0.2 threshold are removed.
+    Source   Module Extraction             Filtering Pipeline
+                                                                                Step 1. Reasoning                  Judger    Step 2. Generation         Verification
+
+                                     Similarity                                                                 Length
+                                                                                                                Leakage
+                 Recursive           Complexity             Formal Env          RTL     LLM     Abstract                      LLM         RTL        Abstract RTL
+                                                                                                           Verilog
+
+              Figure 4: Dataset collection process.                                         Figure 5: Task 1: Round-Trip Reasoning.
+changed LoC. This process reduces 590 raw pairs to 267 candi-
+dates. We then apply a functional filter: each candidate’s pre-fix             semantics, we instantiate four abstract formats that are commonly
+and post-fix RTL is elaborated in Conformal LEC, and pairs whose               used as the RTL-development representation: natural language ANL ,
+edits are equivalent (cosmetic) or fail elaboration are discarded.             diagram-style NL ANL-Diag executable code ACode , and free-form
+The final pairs are guaranteed to encode a real functional change              text AFree . The abstracts have different features and styles to convey
+verifiable by formal equivalence, yielding the final 108 curated               a hardware design. We aim to use these various abstract types to
+cases.                                                                         evaluate how LLMs internally represent and reason about hard-
+   Case schema. Each test case in this task contains three impor-              ware designs. The benchmark can also help explore which abstract
+tant attributes: (i) the issue comment (title and natural-language             type works most effectively. We will apply an LLM-based judger to
+body filed by the reporter), which serves as the agent’s input; (ii) the       check the format and leakage of the abstract. The length will also
+repository context—the list of (System)Verilog sources together with           be strictly checked by the script to enable a fair comparison.
+the Git SHAs of the buggy and fixed revisions—enabling exact re-                  Problem formulation. Let 𝑓𝜃 denote the LLM. Given the origi-
+construction of the design under test; and (iii) the golden commit             nal RTL design D, the round-trip reasoning task can be formulated
+patch, i.e., the maintainer’s unified diff closing the issue, which is         as follwing:
+withheld from the model and applied only to obtain the golden                               A = 𝑓𝜃 (D),       D ′ = 𝑓𝜃 (A),        s.t.     D ′ ≡ D,               (1)
+RTL used as the equivalence-checking reference. We finally curated
+108 cases. The size of each golden fix ranges from a single line                where A is the intermediate abstract produced in Step 1, D ′ is the
+to several hundred lines of code; on average, a fix adds 42 lines              reconstructed RTL produced in Step 2, and ≡ denotes functional
+and removes 29 lines from the buggy revision. The surrounding                  equivalence verified by formal equivalence checking. Below, we
+repository context ranges from self-contained modules to designs               describe the four abstract representations.
+that depend on large package libraries, reflecting the long-context               Natural-Language Abstract ANL . The LLM generates a pure
+reasoning burden the task is designed to evaluate.                             natural-language specification ANL = 𝑓𝜃 (D), then regenerates RTL
+                                                                               D ′ = 𝑓𝜃 (ANL ). To prevent the LLM from producing overly verbose
+4     BENCHMARK TASKS                                                          specifications that trivially describe every signal, we introduce a
+Building on the data curated in Section 3, we design three bench-              spec ratio 𝑟 that constrains the abstract length: L (ANL ) ≤ 𝑟 ×
+mark tasks that probe complementary RTL-reasoning capabilities                 L (D). We evaluate with 𝑟 ∈ {0.5, 1.0} to measure the effect of
+and are all scored by formal equivalence checking, requiring no                compression—a lower 𝑟 forces the model to prioritize the most
+manually written testbenches. Task 1: Round-Trip Reasoning (Sec-               essential semantics.
+tion 4.1) asks the LLM to compress a design into an intermediate                  Diagram-Style Variant ANL-Diag . We also explore a diagram-
+abstract and then reconstruct the RTL code based on the abstract.              style variant of the natural-language abstract, denoted ANL-Diag ,
+Task 2: Masked-Content Reasoning (Section 4.2) hides a block or                in which the prompt encourages LLMs to adopt diagram-oriented
+sub-module and asks the LLM to recover the missing logic from                  natural language (e.g., state-transition tables, truth tables, block-
+context, reflecting the workflow of code completion and module                 level descriptions) when producing the intermediate specification.
+integration. Task 3: Repository-Issue Reasoning (Section 4.3) pro-             Since the output remains in natural-language form, this variant
+vides a real issue report and the buggy RTL from a repository and              shares the same round-trip pipeline as ANL ; the only difference is
+requires the LLM to generate a fix that is formally equivalent to the          the stylistic guidance in the prompt.
+developer’s patch, capturing cross-artifact debugging in realistic                Executable-Code Abstract ACode . The LLM translates the RTL
+settings. The three tasks progress from self-contained reconstruc-             design D into executable Python or C code ACode = 𝑓𝜃 (D), then re-
+tion to context-conditioned infilling to cross-artifact bug repair,            constructs RTL D ′ = 𝑓𝜃 (ACode ). This representation tests whether
+together covering a broad spectrum of practical RTL-engineering                executable code preserves more semantic information than natural
+scenarios. We will open-source the standard prompts for all tasks              language.
+we used during the experiment.                                                    Free-Form Abstract AFree . The LLM freely chooses any format—
+                                                                               natural language, pseudocode, tables, diagrams, or any mixture—to
+4.1      Task 1: Round-Trip Reasoning                                          produce AFree = 𝑓𝜃 (D), then reconstructs RTL D ′ = 𝑓𝜃 (AFree ).
+                                                                               This reveals how models naturally compress hardware information
+Given an original RTL design D, the round-trip reasoning task re-              when unconstrained and whether unconstrained representations re-
+quires two steps: (1) the LLM compresses design D into an interme-             tain more or less structural information than the prescribed formats
+diate abstract A, and (2) the LLM generates functionally equivalent            above.
+RTL D ′ from its own abstract A. Both reasoning and generation
+steps are required to successfully reconstruct D ′ that can pass
+formal equivalence checking against D (Figure 5). Because D it-
+self serves as the verification oracle, the task is self-supervised,
+                                                                                RTL       Masked RTL        Spec       LLM     Desp         RTL      Desp      LLM
+requires no external labels, and scales to the full 10k+ designs of
+                                                                                                           Step 1. Concise Description      Step 2. Mask Recover
+RTL-BenchLS. To thoroughly evaluate LLMs’ ability on hardware
+                                                                           4            Figure 6: Task 2: Masked-Content Reasoning.
+ RTL Repo              Issue comment                Generated fix   Patch apply                    5     EXPERIMENT
+                                                                                                   In this section, we evaluate eight LLMs on the three tasks of RTL-
+      Commit version          Buggy module   LLM                    Verification Golden fix        BenchLS. Section 5.1 describes the experimental setup. Section 5.2
+                                                                                                   reports the overall results across all tasks and compares RTL-BenchLS
+            Figure 7: Task 3: Repository-Issue Reasoning.                                          against existing benchmarks. Section 6 provides deeper analysis,
+                                                                                                   including how pass rates scale with design complexity, the distri-
+4.2     Task 2: Masked-Content Reasoning                                                           bution of error types, and case studies.
+Task 2 is another self-supervised reasoning task under a new sce-
+nario, involving two steps, as depicted in Figure 6. Step 1. LLMs will                             5.1    Experimental Setup
+be given the original design D and the code block to be masked,
+                                                                                                   Models. We evaluate eight representative LLMs: GPT-4o, GPT-4o-
+denoted B. Step 2. Given the incomplete RTL design with a masked
+                                                                                                   mini, Claude Sonnet-4.5, Claude Haiku-4.5, DeepSeek-v3.2, Mistral
+block, denoted as D\B , and the description of the mask AB , the LLM
+                                                                                                   Large, Qwen3.5-397B, and LLaMA-3.3-70B. All models use a rela-
+must recover the missing logic from the context. This is a common
+                                                                                                   tively low temperature of 0.2.
+scenario in real development, where engineers must understand
+                                                                                                      Evaluation data. RTL-BenchLS is large, so to balance evaluation
+and extend existing code.
+                                                                                                   efficiency with fair coverage, we adopt a slice-based evaluation. The
+   Problem formulation. Given a design D, we randomly se-
+                                                                                                   benchmark is partitioned into 20 slices, and each slice preserves
+lect one code block B and replace it with a [MASKED] token. The
+                                                                                                   the source-category proportions of the full dataset. Tasks 1 and 2
+remaining content of the design is D\B . The task is:
+                                                                                                   are evaluated on slice 1, with 420 designs. The remaining slices
+ A B = 𝑓𝜃 (D\B ),         B ′ = 𝑓𝜃 (A B , D\B ),   D\B + B ′ ≡ D,
+                                                           s.t.                                    are released alongside the benchmark and are available for free
+                                                                  (2)                              evaluation.
+where A B is a concise natural-language description of the masked                                     Task 1. Round-trip reasoning. This task evaluates 8 LLMs
+block’s function produced in Step 1, B ′ is the reconstructed code                                 on slice 1 of RTL-BenchLS. We also test the models’ performance
+produced in Step 2, and ‘+’ denotes putting B ′ back into D\B . The                                on designs from representative existing benchmarks, RTLLM (50
+combined result D\B + B ′ will be verified by checking equivalence                                 designs) and VerilogEval (156 designs), for comparison. We evaluate
+against the original design D.                                                                     four abstract representations: ANL with spec ratio 𝑟 ∈ {0.5, 1.0},
+   We support two masking granularities: block mask, where B                                       ACode via Python and C, AFree with 𝑟 ∈ {0.5, 1.0}, and the diagram-
+is a randomly chosen always, assign, case, or similar block, and                                   style variant ANL-Diag .
+module mask, where B is a randomly chosen sub-module instanti-                                        Task 2. Masked-content reasoning. We apply one mask per de-
+ation. In this task, the LLMs must reason about the missing logic                                  sign on slice 1 of RTL-BenchLS, yielding 420 masked designs. Each
+B ′ from a compressed semantics description AB and code context.                                   mask is at one of two granularities, either block-level or module-level.
+This tests reasoning abilities essential for real-world tasks such as                              The two granularities are evaluated together.
+code completion, module integration, and design review.                                               Task 3. Repository-issue reasoning. We use the curated 108
+                                                                                                   real issue-fix pairs for evaluation. Each pair requires a functional fix
+4.3     Task 3: Repository-Issue Reasoning                                                         on a targeted module. The original task setting only provides the
+                                                                                                   code context and issue comment for LLMs. In our experiment, we
+The first two tasks evaluate LLMs on individual designs in isolation.
+                                                                                                   provide a simpler setting in which the buggy design is also given
+Repository-issue reasoning demands a qualitatively different, much
+                                                                                                   to the LLMs, so they can focus on reasoning without having to
+harder capability: diagnosing and fixing real bugs in RTL from only
+                                                                                                   identify the bug location. Our experiment demonstrates that even
+an issue report, as illustrated in Figure 7. This task reflects a practi-
+                                                                                                   under the simplified setting, the task is extremely challenging.
+cal, high-value use case in which hardware engineers debug designs
+                                                                                                      Evaluation and metrics. All tasks use functional pass rate as the
+using issue reports, commit history, and code context. Experimental
+                                                                                                   primary metric, defined as the percentage of designs whose LLM-
+results show that this is the most challenging task in RTL-BenchLS.
+                                                                                                   generated output is formally verified to be functionally equivalent
+   Problem formulation. The model receives the full repository
+                                                                                                   to the golden design. For Tasks 1, 2, and 3, equivalence is checked
+context R together with the issue comment I, and must produce a
+                                                                                                   by industrial formal tools from Cadence. We use Conformal for
+repaired design Dfix :
+                                                                                                   logic equivalence checking (LEC) on combinational designs, and
+                  Dfix = 𝑓𝜃 (R, I),          s.t.            ★
+                                                     Dfix ≡ Dfix ,                       (3)       JasperGold for sequential equivalence checking (SEC) on sequential
+                                                                                                   designs. For the ACode intermediate step, we additionally report
+where Dfix★ is the developer’s golden fix and ≡ denotes the functional                             interface pass (correct port names), syntax pass (compilable code),
+equivalence. The model should identify the buggy design, denoted                                   and functional pass (cycle-accurate match against golden I/O via
+Dbuggy ⊆ R, before producing the corrected design Dfix that is                                     Synopsys VCS simulation).
+formally equivalent to the golden fix Dfix  ★ . Unlike tasks 1 and 2,
+
+the model does not go through an explicit intermediate abstract A                                  5.2    Overall Results
+and must directly reason about the bug and generate the corrected                                  This section reports the main results on the three tasks of RTL-
+RTL in a single step. We also provide a simpler setting for this                                   BenchLS. We first compare the eight models in Table 3, then drill
+problem. We also expose the buggy code Dbuggy to the model, so                                     down into each task in turn: Task 1 on round-trip reasoning, Task 2
+that the model can focus on root-cause reasoning rather than bug                                   on masked-content reasoning, and Task 3 on repository-issue rea-
+localization. Our experimental results (Section 5.2) show that even                                soning. Table 3 shows that no single model dominates across all
+this simplified setting is already very challenging for current LLMs.                              three tasks. Sonnet-4.5 leads in round-trip reasoning, LLaMA-3.3 in
+                                                                                               5
+            Setting               GPT-4o        GPT-4o-mini         Claude-Sonnet-4.5           Claude-Haiku-4.5           DeepSeek-v3.2         Mistral-Large          Qwen3.5         LLaMA-3.3
+                                                                               Task 1: Round-Trip Reasoning
+             𝑟 =0.5                  11.7             11.3                     17.1                      11.7                     10.3                  6.8                4.6                1.9
+ ANL
+             𝑟 =1.0                  16.0             14.0                     23.1                      18.6                     19.5                  13.3               5.2                2.6
+ ANL-Diag    𝑟 ≈0.9                  24.6             18.0                     39.5                      30.3                     16.4                  24.6               3.7                3.3
+             Python (𝑟 ≈0.9)         39.8             25.0                     52.1                      31.4                     39.5                  31.4              0.7              18.8
+ ACode
+             C (𝑟 ≈1.1)              37.9             21.2                     39.5                      26.4                     33.8                  28.3              28.3             19.8
+             𝑟 =0.5                  16.0             17.5                     20.6                      16.0                     18.0                  19.2              15.0             14.8
+ AFree
+             𝑟 =1.0                  28.2             22.6                     34.0                      27.4                     31.8                  28.9              26.9             18.4
+                                                                          Task 2: Masked-Content Reasoning
+                                     22.4             21.9                     26.8                      27.5                     27.3                  22.8              27.5            28.2
+                                                                          Task 3: Repository-Issue Reasoning
+                                      6.3             4.0                      5.6                        3.7                     12.0                   6.5               4.6                8.3
+All values are functional pass rates (%) verified by Cadence Conformal (LEC) and Cadence JasperGold (SEC). 𝑟 : spec ratio, defined as the length of the intermediate abstract divided
+by the original RTL (in non-comment characters). For ANL , 𝑟 is enforced via prompt; for ANL-Diag and ACode , 𝑟 is not enforced (we keep the abstracts complete) and we instead
+       report the measured average ratio across cases. Design counts: RTL-BenchLS (420), Task 2 (420 block+module mask cases), Task 3 (108). Bold = best model per row.
+                   Table 3: Functional pass rates (%) on our RTL-BenchLS across all benchmark tasks and eight LLMs.
+
+masked content, and DeepSeek-v3.2 in repository-issue reasoning.                                           Task 3 in Table 3: repository-issue fixing. Task 3 evaluates
+The moderate performance of LLMs demonstrates the challenging                                          the hardest capability in our benchmark: fixing real bugs in RTL
+nature of our benchmark and leaves ample room for improvement                                          from an issue report, as reported in Table 3. We already adopt a
+in LLM-based solutions for RTL reasoning and generation.                                               deliberately simplified setting (Section 4.3): we provide the buggy
+   Task 1 in Table 3: round-trip reasoning. Task 1 shows clear                                         region so the model can focus on root-cause reasoning rather than
+performance differences across the four abstract representations,                                      bug localization. Even under this simplified setting, all eight mod-
+and the ranking holds for frontier models. Code-style ACode per-                                       els stay at or below 12%, with most clustered between 3.7% and
+forms best. Sonnet-4.5 reaches 52.1% with Python, and GPT-4o                                           6.5%, leaving substantial headroom for future LLM-based agentic
+reaches 39.8%. Diagram-style ANL-Diag follows next. Sonnet-4.5                                         methods. DeepSeek-v3.2 leads at 12.0%, followed by LLaMA-3.3-70B
+reaches 39.5%, Haiku-4.5 reaches 30.3%, and GPT-4o reaches 24.6%.                                      (8.3%) and Mistral-Large (6.5%). The flagship models GPT-4o (6.3%)
+Free-form AFree , where the LLM chooses its own mix, sits in be-                                       and Sonnet-4.5 (5.6%) do not lead on this task, and Haiku-4.5 is the
+tween at 28–34% for frontier models at 𝑟 =1.0. Plain ANL is sur-                                       weakest at 3.7%. The leaderboard is reshuffled compared to Task 1,
+prisingly the weakest. At 𝑟 =1.0 the best model reaches only 23.1%                                     indicating that issue-driven bug fixing exercises a capability—cross-
+(Sonnet-4.5), and weaker models stay below 6%. This is notable                                         artifact reasoning over informal bug reports and existing RTL—that
+because natural-language specification is the most common form                                         is not captured by generation-focused benchmarks.
+used in daily hardware development. The gap suggests that LLMs                                             Benchmark comparison in Table 4. Table 4 compares our
+are more efficient at reasoning from executable or structural signals                                  RTL-BenchLS against existing benchmarks under two scenarios.
+in round-trip reasoning tasks than from pure natural language.                                         Scenario 1 (S1): same designs, different tasks. On RTLLM (S1.1) and
+   Task 2 in Table 3: masked-content reasoning. The models                                             VerilogEval (S1.2), the original task is specification-to-RTL, where
+show similar performance on this task. Unlike Task 1, where the best                                   the LLM generates the RTL directly from a human-written spec-
+and worst models can differ by over 50% on ACode , Task 2 pass rates                                   ification. Our round-trip reasoning task replaces this setting but
+span a narrow 22–28% range across all eight LLMs. Interestingly,                                       still uses the same designs. The LLM first generates its own in-
+LLaMA-3.3-70B leads at 28.2%, slightly above Sonnet-4.5 (26.8%) and                                    termediate abstract ANL , and then reconstructs the RTL from that
+Haiku-4.5/Qwen3.5 (27.5%), despite being the weakest model on                                          abstract. The extra reasoning step sharply reduces performance. For
+round-trip reasoning. This suggests that masked-content reasoning                                      example, GPT-4o drops from 60.0% to 56.0% on RTLLM. LLaMA-3.3
+probes a different capability dimension: local context understanding                                   drops from 53.2% to 12.2% on VerilogEval. These drops demonstrate
+and short-range code completion, where raw model scale matters                                         that our proposed task is more challenging than the original task.
+less than prompt-following fidelity.                                                                   Scenario 2 (S2): same task, different designs. We apply the same ANL
+                                                                                                       (𝑟 =1.0) round-trip task based on designs in RTLLM, VerilogEval, and
+
+          Scenario
+                        Benchmark (N)               Setting          GPT-4o          Claude Sonnet-4.5       Claude Haiku-4.5            DeepSeek-v3.2         Qwen3.5      LLaMA-3.3
+            S1    S2
+                        RTLLM (50)                  Original            60.0                68.0                      74.0                    62.0               56.0            50.0
+          S1.1
+                  ✓     RTLLM (50)                  ANL (𝑟 =1.0)        56.0                36.0                      44.0                    30.0               10.0            12.0
+                        VerilogEval (156)           Original            69.9                80.1                      79.5                    70.5               58.3            53.2
+          S1.2
+                  ✓     VerilogEval (156)           ANL (𝑟 =1.0)        45.5                62.2                      50.0                    58.3               30.1            12.2
+                  ✓     RTL-BenchLS (420)           ANL (𝑟 =1.0)        16.0                23.1                      18.6                    19.5               5.2             2.6
+                 Scenario 1: original specification-to-RTL v.s. round-trip reasoning with ANL as abstract on the same benchmark. S1.1: on RTLLM-v1.1. S1.2: on VerilogEval Human v2.
+          Scenario 2: the same round-trip reasoning tasks with designs from different benchmarks: RTLLM, VerilogEval, and our RTL-BenchLS. ✓ denotes comparable settings for this scenario.
+Table 4: Comparison of benchmarks with two scenarios. Scenario 1 (S1): LLMs’ performance on the same benchmark designs
+with different tasks. Scenario 2 (S2): LLMs’ performance on the same task with different designs.
+                                                                                                   6
+                                                                                                                               GPT-4o              Sonnet              Haiku                           DS-v3                 Mistral           Average
+                                   Pass               Control        Timing
+                                                                                                                                             Task 1:       NL   (r=0.5)                                        Task 1:         NL   (r=1.0)
+
+
+
+
+                                                                                                               Pass Rate (%)
+                                   Datapath           Interface      Syntax
+                                                                                                                               50                                                          50
+
+                        Task 1:    Code   (Python)                  Task 1:    Code   (C)                                       0                                                                0
+% of Designs
+
+
+
+
+               100
+
+
+
+
+                                                                                                                                0
+
+                                                                                                                                        -60
+
+
+                                                                                                                                                     0
+
+                                                                                                                                                                 00
+
+
+                                                                                                                                                                            0+
+
+
+                                                                                                                                                                                                 0
+
+                                                                                                                                                                                                            -60
+
+
+                                                                                                                                                                                                                        0
+
+                                                                                                                                                                                                                                     00
+
+
+                                                                                                                                                                                                                                              0+
+                75
+
+
+
+
+                                                                                                                               <3
+
+
+
+
+                                                                                                                                                   -10
+
+
+
+
+                                                                                                                                                                                          <3
+
+
+
+
+                                                                                                                                                                                                                      -10
+                                                                                                                                                             0-2
+
+
+
+
+                                                                                                                                                                                                                                 0-2
+                                                                                                                                                                          20
+
+
+
+
+                                                                                                                                                                                                                                              20
+                                                                                                                                        30
+
+
+
+
+                                                                                                                                                                                                          30
+                50
+
+
+
+
+                                                                                                                                                   60
+
+
+
+
+                                                                                                                                                                                                                     60
+                                                                                                                                                            10
+
+
+
+
+                                                                                                                                                                                                                               10
+                25                                                                                                                              Task 1:                                                              Task 1:
+                 0                                                                                                                                              Code                                                                Free
+
+
+
+
+                                                                                                               Pass Rate (%)
+                      o ni et u 3 al n A                        o ni et u 3 al n A                                             50                                                          50
+                   T-4 mi nn aik S-v istr we aM              T-4 mi nn aik S-v istr we aM
+                 GP 4o- So H D M Q LL                      GP 4o- So H D M Q LL
+                                                                                                                                0                                                                0
+                         Task 1:    NL    (r = 0.5)                Task 1:    NL   (r = 1.0)
+
+
+
+
+                                                                                                                                0
+
+                                                                                                                                        -60
+
+
+                                                                                                                                                     0
+
+                                                                                                                                                                 00
+
+
+                                                                                                                                                                            0+
+
+
+                                                                                                                                                                                                 0
+
+                                                                                                                                                                                                            -60
+
+
+                                                                                                                                                                                                                        0
+
+                                                                                                                                                                                                                                     00
+
+
+                                                                                                                                                                                                                                              0+
+% of Designs
+
+
+
+
+               100
+
+
+
+
+                                                                                                                               <3
+
+
+
+
+                                                                                                                                                   -10
+
+
+
+
+                                                                                                                                                                                          <3
+
+
+
+
+                                                                                                                                                                                                                      -10
+                                                                                                                                                             0-2
+
+
+
+
+                                                                                                                                                                                                                                 0-2
+                                                                                                                                                                          20
+
+
+
+
+                                                                                                                                                                                                                                              20
+                                                                                                                                        30
+
+
+
+
+                                                                                                                                                                                                          30
+                75
+
+
+
+
+                                                                                                                                                   60
+
+
+
+
+                                                                                                                                                                                                                     60
+                                                                                                                                                            10
+
+
+
+
+                                                                                                                                                                                                                               10
+                50                                                                                                                      Task 2: Masked-Content                                                  Task 3: Repo-Issue
+                25
+
+
+
+
+                                                                                                               Pass Rate (%)
+                 0                                                                                                             50                                                          20
+                      o ni et u 3 al n A                        o ni et u 3 al n A
+                   T-4 mi nn aik S-v istr we aM              T-4 mi nn aik S-v istr we aM
+                 GP 4o- So H D M Q LL                      GP 4o- So H D M Q LL                                                 0                                                                0
+
+
+
+
+                                                                                                                                0
+
+                                                                                                                                        -60
+
+
+                                                                                                                                                     0
+
+                                                                                                                                                                 00
+
+
+                                                                                                                                                                            0+
+
+
+                                                                                                                                                                                             00
+
+
+
+                                                                                                                                                                                                                K
+
+
+                                                                                                                                                                                                                               -5K
+
+
+
+                                                                                                                                                                                                                                               +
+                        Task 2: Masked-Content                      Task 3: Repo-Issue
+
+
+
+
+                                                                                                                               <3
+
+
+
+
+                                                                                                                                                   -10
+
+
+
+
+                                                                                                                                                                                                                                              5K
+                                                                                                                                                                                                               0-2
+                                                                                                                                                             0-2
+
+
+
+
+                                                                                                                                                                                       <5
+                                                                                                                                                                          20
+                                                                                                                                        30
+
+
+
+
+                                                                                                                                                                                                                             2K
+                                                                                                                                                   60
+% of Designs
+
+
+
+
+               100
+
+
+
+
+                                                                                                                                                                                                            50
+                                                                                                                                                            10
+                75                                                                                                                              Lines of Code                                                      Lines of Code
+                50
+                25                                                                                 Figure 9: Performance trend on design complexity. Func-
+                 0
+                      o ni et u 3 al n A                        o ni et u 3 al n A                 tional pass rate degrades with design complexity across all
+                   T-4 mi nn aik S-v istr we aM              T-4 mi nn aik S-v istr we aM
+                 GP 4o- So H D M Q LL                      GP 4o- So H D M Q LL                    tasks and representations.
+
+                 Figure 8: Error distribution across different tasks.                              clock edge, wrong reset polarity, or blocking vs. non-blocking mis-
+                                                                                                   use; (5) Syntax — the reconstructed Verilog does not compile. Fig-
+                                                                                                   ure 8 shows the stacked distribution for all three tasks.
+RTL-BenchLS. Every model degrades sharply on RTL-BenchLS. For                                         We draw two findings from Figure 8. Finding 1: Syntax failures
+example, Sonnet-4.5 drops from 62.2% on VerilogEval to 23.1% on                                    are concentrated in ACode (Python). About 24% of Python round-
+RTL-BenchLS. The weaker models fall below 6%. This gap demon-                                      trip failures are Syntax errors: the reconstructed Verilog does not
+strates that RTL-BenchLS designs are more complex than those in                                    compile. The intermediate Python does not need to compile, but
+RTLLM and VerilogEval.                                                                             the final Verilog does, and models often fail at this last step. For C
+                                                                                                   the rate drops to 9%, for ANL round-trip it is 4–5%, and for Masked-
+6 ANALYSIS                                                                                         Content and Repo-Issue it is below 2%. Translating a Python abstract
+6.1 Performance Trend on Design Complexity                                                         back to valid Verilog is harder for the model than translating from
+                                                                                                   natural language or from C. Finding 2: Control and Datapath errors
+Figure 9 plots the functional pass rate at different tasks as a function                           dominate everywhere else. Once the code compiles, Control and
+of design size, bucketed by lines of code. We calculate the mean pass                              Datapath errors together account for 63–76% of failures across all
+rate across the eight evaluated models within each LoC range. For                                  tasks. Control (wrong FSM, missing states, and wrong handshakes)
+Tasks 1 and 2, pass rates basically decline monotonically as designs                               is usually the largest single category, reaching 48% on Repo-Issue.
+grow. The effect is strongest for round-trip reasoning: ANL holds                                  Interface and Timing errors together stay below 21% on Tasks 1,
+at roughly 40–55% on short designs (< 100 LoC) but collapses to                                    and rise to 31–32% on Masked-Content and Repo-Issue, where
+single digits beyond 200 LoC, while ACode degrades more gradually                                  sub-module and port-level reasoning matters more.
+from about 55% at < 30 LoC down to ∼ 15% at 200+ LoC. Two
+general findings are also visible. Finding 1. For round-trip reasoning                             6.3                              Intermediate Results on Task 1 with ACode
+in Task 1, longer intermediate specifications (𝑟 =1.0) consistently
+outperform compressed ones (𝑟 =0.5) at every LoC bucket, confirm-                                  For Task 1: round-trip reasoning with executable code as the ab-
+ing that abstract length materially affects recoverability. The gap                                stract ACode , we also evaluate the functional pass rate of ACode
+between 𝑟 =0.5 and 𝑟 =1.0 also widens as designs grow, indicating                                  independently. Notably, the ACode is software code(e.g., Python
+that larger designs suffer disproportionately from aggressive com-                                 or C). Figure 10 compares the performance of the intermediate
+pression. Finding 2. Task 3 (repository-issue fixing) stays at low                                 ACode and the final reconstructed RTL D ′ . To evaluate ACode , we
+performance across all LoC ranges, even for small designs. This                                    automatically generate random-input test vectors from RTL simula-
+finding shows that, for cross-artifact bug repair, the design scale                                tion of D, execute ACode on the same inputs, and compare outputs
+is not the main factor influencing performance. Instead, the bottle-                                                                         Pass rate of executable                                  Pass rate of reconstructed RTL
+                                                                                                                                                                          Code
+neck lies in locating the buggy region within the repository context                                                                         (a)    Code   = Py                                                        (b)     Code    =C
+and reasoning over the issue description.
+                                                                                                   Pass Rate (%)
+
+
+
+
+                                                                                                                                                                                 Pass Rate (%)
+
+
+
+
+                                                                                                                   50                                                                            50
+
+                                                                                                                   25                                                                            25
+6.2                  Error Distribution
+                                                                                                                   0                                                                             0
+We classify failure reasons into five buckets: (1) Datapath — wrong                                                   -4o ini net iku 3.2 tral 3.5 A                                                -4o ini net iku 3.2 tral 3.5 A
+                                                                                                                   GPT 4o-m Son Ha DS-v Mis Qwen LLaM                                            GPT 4o-m Son Ha DS-v Mis Qwen LLaM
+arithmetic, wrong expressions, wrong bit-widths, or wrong con-
+stants; (2) Control — wrong next-state logic, missing states, or wrong                             Figure 10: Intermediate results on Task 1 with ACode . Pass
+handshakes; (3) Interface — a submodule is missing or stubbed, or                                  rate of the executable code ACode compared with the final
+an internal port width or connection is wrong; (4) Timing — wrong                                  reconstructed RTL D ′ on RTL-BenchLS.
+                                                                                               7
+                           Issue Info                                                                              Claude Sonnet 4.5 PASS                                                             GPT-4o Fail
+                                                                                  assign region_addr_mask[r][b] = (csr_pmp_cfg_i[r].mode != PMP_MODE_NAPOT) |        - logic [33:PMPGranularity+2] region_addr_mask [PMPNumRegions];
+ Repository: lowRISC/ibex PR: #1179 File: rtl/ibex_pmp.sv                                                                                                            + logic [33:PMPGranularity+1] region_addr_mask [PMPNumRegions];
+ Issue: #1178 — PMP NAPOT masks are incorrect when                                - ~&csr_pmp_addr_i[r][b-1:PMPGranularity+2];
+                                                                                  + ~&csr_pmp_addr_i[r][b-1:PMPGranularity+1];                                       ...
+ the region address spans the entire granule                                                                                                                         - ~&csr_pmp_addr_i[r][b-1:PMPGranularity+2];
+ Bug Description                                                                                              DeepSeek v3.2 PASS                                     - ~&csr_pmp_addr_i[r][b-1:PMPGranularity+1];
+                                                                                 assign region_addr_mask[r][b] =                                                     - assign region_match_eq[c][r] = (pmp_req_addr_i[c][33:PMPGranularity+2] &
+ The PMP address masking logic in ibex_pmp.sv always
+                                                                                 (csr_pmp_cfg_i[r].mode != PMP_MODE_NAPOT) |                                         - assign region_match_eq[c][r] = (pmp_req_addr_i[c][33:PMPGranularity+1] &
+ uses PMPGranularity+2, …… it’s incorrect when PMPGranularity
+                                                                                 - ~&csr_pmp_addr_i[r][b-1:PMPGranularity+2];                                        - (5 more match lines changed similarly)
+ > 0, where it should use PMPGranularity+1 to allow NAPOT
+                                                                                 + ~&csr_pmp_addr_i[r][b-1:PMPGranularity+1];
+ ranges that span the entire granule.                                                                                                                                                                Claude Haiku 4.5 Fail
+ Golden Fix                                                                                                                                                         - assign region_addr_mask[r][b] = (csr_pmp_cfg_i[r].mode != PMP_MODE_NAPOT);
+                                                                                                              LlaMA -3.3 PASS
+ assign region_addr_mask[r][b] =                                                assign region_addr_mask[r][b] =                                                     + if (PMPGranularity == 0) begin : g_g0 + assign region_addr_mask[r][b]
+ (csr_pmp_cfg_i[r].mode != PMP_MODE_NAPOT) |                                    (csr_pmp_cfg_i[r].mode != PMP_MODE_NAPOT) |                                         = (csr_pmp_cfg_i[r].mode != PMP_MODE_NAPOT);
+ - ~&csr_pmp_addr_i[r][b-1:PMPGranularity+2];                                   - ~&csr_pmp_addr_i[r][b-1:PMPGranularity+2];                                        + end else begin : g_g_gt_0 + assign region_addr_mask[r][b] =
+ + ~&csr_pmp_addr_i[r][b-1:PMPGranularity+1];                                   + ~(&csr_pmp_addr_i[r][b-1:PMPGranularity+2]                                        (csr_pmp_cfg_i[r].mode != PMP_MODE_NAPOT) |
+                                                                                && + csr_pmp_addr_i[r][PMPGranularity+1]);                                          + ~&csr_pmp_addr_i[r][b:PMPGranularity+2]; + end
+
+
+                                                                Figure 11: Case 3 for Task 3: examples on repository-issue reasoning.
+
+cycle by cycle. Across models, the final reconstructed RTL con-                                                                             content B as “signed overflow” and produce the textbook sign-bit
+sistently outperforms the intermediate code. This indicates that                                                                            formula (a[7]&b[7]&˜sum[7])|(˜a[7]&˜b[7]&sum[7]), which
+even when the executable code is not syntactically correct, or does                                                                         fails on the subtract path.
+not exactly match the behavior of the original RTL D, the LLM                                                                                  Case 3 for task 3: repository-issue fix. In this task, the LLMs
+can still reconstruct a functionally equivalent RTL D ′ ≡ D. The                                                                            have reason on the repository context R and an issue comment
+code abstract therefore serves more as a structural scaffold that                                                                           I to produce the functional fix Dfix . Figure 11 demonstrates an
+the LLM re-interprets during reconstruction, rather than as a strict                                                                        example on lowRISC/ibex #1178. 1 In the context, the golden fix
+functional specification.                                                                                                                   Dfix
+                                                                                                                                               ★ changes one bit-slice index in the PMP NAPOT address mask
+
+                                                                                                                                            (PMPGranularity+2→+1) while leaving other +2 occurrences in-
+6.4         Case Studies                                                                                                                    tact. 2 Success cases: Sonnet-4.5 and DeepSeek-v3.2 apply the exact
+We select one representative case per task to further illustrate how                                                                        one-line fix and pass. LLaMA-3.3-70B rewrites the mask in a func-
+models succeed or fail.                                                                                                                     tionally equivalent form and also passes. 3 Failure cases: GPT-4o
+   Case 1 for task 1: round-trip reasoning with ANL . This                                                                                  fails by globally replacing every +2 with +1, corrupting unrelated ar-
+task requires LLMs to generate an abstract A for original design                                                                            ray widths. Haiku-4.5 correctly localizes the bug but over-engineers
+D before reconstructing the RTL D ′ based on that abstract A.                                                                               the fix with an added if (PMPGranularity==0) branch, yielding a
+Figure 12 shows an example of a task on a 16-bit CRC, with natural                                                                          structurally different RTL that fails formal verification. The passing
+language abstract ANL . The golden RTL (crc16_lfsr with 49 lines                                                                            models change at most one line; the failing ones change three or
+of code) uses 1 an LFSR with feedback XOR at bit positions 0, 5, and                                                                        more.
+12. 2 Failure abstract example: GPT-4o writes a vague spec (“certain
+bits of the LFSR are updated using XOR”), but never specifies the                                                                           7   CONCLUSION
+exact bit index. This abstract leads to a failed RTL reconstruction in                                                                      We presented RTL-BenchLS, a large-scale benchmark of over 10,000
+the next step. 3 Successful abstract example: DeepSeek-v3.2 and                                                                             formally verified Verilog designs, with three novel tasks: (1) round-
+Claude Haiku-4.5 explicitly list the feedback indices (0, 5, 12), and                                                                       trip reasoning, (2) masked-content reasoning, and (3) repository-issue
+both reconstruct a functionally correct design.                                                                                             reasoning. Tasks (1) and (2) are self-supervised, and all three are
+   Case 2 for task 2: mask-infilling. This task requires LLMs to                                                                            rigorously evaluated through formal equivalence checking with-
+generate a concise description AB for masked content B, and then                                                                            out manual testbenches. Our evaluation of eight LLMs shows that
+reconstruct the masked content B ′ based on the description AB                                                                              even the best model reaches only ∼23% on natural-language round-
+and code context D\B . Figure 13 depicts an example of an 8-bit                                                                             trip reasoning, ∼28% on masked-content reasoning, and ∼12% on
+adder overflow flag. 1 The golden block B computes the flag as                                                                              repository-issue fixing. RTL-BenchLS is substantially more chal-
+overflow = intermediate_carry[6] ˆ carry, which handles                                                                                     lenging than existing benchmarks, leaving ample room for future
+both add and subtract paths. 2 Success example: DeepSeek-v3.2                                                                               improvement and offering guidance for developing LLM-based
+and Mistral-Large describe the block as “overflow via XOR” and                                                                              methods for hardware design. We will release RTL-BenchLS, in-
+reconstruct the correct carry-based formula, passing verification.                                                                          cluding datasets, evaluation scripts, and verification infrastructure,
+ 3 Failure example: GPT-4o and Sonnet-4.5 describe the masked
+                                                                                                                                            to support reproducible research in LLM-based hardware design.
+                    Golden RTL Code Snippet                                           LLMs’ generated 𝒜𝑵𝑳
+
+                                                                                                  GPT-4o Fail                                   module alu_add_sub_8bit (
+  module crc16_lfsr (                                                  The module “crc16_lfsr” is designed to perform cyclic
+  clk, reset, enable, init, data_in, crc_out );                                                                                                 input [7:0] a, b, input opcode,
+                                                                       redundancy check (CRC) calculations using a linear
+  //-----------Input Ports---------------                              feedback shift register (LFSR). It operates based on a clock             output [7:0] sum, output carry, overflow );
+  input clk; input reset; input enable; input init; input data_in; /   signal……. Inputs: …… Output: ……                                          wire [6:0] intermediate_carry;
+  /-----------Output Ports---------------                              Behavior: ……                                                             // ... F2-F5 similarly ...
+  output [15:0] crc_out;                                               - When the enable signal is active and init is not, the LFSR
+  //------------Internal Variables--------                                                                                                      one_bit_addr F6 (a[6], b[6], intermediate_carry[5], opcode, sum[6], intermediate_carry[6]);
+                                                                          updates its state based on the input data and its current
+  reg [15:0] lfsr;                                                        state. Specifically, certain bits of the LFSR are updated
+                                                                                                                                                one_bit_addr F7 (a[7], b[7], intermediate_carry[6], opcode, sum[7], carry);
+  //-------------Code Start-----------------                              using XOR operations involving the input data and the                 [MASKED]
+  assign crc_out = lfsr;                                                  most significant bit of the LFSR.                                     endmodule                  assign overflow = intermediate_carry[6] ^ carry;
+  // Logic to CRC Calculation
+  always @(posedge clk)                                                     DeepSeek v3.2 PASS          Claude HaiKu-4.5 PASS
+  if (reset) begin lfsr <= 16'hFFFF;
+                                                                                                                                                DeepSeek-v3.2 PASS                          Haiku-4.5 PASS
+  end else if (enable) begin if (init) begin                           Specific bits (5 and 12) also   Specific bits (5 and 12) also
+  lfsr <= 16'hFFFF;                                                                                                                             Detects overflow using XOR logic            Detects arithmetic overflow condition
+                                                                       incorporate additional XOR      incorporate additional XOR
+  end else begin                                                       feedback... bit 0 is            feedback... bit 0 is                     intermediate_carry[6] ^ carry;              intermediate_carry[6] ^ carry;
+  // CRC-16 with LFSR — feedback at positions 0, 5, 12                 computed as the XOR of          computed as the XOR of
+  lfsr[0] <= data_in ^ lfsr[15]; // ← XOR feedback                     data_in and bit 15              data_in and bit 15                       GPT-4o FAIL                                 Sonnet-4.5 FAIL
+  lfsr[1] <= lfsr[0]; // simple shift ...
+  lfsr[5] <= lfsr[4] ^ data_in ^ lfsr[15]; // ← XOR feedback                                                                                    Detects signed overflow condition           Detects signed addition overflow
+  ... lfsr[12] <= lfsr[11] ^ data_in ^ lfsr[15]; // ← XOR feedback                                                                              (a[7] & b[7] & ~sum[7]) | (~a[7] &          (a[7] & b[7] & ~sum[7]) | (~a[7] &
+                                                                                                                                                ~b[7] & sum[7]);                            ~b[7] & sum[7]);
+
+Figure 12: Case 1 for Task 1: round-trip with ANL on a CRC                                                                                  Figure 13: Case 2 for Task 2: masked-content reasoning with
+design with bit-positional LFSR feedback.                                                                                              8    a compress-then-reconstruct pipeline.
+REFERENCES                                                                                   [27] Nathaniel Pinckney, Christopher Deng, Chia-Tung Ho, Yi-Dian Tsai, Mingjie Liu,
+ [1] Ahmed Allam et al. 2024. RTL-Repo: A Benchmark for Evaluating LLMs on                        Wenfei ·Zhou, Brucek Khailany, and Haoxing Ren. 2025. Comprehensive Verilog
+     Large-Scale RTL Design Projects. In Workshop on LLM-Aided Design (LAD).                      Design Problems: A Next-Generation Benchmark Dataset for Evaluating Large
+ [2] Ahmed Allam et al. 2025. RTLPP: A Parallel Processing RTL Code Generation                    Language Models and Agents on RTL Design and Verification. arXiv preprint
+     Framework Using LLMs. In Workshop on LLM-Aided Design (LAD).                                 arXiv:2506.14074 (2025).
+ [3] Analog Devices. 2024.         HDL Reference Designs.          https://github.com/       [28] Zhengyuan Shi, Zeju Li, Chengyu Ma, Yunhao Zhou, Ziyang Zheng, Jiawei Liu,
+     analogdevicesinc/hdl.                                                                        Hongyang Pan, Lingfeng Zhou, Kezhi Li, Jiaying Zhu, et al. 2025. ForgeEDA:
+ [4] Yunsheng Bai, Ghaith Bany Hamad, Syed Suhaib, and Haoxing Ren. 2025. Asser-                  A Comprehensive Multimodal Dataset for Advancing EDA. arXiv preprint
+     tionforge: Enhancing formal verification assertion generation with structured                arXiv:2505.02016 (2025).
+     representation of specifications and rtl. arXiv preprint arXiv:2503.19174 (2025).       [29] SI-RISCV. 2020. HummingBird E200 Open-Source RISC-V Core. https://github.
+ [5] Kaiyan Chang, Zhirong Chen, Yunhao Zhou, Wenlong Zhu, Kun Wang, Haobo                        com/SI-RISCV/e200_opensource.
+     Xu, Cangyuan Li, Mengdi Wang, Shengwen Liang, Huawei Li, et al. 2024. Natural           [30] T-Head Semiconductor. 2021. OpenC910: XuanTie C910 RISC-V Processor. https:
+     language is not enough: Benchmarking multi-modal generative AI for Verilog                   //github.com/XUANTIE-RV/openc910.
+     generation. In Proceedings of the 43rd IEEE/ACM International Conference on             [31] Shailja Thakur, Baleegh Ahmad, Hammond Pearce, Benjamin Tan, Brendan Dolan-
+     Computer-Aided Design. 1–9.                                                                  Gavitt, Ramesh Karri, and Siddharth Garg. 2024. Verigen: A large language model
+ [6] Kaiyan Chang, Ying Wang, Haimeng Ren, Mengdi Wang, Shengwen Liang, Yinhe                     for verilog code generation. ACM Transactions on Design Automation of Electronic
+     Han, Huawei Li, and Xiaowei Li. 2023. ChipGPT: How far are we from natural                   Systems 29, 3 (2024), 1–31.
+     language hardware design. arXiv preprint arXiv:2305.14019 (2023).                       [32] Shailja Thakur, Jason Blocklove, Hammond Pearce, Benjamin Tan, Siddharth
+ [7] Fan Cui, Chenyang Yin, Kexing Zhou, Youwei Xiao, Guangyu Sun, Qiang Xu,                      Garg, and Ramesh Karri. 2023. AutoChip: Automating HDL Generation Using
+     Qipeng Guo, Demin Song, Dahua Lin, Xingcheng Zhang, et al. 2024. OriGen:                     LLM Feedback. arXiv preprint arXiv:2311.04887 (2023).
+     Enhancing RTL Code Generation with Code-to-Code Augmentation and Self-                  [33] Yongan Zhang, Zhongzhi Yu, Yonggan Fu, Cheng Wan, and Yingyan Celine Lin.
+     Reflection. arXiv preprint arXiv:2407.16237 (2024).                                          2024. Mg-verilog: Multi-grained dataset towards enhanced llm-assisted verilog
+ [8] Matthew DeLorenzo, Vasudev Gohil, and Jeyavijayan Rajendran. 2024. Creative-                 generation. In 2024 IEEE LLM Aided Design Workshop (LAD). IEEE, 1–5.
+     val: Evaluating creativity of llm-based hardware code generation. In 2024 IEEE          [34] Yujie Zhao, Hejia Zhang, Hanxian Huang, Zhongming Yu, and Jishen Zhao.
+     LLM Aided Design Workshop (LAD). IEEE, 1–5.                                                  2024. MAGE: A Multi-Agent Engine for Automated RTL Code Generation. arXiv
+ [9] Alex Forencich. 2024. Verilog Ethernet Components. https://github.com/                       preprint arXiv:2412.07822 (2024).
+     alexforencich/verilog-ethernet.                                                         [35] Yaoyu Zhu, Di Huang, Hanqi Lyu, Xiaoyun Zhang, Chongxiao Li, Wenxuan Shi,
+[10] Mingzhe Gao, Jieru Zhao, Zhe Lin, Wenchao Ding, Xiaofeng Hou, Yu Feng, Chao                  Yutong Wu, Jianan Mu, Jinghua Wang, Yang Zhao, et al. 2025. QiMeng-CodeV-R1:
+     Li, and Minyi Guo. 2024. AutoVCoder: A Systematic Framework for Automated                    Reasoning-Enhanced Verilog Generation. arXiv preprint arXiv:2505.24183 (2025).
+     Verilog Code Generation using LLMs. In International Conference on Computer
+     Design (ICCD).
+[11] Mingzhe Gao, Jieru Zhao, Zhe Lin, Wenchao Ding, Xiaofeng Hou, Yu Feng, Chao
+     Li, and Minyi Guo. 2024. Autovcoder: A systematic framework for automated
+     verilog code generation using llms. In 2024 IEEE 42nd International Conference on
+     Computer Design (ICCD). IEEE, 162–169.
+[12] Chia-Tung Ho, Haoxing Ren, and Brucek Khailany. 2024. VerilogCoder: Au-
+     tonomous Verilog Coding Agents with Graph-based Planning and Abstract Syn-
+     tax Tree (AST)-based Waveform Tracing Tool. arXiv preprint arXiv:2408.08927
+     (2024).
+[13] Hung-Ming Huang, Yu-Hsin Yang, Fu-Chieh Chang, Yun-Chia Hsu, Yin-Yu Lin,
+     Ming-Fang Tsai, Chun-Chih Yang, and Pei-Yuan Wu. 2025. Assessing Large
+     Language Models in Generating RTL Design Specifications. arXiv preprint
+     arXiv:2512.00045 (2025).
+[14] Konstantin Jejemont. 2023. basic_verilog: A General Verilog Library. https:
+     //github.com/pConst/basic_verilog.
+[15] Minwoo Kang, Mingjie Liu, Ghaith Bany Hamad, Syed Suhaib, and Haoxing Ren.
+     2024. FVEval: Understanding Language Model Capabilities in Formal Verification
+     of Digital Hardware. arXiv preprint arXiv:2410.23299 (2024).
+[16] Zeju Li, Changran Xu, Zhengyuan Shi, Zedong Peng, Yi Liu, Yunhao Zhou,
+     Lingfeng Zhou, Chengyu Ma, Jianyuan Zhong, Xi Wang, et al. 2025. Deepcircuitx:
+     A comprehensive repository-level dataset for rtl code understanding, generation,
+     and ppa analysis. arXiv preprint arXiv:2502.18297 (2025).
+[17] Mingjie Liu, Nathaniel Pinckney, Brucek Khailany, and Haoxing Ren. 2023. Ver-
+     ilogeval: Evaluating large language models for verilog code generation. In 2023
+     IEEE/ACM International Conference on Computer Aided Design (ICCAD). IEEE,
+     1–8.
+[18] Shang Liu, Wenji Fang, Yao Lu, Qijun Zhang, Hongce Zhang, and Zhiyao Xie.
+     2024. Rtlcoder: Outperforming gpt-3.5 in design rtl generation with our open-
+     source dataset and lightweight solution. In 2024 IEEE LLM Aided Design Workshop
+     (LAD). IEEE, 1–5.
+[19] Yuxiao Liu, Chenxing Xu, Yanrui Zhou, Zhen Li, and Qiang Xu. 2025. DeepRTL:
+     Bridging Verilog Understanding and Generation with a Unified Representation
+     Model. arXiv preprint arXiv:2502.15832 (2025).
+[20] Yao Lu, Shang Liu, Qijun Zhang, and Zhiyao Xie. 2024. Rtllm: An open-source
+     benchmark for design rtl generation with large language model. In 2024 29th
+     Asia and South Pacific Design Automation Conference (ASP-DAC). IEEE, 722–727.
+[21] Zeus Marmolejo. 2014. Zet: Open-Source x86 Processor. https://github.com/
+     marmolejo/zet.
+[22] NVIDIA. 2018. NVDLA Hardware. https://github.com/nvdla/hw.
+[23] Andreas Olofsson. 2019. OH: Open Hardware Library. https://github.com/
+     aolofsson/oh.
+[24] Hammond Pearce, Benjamin Tan, and Ramesh Karri. 2020. Dave: Deriving
+     automatically verilog from english. In Workshop on Machine Learning for CAD
+     (MLCAD).
+[25] Zehua Pei, Hui-Ling Zhen, Mingxuan Yuan, Yu Huang, and Bei Yu. 2024. Betterv:
+     Controlled verilog generation with discriminative guidance. arXiv preprint
+     arXiv:2402.03375 (2024).
+[26] Nathaniel Pinckney, Christopher Batten, Mingjie Liu, Haoxing Ren, and Brucek
+     Khailany. 2024. Revisiting VerilogEval: Newer LLMs, In-Context Learning, and
+     Specification-to-RTL Tasks. arXiv preprint arXiv:2408.11053 (2024).
+
+                                                                                         9
+

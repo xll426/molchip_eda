@@ -1,0 +1,799 @@
+                                         A Progressive Approach to Synthesizable RTL Design Generation
+                                                                  Using LLMs
+                                                                    Xiangfei Kong                                                     Tasnim Tabassum
+                                                              University of South Florida                                          University of South Florida
+                                                                 Tampa, Florida, USA                                                  Tampa, Florida, USA
+                                                                xiangfeikong@usf.edu                                               tasnimtabassum@usf.edu
+
+                                                               Marwan Abdelwahab                                                           Hao Zheng
+                                                              University of South Florida                                          University of South Florida
+                                                                 Tampa, Florida, USA                                                 Tampa, Florida, USA
+                                                                abdelwahab2@usf.edu                                                   haozheng@usf.edu
+
+                                         Abstract                                                                  1   Introduction
+                                         Large language models can generate register-transfer-level (RTL)          Automating Register Transfer Level (RTL) code generation refers
+                                         designs directly from natural language specifications. Their fail-        to the use of Large Language Models (LLMs) to translate natural
+                                         ures, however, arise mostly from understanding rather than coding         language specifications, hardware descriptions, or functional re-
+arXiv:2607.18519v1 [cs.AR] 20 Jul 2026
+
+
+
+
+                                         [23, 32]. A specification is informal and ambiguous, the model’s          quirements into synthesizable Verilog code. It is a rapidly growing
+                                         interpretation stays implicit, and every misreading is committed          subfield of Machine Learning for Electronic Design Automation
+                                         silently into Verilog, where only simulation can expose it. Interme-      (ML4EDA) that aims to streamline chip design, reduce human error,
+                                         diate representations make the interpretation partly explicit, yet ex-    and accelerate the development of digital hardware. Generating
+                                         isting works don’t verify the interpretation against the specification,   RTL from natural language remains challenging because it requires
+                                         and repair simulation failures at the code level regardless of where      translating ambiguous human specifications into precise, cycle-
+                                         the misreading originated. VeriRefine instead treats specification        accurate hardware implementations. Current autoregressive LLMs
+                                         refinement as a verifiable stage of RTL generation. It progressively      lack an inherent understanding of hardware concurrency, timing,
+                                         refines the prose specification into an explicit, schema-constrained      and structural dependencies, often producing syntactically correct
+                                         account of design intent, expressed as per-signal Abstract Signal         code that contains logic errors or is not synthesizable. Moreover,
+                                         Transition Functions (ASTFs) that commit each signal’s logic style,       existing evaluation methods focus largely on syntax and functional
+                                         clock domain, and reset behavior before any code exists and ground        simulation, overlooking critical physical design constraints such
+                                         every behavior in a verbatim specification sentence. The refined          as timing closure, Power-Performance-Area (PPA) objectives, and
+                                         specification then passes a five-layer audit spanning soundness,          hardware security, resulting in designs that may be functionally
+                                         completeness, consistency, FSM integrity, and core RTL design             plausible yet impractical for deployment.
+                                         rules, so interpretation errors are repaired at the representation           Underlying these issues is a core difficulty: the semantic gap
+                                         level before any Verilog is generated. Once code is generated, each       between the input specification and the output RTL code. A nat-
+                                         simulation failure is classified as an understanding error or a cod-      ural language specification is informal, ambiguous, and often in-
+                                         ing error and routed back to the corresponding stage for targeted         complete, while synthesizable RTL is a formal, cycle-accurate de-
+                                         repair. Because every signal’s hardware class is fixed during refine-     scription constrained by concurrency, timing, and area and power
+                                         ment, synthesizability becomes a structural property of the pipeline      budgets imposed by the target technology. The two sit at fundamen-
+                                         rather than a post-hoc check. With Claude Sonnet 4.6, VeriRefine          tally different levels of abstraction, which makes closing the gap
+                                         reaches 94.0% functional correctness on RTLLM v2.0 and 98.1% on           between them the central challenge of LLM-based RTL generation.
+                                         VerilogEval-Human v2.                                                        Most prior work maps natural language specification directly
+                                                                                                                   to Verilog code, requiring the model to traverse both levels of ab-
+                                                                                                                   straction at once [18, 20, 26]. VeriGen [26] reports that its failures
+                                                                                                                   frequently originate in the specification rather than the model,
+                                         CCS Concepts                                                              observing that ambiguous prompts admit multiple valid interpreta-
+                                         • Hardware → High-level and register-transfer level synthe-               tions, such as when a description does not state whether a reset is
+                                         sis; Hardware description languages and compilation; Simulation and       synchronous or asynchronous, and that the model frequently omits
+                                         emulation; • Computing methodologies and machine learning;                behavior the prompt leaves implicit. This effect can be quantified
+                                                                                                                   on VerilogEval [18], which the same RTL designs are paired with
+                                                                                                                   specifications written at different levels of abstraction. VerilogEval-
+                                                                                                                   human was created by manually converting 156 HDLBits problems,
+                                         Keywords                                                                  including state-transition diagrams, waveforms, truth tables, and
+                                         large language models, RTL code generation, electronic design
+                                         automation, abstraction refinement, intermediate representation,
+                                         Verilog, agentic framework, functional verification
+                                                                                  Xiangfei Kong, Tasnim Tabassum, Marwan Abdelwahab, and Hao Zheng
+
+
+Karnaugh maps, into text-only specifications that emphasize be-            The main contributions of this work are as follows:
+havioral intent and design functionality. In contrast, VerilogEval-           • We developed VeriRefine, the first framework to opera-
+machine uses specifications automatically generated from the ref-               tionalize abstraction refinement in LLM-based RTL genera-
+erence RTL by GPT-3.5, which often expose implementation-level                  tion, which progressively refines an abstract design specifi-
+details and closely mirror the underlying code structure. Although              cation in natural language to RTL Verilog, producing higher
+both subsets target the same designs, functional pass@1 drops                   functional correctness and synthesizability than direct gen-
+substantially on VerilogEval-human. Evaluated with GPT-4, for in-               eration while keeping PPA quality on par with the strongest
+stance, achieves 60% pass@1 on the VerilogEval-machine but only                 agentic baseline.
+43.5% on the VerilogEval-human. The same disparity persists for a             • We proposed the Abstract Signal Transition Functions (ASTF),
+model fine-tuned specifically for RTL generation. RTLCoder [20]                 a per-signal intermediate representation that bridges the
+achieves 62.5% pass@1 on VerilogEval-machine, but only 36.7% on                 semantic gap between the natural language specifications
+VerilogEval-human. Because the target designs remain unchanged                  and Verilog for functional correctness and synthesizability.
+and only the specifications differ, the performance loss cannot be            • Experiments on RTLLM v2.0 and VerilogEval-Human v2
+explained by model capacity or design complexity. Rather, it re-                with Claude Sonnet 4.6 show 94.0% and 98.1% functional
+flects the challenge of recovering implementation-level details from            correctness, improvements of 30.0% and 12.8% over direct
+intent-level descriptions, highlighting the semantic gap between                generation, within two designs of the state-of-the-art Ver-
+natural-language specifications and RTL implementations.                        ilogCoder at roughly a quarter of its token cost.
+   Recent work has begun narrow this gap by inserting a struc-           The architecture of the framework is described in detail in Section 3.
+tured intermediate representation (IR) between the specification
+and the generated code. The study [10] prompts GPT-4o to generate        2 Background and Related Work
+an IR before producing Verilog, thereby separating the reasoning
+about circuit logic from the writing of syntactically correct code,      2.1 Non-Agentic LLM-Based RTL Generation
+and reports an improvement in functional pass@1 to 60.4% on              Early and foundational efforts in LLM-driven RTL generation oper-
+VerilogEval-Human v1.0.0. This confirms that making intermediate         ate without multi-agent coordination, relying instead on supervised
+structure explicit helps recover the implementation details that         training, reinforcement learning, or inference-time prompting to
+an intent-level specification leaves implicit. However, existing ap-     improve generation quality — each making meaningful progress
+proach remain a open-loop, in which the IR is generated once and         but sharing a structural inability to decompose complex specifi-
+input directly for RTL generation without validation. As a result,       cations or maintain inspectable design intent across generation
+the generated IR may omit behaviors described in the specifica-          stages. RTLCoder [20] releases an open-source 7B model match-
+tion, introduce unsupported behaviors that are not grounded in           ing GPT-3.5 on Verilog generation, but if the model misreads the
+the specification, or make assumptions that are inconsistent with        specification semantically during its single forward pass, there is
+the intended design semantics. Because no mechanism exists to            no correction mechanism — the misinterpretation is silently com-
+verify specification coverage or representation faithfulness, these      mitted to the generated code. CraftRTL [19] targets non-textual
+errors can propagate directly into the generated RTL. In addition,       specification artifacts (Karnaugh maps, state diagrams, waveforms)
+evaluation is typically limited to functional simulation, leaving syn-   with correct-by-construction synthetic data, yet still treats genera-
+thesizability and implementation quality metrics such as timing          tion as a single forward pass with no inspectable intermediate stage.
+and area outside the generation process.                                 CodeV [33] bootstraps higher-quality training pairs by generating
+   To address above limitations, we propose an agentic framework         NL summaries from Verilog, but the resulting model remains a black
+that treats the intermediate representation as a verifiable design       box with no way to verify its own functional intent. ScaleRTL [11]
+artifact, rather than as the transient, unverified prompting step.       distills long chain-of-thought traces from DeepSeek-R1 to build the
+Given a specification, an LLM first generates a schema-constrained       first RTL reasoning model outperforming 18 baselines by 18.4%, but
+IR that explicitly captures signal behaviors, interfaces, timing se-     inherits any errors and biases present in the teacher’s reasoning.
+mantics, and architectural intent. The generated representation is       VeriReason [28] applies GRPO with testbench feedback to reach
+then audited for specification coverage and internal consistency to      83.1% pass@5, but remains vulnerable to reward hacking where
+ensure that all required behaviors are represented, every IR entry       surface-level patterns satisfy the testbench without capturing true
+is grounded in the source specification, and no conflicting assump-      design intent. ChipSeek [2] folds EDA synthesis feedback into a
+tions are introduced. Only after the representation passes these         PPA-aware hierarchical reward, but computing this reward requires
+validation checks is it used for RTL generation. The resulting RTL       running full synthesis tools on every training sample — a process
+is evaluated for functional correctness, synthesizability, and PPA       taking minutes per sample — making the training loop prohibi-
+objectives. When violations are detected, feedback is propagated         tively expensive at scale. VeriRL [25] mitigates reward sparsity via
+back to the representation level, where the design intent can be         trace-back rescoring, yet still offers no structured representation
+refined before regenerating RTL. By localizing errors at the ab-         a reviewer could inspect before RTL is produced. VeriPrefer [27]
+straction level rather than the implementation level, the proposed       applies DPO on testbench-derived preference pairs across Verilo-
+framework enables systematic correction of representation errors         gEval/RTLLM, but only ranks complete outputs with no visibility
+before they propagate into the final hardware design. Finally, we        into where a failing candidate misinterpreted the specification.
+evaluate our framework on RTLLM 2.0 and VerilogEval-Human v2             HDLCoRe [4] pairs chain-of-thought templates with RAG over cu-
+benchmarks.                                                              rated RTL snippets to suppress hallucinations, but its static retrieval
+A Progressive Approach to Synthesizable RTL Design Generation Using LLMs
+
+
+corpus cannot adapt to specification patterns outside its indexed ex-      appropriate abstraction level — enabling targeted correction that
+amples. VeriThoughts [31] is an inference-time prompting approach          neither system can achieve through post-generation repair alone.
+that structures the LLM’s reasoning as an explicit circuit-intent de-
+scription which is then checked by a formal property verifier, with
+failures fed back as corrective prompts, yet it can only catch errors      2.3    Abstraction-of-Thought for Verilog
+that the solver is strictly restricted to checking functional equiva-             Generation
+lence, it cannot detect many other types of errors or design flaws         Hong et al. [14] showed LLMs reason more reliably across explicit
+that cannot be easily expressed as a simple logic-matching prop-           abstraction levels before committing to output, but this general-
+erty. EvolVE [7] takes an evolutionary search approach at test time:       purpose formulation was not designed for hardware-specific syntax
+it generates a population of candidate Verilog implementations,            and timing constraints. ComplexVCoder [3] introduces the Gen-
+then iteratively mutates and selects survivors based on simulation         eral Intermediate Representation (GIR), improving over CodeV and
+scores across generations, but this means every candidate at every         RTLCoder by 14.6% and 22.2%, yet its schema is fixed and hand-
+generation requires a full simulation run, causing cost to explode         designed rather than learned. QiMeng-CRUX [16] learns a struc-
+rapidly as design complexity grows. DeepV [17] grounds gener-              tured CRUX space (interface, functions, considerations) transfer-
+ation in a curated retrieval-augmented Verilog knowledge base,             able to external models, but its three fixed categories may not cap-
+yet gains degrade sharply for novel module types outside its cor-          ture unconventional control structures. Paradigm-Based HDL [24]
+pus. Overall, these non-agentic methods remain bounded by the              routes specifications through circuit-class-specific paradigm blocks,
+reasoning capacity of a single model pass and cannot decompose hi-         but misclassifying novel or hybrid circuits misroutes the entire
+erarchical specifications or maintain inspectable design state across      pipeline. AutoFSM [21] compiles a JSON intermediate deterministi-
+generation stages.                                                         cally to Verilog, eliminating syntax errors, but is narrowly scoped
+                                                                           to FSM-style designs. LLM-FSM [29] uses YAML as a ground-truth
+                                                                           format for correct-by-construction synthesis, but remains simi-
+2.2     Agentic Multi-Agent Frameworks                                     larly confined to FSMs. RTL++ [1] encodes Verilog into CFG/DFG
+VerilogCoder [13] combines planning, coding, and AST-based wave-           graphs enriching structural context, yet requires existing reference
+form tracing agents to reach 94.2% pass@1, but its feedback only re-       RTL, limiting it to refinement rather than blank-page generation.
+ports output-level mismatches rather than diagnosing which inter-          SecFSM [15] extends graph IRs with a security knowledge graph
+nal signal or state diverged from the intended behavior. MAGE [34]         for secure FSM generation, but its coverage is bounded by the cu-
+introduces high-temperature sampling with checkpoint-guided de-            rated CWE patterns it encodes. AoT-RTL [10] is the most direct
+bugging as the first open-source multi-agent RTL system, yet its           hardware instantiation of AoT, outperforming Tree-of-Thought
+state checkpoints expose only output-level signal values at mis-           on GPT-4o, yet its evaluation stops at module-level benchmarks
+match points rather than the implementation class, clock domain,           without demonstrating multi-modular scaling. Lorecast [5] inserts
+or guarded-command logic of each driven signal. VERIMOA [22]               pseudocode as an implicit CoT step before RTL emission, but offers
+mixes Base/C++/Python specialist agents with a quality-scored              no external checkpoint for a verifier to intervene. Veritas [9] com-
+cache, but coordinating three heterogeneous agent types adds sub-          piles LLM-generated CNF clauses deterministically for correctness
+stantial inference cost and latency. Spec2RTL-Agent [30] converts          by construction, but CNF can only express a narrow slice of practical
+specifications into structured plans via intermediate C++/HLS, cut-        sequential RTL. Crucially, NL2Silicon [12] shows across 3 frontier
+ting human intervention by 75%, but constrains designs to those            LLMs and 6 abstraction formats that representation selection—not
+that map cleanly onto HLS semantics, excluding many practical              model selection—dominates success (3%–88% pass-rate spread), yet
+RTL patterns. VeriGraphi [8] builds a spec-anchored knowledge              stops short of proposing one format that generalizes across task
+graph encoding hierarchy and dependencies before code emission,            categories. Across this literature, every abstraction schema is hand-
+yet extracting that graph from unstructured specification text is          crafted for a narrow design class, and none couples a learned, gen-
+itself an unvalidated, error-prone step with no formal correctness         eralizable intermediate representation with fine-grained internal-
+guarantee. VeriOpt [6] coordinates Planner/Programmer/Review-              signal feedback for targeted hierarchical repair—the gap our frame-
+er/Evaluator agents for PPA-aware iteration, but repeated EDA tool         work closes.
+calls at each iteration make the pipeline far slower than single-pass
+methods. Despite these advances, agentic systems still pass con-
+text informally between roles as unstructured natural language,            3     VeriRefine Framework
+risking loss of structural intent across turns — motivating an ex-         VeriRefine is an agentic framework for RTL generation that uses
+plicit, inspectable intermediate artifact rather than implicit agent       the Abstract Signal Transition Functions (ASTF) to refine struc-
+memory. VeriRefine is most closely related to and inspired by Ver-         tured behavioral information from natural language specifications,
+ilogCoder and MAGE: where VerilogCoder structures the coding               enabling functionally correct and synthesizable Verilog to be pro-
+workflow around a Task and Circuit Relation Graph that retrieves           duced. By separating the refinement step from code generation,
+signal and transition facts per subtask, VeriRefine instead validates      VeriRefine enables the extracted representation to be verified inde-
+a formal signal-level representation before any code is written;           pendently before RTL is generated, and allows simulation failures
+and where MAGE routes debug feedback from simulation output                to be classified by root cause and routed back to the appropriate
+directly back to RTL repair, VeriRefine classifies each failure as         stage for targeted correction. This section describes the overall
+either a representation error or a code error and routes it to the         system architecture (Section 3.1), the Abstract Signal Transition
+                                                                                                      Xiangfei Kong, Tasnim Tabassum, Marwan Abdelwahab, and Hao Zheng
+
+
+
+
+                                Refinement                             Implementation                                         Verification &
+                                Module                                 Module                                                 Debug Module
+                                              Verified                                          RTL Code                                                 Sim pass
+                                                                                                                  ●   Testbench generation
+                            ASTF Generation    ASTF              ●   RTL generation
+                        ●                                                                                         ●   Failure Analyzer
+                        ●   ASTF Audit                                                                            ●   Debug with regen the ASTF or RTL
+      Specification                                                                                                                                                 Final RTL Code
+                                                                                      Sim fails with RTL issue:
+                                               Sim fails with ASTF issue:                 regenerate RTL
+                                                   regenerate ASTF
+
+
+                                              Figure 1: Overview of the VeriRefine framework
+
+
+Functions (Section 3.2), refinement module (Section 3.3), imple-                        guards hold in the same cycle, for example a reset asserted while a
+mentation module (Section 3.4) , and verification & debug module                        valid input arrives. Priority ordering resolves every such overlap
+(Section 3.5).                                                                          deterministically, without forcing each guard to be written as a
+                                                                                        mutually exclusive compound condition that is harder to generate
+3.1      Overview Framework Architecture                                                and to audit. Each triple pairs a condition 𝑐𝑖 with an action 𝑎𝑖 and
+VeriRefine organizes RTL generation into three sequential modules                       a provenance 𝜎𝑖 . The condition 𝑐𝑖 is a boolean guard written only
+coordinated through the ASTF, as illustrated in Figure 1. Refinement                    over signals already declared elsewhere in the ASTF, never over
+Module takes the natural language specification as input and pro-                       undeclared or external state. The action 𝑎𝑖 assigns 𝑠 whenever 𝑐𝑖
+duces a verified ASTF that explicitly captures the behavioral and                       holds, and the provenance 𝜎𝑖 ⊆ 𝑆 is one or more verbatim sentences
+structural properties of each signal. The Implementation Module                         copied character by character from the specification that jointly jus-
+then consumes this verified ASTF to generate synthesizable Verilog.                     tify the pair (𝑐𝑖 , 𝑎𝑖 ). The ordering of G(𝑠) carries semantic weight
+The Verification & Debug Module receives the generated Verilog, and                     rather than serving as mere bookkeeping. Evaluation proceeds from
+a testbench independently generated from the input specification,                       𝑖 = 1 to 𝑛, and the first condition 𝑐𝑖 that is satisfied determines the
+then runs functional simulation. If simulation passes, the system                       value of 𝑠, the same first match priority order that the emitted RTL
+accepts the Verilog as the final output. Otherwise, the system routes                   realizes as a chain of if and else if statements.
+the failure back to the appropriate module for correction, either                           Together, H (𝑠) and G(𝑠) fully characterize the behavioral logic
+regenerating the ASTF or the RTL, until the design passes or the                        of 𝑠 and leave nothing to be inferred when Verilog is generated.
+iteration limit is reached.                                                             The only state shared across signals is a design level finite state de-
+                                                                                        scriptor used by FSM designs, referenced by name inside individual
+3.2      Abstract Signal Transition Functions (ASTF)                                    guards but defined once outside any single signal’s ASTF.
+                                                                                            To illustrate, consider the RTLLM v2.0 design pulse_detect,
+When an LLM generates Verilog directly from a natural language
+                                                                                        which must assert a one-cycle indicator data_out in the final cy-
+specification, it must comprehend the design intent and translate
+                                                                                        cle of every 0 → 1 → 0 pulse on data_in. The specification fixes
+it into hardware implementation at the same time, leaving no op-
+                                                                                        the timing with an example trace: data_in 01010 yields data_out
+portunity to catch misunderstandings before code is produced. A
+                                                                                        00101. Direct generation fails this design with both evaluated mod-
+misread timing constraint or a fabricated behavior can result in
+                                                                                        els, and through the same misreading. Both generated FSMs assert
+Verilog that is syntactically valid yet functionally incorrect, and
+                                                                                        data_out after the pulse’s end cycle rather than in it, one by regis-
+such errors only become apparent during simulation. In practice,
+                                                                                        tering the output inside the clocked always block and one by tying
+simulation is one of the most time-consuming steps in hardware
+                                                                                        it to the state entered after the pulse completes.
+design, and catching an error only at this stage means the entire
+                                                                                            The ASTF settles this timing decision before any Verilog gener-
+generation cycle must restart from the beginning.
+                                                                                        ated. H (state) records a two-bit sequential register clocked on the
+    VeriRefine addresses this through the Abstract Signal Transition
+                                                                                        rising edge of clk and asynchronously reset to IDLE, and G(state)
+Function (ASTF), which makes explicit two types of information
+                                                                                        lists the reset command followed by the four state transitions, each
+that a natural language specification encodes in prose but never
+                                                                                        citing the sentence that defines the pulse. H (data_out), in con-
+separates for independent verification. Formally, for each signal 𝑠
+                                                                                        trast, classifies the indicator as combinational, and the design-level
+driven in a design with specification 𝑆, the ASTF is defined as
+                                                                                        FSM metadata records a Mealy output, because the cited sentence
+                                                                                       and its example trace require data_out to assert in the same cy-
+                      ASTF(𝑠) = H (𝑠), G(𝑠)                                             cle in which the closing 0 arrives. The Implementation Module
+   H (𝑠) captures the implementation class of the signal. It records                    of VeriRefine therefore emits the state register as a clocked case
+the signal’s logic style, its clock domain when the signal is sequen-                   statement and data_out as a continuous assignment guarded by
+tial, and its reset behavior when one applies. This information alone                   state == S1 && data_in == 0, and the design passes simulation
+is sufficient for the code implementation to fix the always block                       with both models on the first attempt. Figure 2 traces this instan-
+header for 𝑠 without consulting any other signal.                                       tiation from the highlighted specification sentences in panel (a),
+   G(𝑠) = (𝑐𝑖 , 𝑎𝑖 , 𝜎𝑖 )𝑛𝑖=1 is a priority ordered list of guarded ac-                 through H , G, and the FSM metadata in panel (b), to the generated
+tions. A plain unordered list would be ambiguous whenever two                           RTL in panel (c). Panel (d) then contrasts the simulated traces on
+A Progressive Approach to Synthesizable RTL Design Generation Using LLMs
+
+
+
+
+Figure 2: ASTF traces the pulse_detect FSM from specification (a) through the per-signal records and FSM metadata (b) to the
+generated RTL (c). Panel (d) simulates the specification’s own example input as evidence. Both direct-generation outputs miss
+the required end cycle timing and fail, while the RTL generated from the ASTF matches the expected trace and passes on the
+first attempt.
+
+
+this example input, where both direct-generation outputs miss the             As shown in Figure 3, the module reaches a verified ASTF through
+end-cycle timing and the ASTF-generated RTL matches it.                    two quality gates. ASTF generation (Section 3.3.1) prompts the LLM
+   H (𝑠) and G(𝑠) address different failure modes that commonly            to emit a candidate ASTF as a JSON document. A closed schema
+arise in direct generation. H (𝑠) enforces synthesizability by com-        (Section 3.3.2) checks the form of this document, rejecting any out-
+mitting each signal to a concrete logic style, clock domain, and           put that violates the schema without an LLM call. A five-layer audit
+reset behavior before any code is generated, eliminating the class         (Section 3.3.3) then checks its content, and each violation returns
+of errors in which combinational logic is placed inside a clocked          to generation as targeted repair feedback. Form errors are there-
+always block or reset conditions are left unspecified. G(𝑠) enforces       fore caught mechanically, content errors are caught before RTL
+functional correctness and suppresses hallucinated behaviors by            generation, and only behavioral errors remain for simulation to
+grounding every condition action pair in a verbatim sentence from          expose.
+the specification, ensuring that the representation contains no be-
+havior the specification did not require and reduceing the risk of
+omitting behavior it did. Because each signal is an independent            3.3.1 ASTF Generation. Given an input specification, we gener-
+record, errors in one signal do not propagate to others, and each          ate the ASTF in three steps, classification, prompt assembly, and
+record can be verified in isolation before simulation is invoked.          generation that must conform to the ASTF schema (Section 3.3.2).
+                                                                              Classification is a keyword scan over the specification text. Each
+                                                                           design type owns a hand-curated list of indicative phrases, such
+3.3     Refinement Module                                                  as finite state and Mealy for FSMs, or write clock and clock domain
+We design the Refinement Module to derive a verified ASTF from the         crossing for dual-clock designs, and the scan matches these phrases
+input natural language specification before any RTL is generated.          case-insensitively against the text. The primary type is then as-
+This stage addresses a central source of failure in LLM-based RTL          signed in a fixed order from most specific to most general, FSM,
+generation. Many errors arise because the model misinterprets the          dual-clock, sequential, and combinational as the default, because a
+specification, and sunch errors surface only during the simulation,        more specific design usually also contains the vocabulary of the gen-
+after a full generation cycle has already been spent. Instead of           eral ones. The pulse_detect specification of Figure 2, for example,
+asking the LLM to translate the specification into RTL directly, we        mentions its clock and reset alongside its state transitions, so check-
+first require it to expose its understanding of the design intent as       ing FSM first keeps it from being classified as plain sequential logic.
+an auditable signal-level refinement.                                      The same scan detects any number of structural sub-types from a
+                                                                                   Xiangfei Kong, Tasnim Tabassum, Marwan Abdelwahab, and Hao Zheng
+
+
+                                                                            A document describes one design and contains the module name,
+                                                                         optional Verilog parameters, and three signal arrays holding the
+                                                                         input, output, and internal signals. All three arrays are always
+                                                                         present, though they may be empty. An input signal carries only a
+                                                                         declaration record with its name, direction, data type, and bit width,
+                                                                         since it is driven externally and assigns nothing. Every output and
+                                                                         internal signal is a driven signal and must additionally carry a
+                                                                         hardware_type record serializing H (𝑠) and a guarded_commands
+                                                                         record serializing G(𝑠), as the data_out record of Figure 4 illus-
+                                                                         trates, showing the serialized counterpart of the H /G view in Fig-
+                                                                         ure 2(b). Bit widths may be integer literals or parameter expressions
+                                                                         such as WIDTH-1, so the same schema covers fixed-width and pa-
+                 Figure 3: Refinement Module                             rameterized designs.
+                                                                            The hardware_type record fixes the three decisions that deter-
+                                                                         mine RTL structure. The logic_style field selects a combinational,
+catalog of fifteen patterns covering FSMs, counter and boundary be-      sequential, or latch implementation. The clock_domain field names
+havior, stacks, sequential and combinational dividers, floating-point    the clock and active edge for flip-flops, or the enable level for latches,
+arithmetic, frequency dividers, pipelines, FIFOs, shifters, registers,   and accepts a list of domains for multi-clock designs such as asyn-
+edge detection, bit-level operations, table-defined combinational        chronous FIFOs. The reset_behavior field names the reset signal,
+logic, and FSMs with timed datapaths. Sub-types are not exclu-           the reset value, and whether the reset is synchronous or asynchro-
+sive, and detecting one can activate a companion pattern. A FIFO,        nous. Conditional constraints tie the three fields together, turning
+for example, also activates the boundary pattern, because pointer        the applicability conditions stated informally in Section 3.2 into
+wrap-around is where FIFO behavior is easiest to misread.                machine-checkable rules. A combinational signal must leave clock
+   The classification then decides what the generation prompt con-       and reset null, and a sequential or latch signal must name a clock do-
+tains, assembled from four ingredients. The first is a base section      main, so a contradictory classification is rejected before any Verilog
+shared by all designs. It fixes the output discipline, instructing the   is generated.
+model to produce the interface first, then classify each driven sig-        The guarded_commands record lists the (𝑐𝑖 , 𝑎𝑖 , 𝜎𝑖 ) triples of G(𝑠).
+nal’s logic style, and only then write the guarded commands, and it      Each entry stores the condition and action as one gca_expression
+requires a verbatim specification quotation for every command. The       string in the fixed form guard : action, and stores the provenance
+second ingredient is one rule section per detected sub-type. Each        𝜎𝑖 in a spec_citation field that must quote the specification ver-
+section states the structural triggers of its pattern and prescribes     batim, a requirement the soundness audit of Section 3.3.3 enforces.
+the ASTF structure they demand. The FSM section, for example,            Array order is the priority order defined in Section 3.2. For logic that
+tells the model when the present state arrives as an input port and      repeats over the elements of a vector, such as a per-bit permutation,
+an internal state register must therefore not be invented. The third     a parametric for_commands entry instead gives an index variable,
+ingredient is one or two worked examples selected by the primary         an inclusive index range, and a gca_expression over that index.
+type, each a complete specification-to-ASTF pair. FSM designs, for       Each such entry maps to one generate-for loop for combinational
+example, receive one Moore and one Mealy example. The fourth             signals or one for loop inside an always block for sequential signals.
+ingredient is optional. When the specification defines behavior             Two design-level constructs sit outside the per-signal records.
+through a machine-parseable table, such as a Karnaugh map, a             An FSM design provides a state transition table whose rows map a
+mux-selection table, or a decimal truth table, we parse the exact        (from-state, input-condition) pair to a (to-state, output) pair, and
+table cells and inject them into the prompt as authoritative facts, so   a non-empty table obligates an fsm_meta record naming the state
+the model does not re-derive the table from prose. The same parser       register, the encoding (binary, one-hot, or Gray), the Moore, Mealy,
+backs the consistency audit of Section 3.3.3, so the facts the model     or mixed output type, the reset state, and the complete state list,
+is given can never contradict the facts it is later checked against.     as the bottom of Figure 4 shows. A design with counters or accu-
+                                                                         mulators may add boundary_conditions entries stating the exact
+3.3.2 ASTF Schema. ASTF generation emits the ASTF as a JSON              behavior of a signal at each minimum or maximum limit, which
+document, and the formal definition of Section 3.2 states what           guards against off-by-one errors at wrap-around.
+that document must contain, but free-form LLM output cannot be              Schema validation is the final step of ASTF generation (Figure 3)
+checked against a mathematical definition. We therefore constrain        and divides error detection with the audit that follows (Section 3.3.3).
+every emitted ASTF with a closed JSON schema. The schema forbids         The validator catches structural errors, such as a driven signal with-
+any field it does not declare, so a standard validator deterministi-     out a guarded command or a sequential signal without a clock,
+cally rejects and ASTF that omits required information or invents        mechanically and without an LLM call. The four audit layers then
+structure the downstream modules cannot consume. The schema is           examine only well-formed ASTFs for semantic errors such as unsup-
+designed around two obligations. It must be able to express every        ported or missing behavior. This division keeps the audit focused
+behavior the specification describes, and it must expose that behav-     on meaning and gives the Implementation Module a hard structural
+ior in a form the Implementation Module can translate directly into      guarantee about its input.
+synthesizable Verilog.
+A Progressive Approach to Synthesizable RTL Design Generation Using LLMs
+
+
+{ "module_name": "pulse_detect",                                             Table 1: FSM integrity checks performed by ASTF audit.
+  "output_signals": [
+    { "specs": { "signal_name": "data_out",
+                 "direction": "output",
+                 "data_type": "wire", "width": 1 },
+                                                                           Check               What it verifies                        Defect
+      "hardware_type": {                                                                                                               prevented
+        "logic_style": "combinational",
+        "clock_domain": null,                                              Metadata            fsm_meta present and consistent,        Undefined or
+        "reset_behavior": null },
+      "guarded_commands": { "commands": [
+                                                                           integrity           state register declared, reset state in contradictory
+        { "gca_expression": "state == S1 &&                                                    the table and state list, encoding      FSM skeleton.
+            data_in == 0 : data_out = 1",                                                      width sufficient.
+          "spec_citation": "The indicating signal
+            dataout is 1 at the end cycle of the
+            \"pulse\", ..." },                                             Transition          Every state has outgoing            Dead states and
+        { "gca_expression": "!(state == S1 &&                              completeness        transitions, no unreachable states, hanging inputs.
+            data_in == 0) : data_out = 0",
+          "spec_citation": "... returns to 0 until
+                                                                                               and both branches of binary inputs
+            the corresponding pulse appears                                                    are covered.
+            again." } ] } } ],
+  "internal_signals": [                                                    Reset discipline    Only the reset command references Reset logic
+    "... state: sequential reg, width 2, rising
+     clk, async reset to IDLE, 5 commands ..." ],
+                                                                                               the reset signal.                 leaking into state
+  "state_transition_table": [                                                                                                    guards.
+    { "from_state": "IDLE",
+      "input_condition": "data_in == 1",                                   Output-type         Moore outputs read no inputs and        Mealy behavior
+      "to_state": "S1", "output": "data_out = 0" },
+    { "from_state": "S1",
+                                                                           consistency         agree with the table’s outputs.         inside a Moore
+      "input_condition": "data_in == 0",                                                                                               design.
+      "to_state": "IDLE",
+      "output": "data_out = 1" },                                          Output timing       One-cycle indicators stay Moore,        Off-by-one
+    "... 2 more rows ..." ],
+  "fsm_meta": {                                                                                unregistered, and input-free.           output timing.
+    "state_register": "state",
+    "encoding": "binary",                                                  Sequence and     Shift-register compare timing,             Mistimed
+    "output_type": "mealy",                                                framing patterns N-cycle window duration, and               detection and
+    "reset_state": "IDLE",
+    "all_states": [ "IDLE", "S1" ] } }                                                      serial start/stop framing.                 framing.
+
+
+Figure 4: Abridged ASTF emitted by the Refinement Module                      Table 2: Core RTL design rules checked by ASTF audit.
+for the RTLLM pulse_detect design. H (data_out) classifies
+the indicator as combinational and fsm_meta records a Mealy                Rule                   How it is checked                     Defect
+output, so the emitted RTL asserts data_out in the pulse’s end                                                                          prevented
+cycle, the timing both models miss under direct generation.
+Ellipses mark abridged content.                                            Sequential and      Enforced by the schema through           Mixed
+                                                                           combinational logic one logic_style per signal; no           always-block
+                                                                           stay separate       additional checker is needed.            styles.
+3.3.3 ASTF Auditing. After generating the ASTF, we audit it through        Assignment             Each gca_expression is checked        Simulation-
+five layers before passing it to RTL generation. We use this layered       operator matches       against the declared style: <= for    synthesis
+structure because an ASTF must serve as reliable implementation            logic style            sequential logic and = for            mismatch and
+target, and its errors can occur at different refinement level, like                              combinational or latch logic.         incorrect
+unsupported behavior, missing behavior, inconsistent signal logic,                                                                      hardware
+and invalid global control structure.                                                                                                   classification.
+      • The first layer checks soundness by verifying that each            Combinational logic Exact enumeration is used for            Unintended
+         guarded command is grounded in a verbatim citation from           covers all input    small input spaces;                      latch inference.
+         the source specification, preventing the LLM from intro-          cases               complement-pair analysis is used
+         ducing plausible but unsupported behavior.                                            otherwise.
+      • The second layer checks completeness by ensuring that the          No combinational       The read-dependency graph             Electrically
+         ASTF covers the required module ports and state behaviors         dependency cycles      among combinational signals is        unstable
+         described in the specification, preventing correct but partial                           checked for cycles.                   feedback.
+         representations.
+      • The third layer checks consistency by validating whether the
+         guarded commands form an interpretable signal-level pro-
+                                                                                    enumerates the checks, from the declared state skeleton to
+         gram, including module-name agreement, declared-signal
+                                                                                    output timing and framing patterns.
+         usage, combinational guard structure, and agreement with
+                                                                                  • The fifth layer checks core RTL design rules, hardware-
+         truth-table, Karnaugh-map, waveform, or boundary-index
+                                                                                    legality defects that simulation is weak at catching. Table 2
+         evidence when such specification forms are present.
+                                                                                    enumerates each rule, how it is checked on the ASTF, and
+      • The fourth layer checks FSM integrity separately, because
+                                                                                    the defect it prevents. A design can pass every simulation
+         FSMs introduce global state constraints that cannot be val-
+                                                                                    vector yet carry any of these defects into synthesis.
+         idated from individual guarded commands alone. Table 1
+                                                                                   Xiangfei Kong, Tasnim Tabassum, Marwan Abdelwahab, and Hao Zheng
+
+
+   If any audit layer reports an error, VeriRefine does not pass           Table 3: Coding rules enforced during RTL generation.
+the ASTF to the Implementation Module. Instead, it converts the
+detected violation into targeted repair feedback and returns it to      Rule                Enforced by                             Defect
+the ASTF generation step. The regenerated ASTF is instructed to                                                                     prevented
+correct only the reported structural or semantic errors while pre-
+                                                                        Port contract       The module declares exactly the         Interface
+serving the remaining valid signal definitions and guarded com-                             ASTF’s ports, names, and widths         mismatch with
+mands. This refinement-level repair loop allows VeriRefine to cor-                          through prompt guidance and             the testbench.
+rect specification-understanding errors before they are generated                           deterministic validation.
+into Verilog, where the same errors would be harder to localize
+                                                                        Self-contained      The prompt requires that no         Unresolvable
+from simulation output alone.
+                                                                        module              external submodules are             references.
+                                                                                            instantiated and every parameter is
+3.4    Implementation Module                                                                declared.
+We use the audited ASTF as the sole input for RTL generation, and       Style fidelity      Sequential logic is emitted in     Simulation-
+implement this validated signal-level representation in synthesiz-                          clocked always blocks with <=, and synthesis
+able Verilog. This design separates implementation from specifica-                          combinational logic is emitted as  mismatch.
+tion interpretation. After the Refinement Module has produced and                           continuous assignments, following
+audited the ASTF, the LLM is no longer asked to infer design intent                         H (𝑠 ).
+from the original natural language prompt. Instead, it is constrained   GCA fidelity        Every guarded command is                Silent logic
+to translate explicit signal conditions, state updates, and output                          translated verbatim in priority         rewrites.
+assignments into RTL.                                                                       order and is never re-derived or
+   Given an audited ASTF, we first identify the RTL generation                              optimized.
+pattern required by the representation. For combinational designs,      Startup             Registers without a reset receive an X propagation at
+the Implementation Module maps ASTF conditions to continuous            definedness         initial block.                       startup.
+assignments or combinational always blocks. For sequential de-
+signs, it separates next-state or register-update logic from clocked    No internal         Deterministic checking rejects          Conflicting
+                                                                        tri-state drivers   internal tri-state drivers unless the   internal drivers.
+assignments. For FSM-based designs, it preserves the audited state
+                                                                                            specification explicitly requires
+set, transition conditions, and output behavior when construct-                             high impedance.
+ing the Verilog state machine. In this way, the ASTF serves as the
+implementation input that determines the structure of the gener-        Standalone          The generated module is compiled        Syntax and
+ated RTL. Code generation is itself rule-governed. The generation       compilability       with iverilog before simulation.        elaboration
+                                                                                                                                    errors.
+prompt enforces structural translation rules, from the port contract
+to the verbatim translation of every guarded command, and three
+deterministic checks gate each candidate before simulation, so a
+violating candidate is regenerated rather than simulated. Table 3
+enumerates these rules and the defects they prevent.
+   Figure 5 illustrates this ASTF-guided implementation process
+using the Prob050 K-map example. Direct GPT-4-turbo simplifies
+the K-map to b | c, which misses the asserted minterm a & ~b &
+~c and fails simulation. In contrast, VeriRefine first represents the
+asserted K-map entries in the audited ASTF and then generates RTL
+from these preserved conditions. The resulting Verilog covers the
+missing minterm and passes simulation. This example highlights
+how the Implementation Module makes RTL generation behavior-
+preserving, structured, and constrained by the audited ASTF.
+
+3.5    Verification & Debug Module
+3.5.1 Testbench Generatioin. The internal testbench (ITB) gener-
+ator serves as the first functional debug gate in VeriRefine before
+the generated RTL is evaluated by the official benchmark testbench.
+ITB is driven only by the natural-language design specification and     Figure 5: Prob050 (VerilogEval) example comparing direct
+does not use the generated RTL, the golden reference implemen-          RTL generation with VeriRefine.
+tation, the official benchmark testbench, or an externally supplied
+verification plan during generation. This separation prevents the
+generated tests from being biased by the candidate RTL. The flow        containing the module purpose, interface signals, clock/reset behav-
+uses a two-stage specification-driven pipeline. First, an LLM con-      ior, assumptions, behaviors to verify, coverage goals, and concrete
+verts the specification into a schema-constrained verification plan     test scenarios. Each plan contains directed scenarios for functional
+A Progressive Approach to Synthesizable RTL Design Generation Using LLMs
+
+
+                                                                           generated Verilog implement it incorrectly. In this case, VeriRefine
+                                                                           keeps the audited ASTF unchanged and regenerates only the RTL.
+                                                                              To make this decision, the failure analyzer takes three inputs: the
+                                                                           original design specification, the current ASTF, and the failure log
+                                                                           produced by simulation. The ASTF is summarized into a compact
+                                                                           form that includes the module name, signal names, signal widths,
+                                                                           logic styles, guarded-command expressions, boundary conditions,
+                                                                           and FSM metadata when available. The simulation feedback pro-
+                                                                           vides the concrete evidence for the failed attempt, including the
+                                                                           pass/fail verdict, the total mismatch count and sample count, the
+                                                                           time of the first mismatch, the expected value from the reference
+                                                                           module and the actual value from the generated module at each
+                                                                           mismatch, and the internal signal states around the mismatch, such
+                                                                           as registers, FSM states, and intermediate values. Based on these
+                                                                           inputs, the analyzer returns a structured decision that classifies the
+                                                                           failure as either an ASTF issue or an RTL issue, together with a
+                                                                           concise root cause explanation and actionable repair hints.
+                                                                              As in Figure 6 shown, VeriRefine then uses this decision to route
+                                                                           the repair to the appropriate retry loop. If the failure is classified
+             Figure 6: Verification & Debug Module                         as an ASTF issue, VeriRefine returns to the Refinement Module
+                                                                           and regenerates the ASTF with the analyzer’s repair hints. If the
+and corner-case behavior, one LLM-generated explicit 8–15 cycle            failure is classified as an RTL issue, VeriRefine keeps the audited
+sequence, and one pseudo-random stress scenario using 80 cycles            ASTF unchanged and retries RTL generation in Implementation
+for combinational designs or 200 cycles for sequential designs.            Module with the simulation feedback. This two-level routing makes
+   Second, the plan is converted into a SystemVerilog stimulus             debugging targeted rather than repetitive. The system repairs the
+module, itb_stimulus, which drives DUT inputs using a synthetic            representation only when the representation is wrong, and other-
+testbench clock, emits optional PROBE messages, marks scenario             wise focuses the repair on the Verilog implementation.
+completion, and maintains trace metadata such as the current sce-
+nario, step index, label, reset state, and packed input snapshots.
+The LLM-generated stimulus does not instantiate the DUT or im-             4 Experiments
+plement pass/fail checks. Instead, a deterministic assembly script
+                                                                           4.1 Experimental Setup
+builds the final simulation harness by connecting the stimulus mod-
+ule, the candidate RTL, and, for VerilogEval, the golden reference         Benchmarks. We evaluate VeriRefine on two established RTL gen-
+RTL. The same clocked harness is used for both combinational and           eration benchmarks. RTLLM v2.0 comprises 50 Verilog design tasks
+sequential designs; combinational DUTs are not connected to the            spanning arithmetic circuits, finite state machines, data structures,
+clock, but their inputs are still sequenced and sampled within the         and control logic, representing complex multi-behavior RTL gen-
+clocked harness. During simulation, the harness applies identical          eration problems. VerilogEval-Human v2 comprises 156 HDLBits-
+stimulus to the reference and candidate designs and compares their         derived problems covering a broader range of combinational and
+outputs on every negative clock edge after a short settle delay. Mis-      sequential designs at varying complexity levels.
+matches are logged and accumulated rather than terminating the                Models. We evaluate direct generation and VeriRefine-Direct
+simulation immediately. At the end of the run, the harness emits           with two models, GPT-4-turbo and Claude Sonnet 4.6, and run
+INTERNAL_TB_PASS or INTERNAL_TB_FAIL. The simulation log is                VeriRefine and the VerilogCoder reproduction with Claude Son-
+then summarized into sim_digest.txt, which reports the verdict,            net 4.6 only, all accessed through their official APIs. Generation
+mismatch count, first mismatch time, timeout warnings, completed           uses temperature 0 to minimize sampling randomness, and every
+and failed scenarios, grouped mismatch patterns, and representative        evaluation condition shares the same prompts and retry limits.
+failing samples. This digest provides localized debugging evidence            Evaluation Conditions. We report four evaluation conditions:
+for the RTL repair agent while keeping the generated testbench             (1) Direct generation (baseline) is a single-pass configuration in
+structure reproducible.                                                    which the Verilog is generated directly from the design specifica-
+                                                                           tion. (2) VeriRefine-Direct (ablation) runs the Refinement Module
+3.5.2 Debug. We design the Verification & Debug Module to close            once to produce an audited ASTF and the Implementation Mod-
+the loop between generated RTL and executable feedback. When               ule once to generate Verilog, without invoking the Verification &
+simulation fails, VeriRefine first determines which module should be       Debug Module’s repair loop. We detail this configuration in Sec-
+repaired. A failure may indicate the ASTF is incorrect, for example        tion 4.3. (3) VeriRefine (our full framework) extends VeriRefine-Direct
+because it omits a required signal, encodes an incorrect transition,       with the Verificaton & Debug Module. When the generated Verilog
+or assigns an incorrect width. In this case, retrying RTL generation       fails simulation, the module classifies the failure as an ASTF issue
+alone cannot fix the design, because the Verilog is generated from         or an RTL issue, and returns the failure feedback to regenerate
+a flawed representation. Alternatively, the ASTF is correct, but the       the ASTF or the RTL accordingly, for a maximum of two repair
+                                                                                       Xiangfei Kong, Tasnim Tabassum, Marwan Abdelwahab, and Hao Zheng
+
+
+                Table 4: Main results of the four evaluation conditions on RTLLM v2.0 and VerilogEval-Human v2.
+
+                                                                       Func.                      Synth.                  PPA                Token
+Benchmark              Method
+                                                                     Correct. (%)                   (%)                 Product             Cost (M)
+                       Direct generation (GPT-4-turbo)              25/50   (50.0%)           24/25 (96.0%)             4.537e-03              0.05
+                       Direct generation (Sonnet 4.6)               32/50   (64.0%)           30/32 (93.8%)             2.761e-03              0.06
+                       VeriRefine-Direct (GPT-4-turbo)              34/50   (68.0%)           33/34 (97.1%)             3.911e-03              1.32
+RTLLM v2.0
+                       VeriRefine-Direct (Sonnet 4.6)               41/50   (82.0%)           39/41 (95.1%)             4.482e-03              1.53
+                       VerilogCoder (Sonnet 4.6)                    45/50   (90.0%)           43/45 (95.6%)             5.046e-03              22.7
+                       VeriRefine (Sonnet 4.6)                      47/50   (94.0%)           45/47 (95.7%)             4.052e-03              3.00
+                       Direct generation (GPT-4-turbo)             98/156 (62.8%)             97/98 (99.0%)             2.366e-04              0.07
+                       Direct generation (Sonnet 4.6)              133/156 (85.3%)           131/133 (98.5%)            4.291e-04              0.09
+VerilogEval            VeriRefine-Direct (GPT-4-turbo)             114/156 (73.1%)           113/114 (99.1%)            2.040e-04              5.53
+Human v2               VeriRefine-Direct (Sonnet 4.6)              143/156 (91.7%)           143/143 (100%)             2.094e-04              5.91
+                       VerilogCoder (Sonnet 4.6)                   155/156 (99.4%)           153/155 (98.7%)            3.300e-04              30.5
+                       VeriRefine (Sonnet 4.6)                     153/156 (98.1%)           151/153 (98.7%)            3.321e-04              8.10
+
+
+iterations per design. The complete workflow is described in Sec-                     each design that passes synthesis, we compute a single PPA
+tion 3. (4) VerilogCoder [13] (state-of-the-art baseline) is a published              product:
+agentic framework for RTL generation. It integrates a planner built
+on a task and circuit relation graph, a coding agent, and a debug                               PPA = (𝑃int + 𝑃sw + 𝑃leak ) × 𝐴 × 𝑇cp
+agent that locates faulty signals by tracing simulation waveforms.                     where 𝑃int , 𝑃sw , and 𝑃leak are the internal, switching, and
+Its published evaluation reports 94.2% functional correctness on                       leakage power in 𝜇W reported at the typical corner, 𝐴 is
+VerilogEval-Human v2 with GPT-4-turbo. A direct comparison with                        the die area in mm2 , and 𝑇cp is the critical-path delay in ns.
+VeriRefine requires both frameworks to run on the same model. We                       A smaller product indicates a design that is simultaneously
+reproduced VerilogCoder with Claude Sonnet 4.6 with following the                      lower-power, smaller, and faster.
+released implementation. It builds on AutoGen 0.2.26 and ships no                  (4) Token cost measures the LLM usage a condition requires.
+Anthropic backend, so we implemented a native Anthropic client                         We count every input and output token consumed across
+conforming to AutoGen’s ModelClient interface. The client only                         all designs of the benchmark, passing or failing, including
+translates message formats, and all agents, prompts, and per-agent                     all retries and repair iterations, and report the total in mil-
+temperature settings remain those of the original release.                             lions. This metric shows costs and allows a fair comparison
+   Metrics. We report four metrics: functional correctness, synthe-                    between conditions on the same benchmark.
+sizability, PPA quality, and token cost. The first three form a validity
+                                                                                 Implementation. We implement our framework components
+hierarchy. A design’s synthesizability is only evidence of quality
+                                                                              in Python. Schema validation uses the jsonschema library with the
+once it passes functional simulation, and its PPA numbers are only
+                                                                              Draft 2020-12 dialect, and functional simulation uses Icarus Verilog
+evidence of quality once it synthesizes, so we evaluate each stage
+                                                                              (iverilog) v 13.0. The synthesizability check runs Yosys 0.30+48 un-
+only for designs that pass the previous one.
+                                                                              der the open-source SkyWater sky130A PDK (130 nm), and PPA
+    (1) Functional Correctness: a design is counted as functionally           evaluation runs the OpenLane v1.0.2 flow targeting sky130A with
+        correct when the generated Verilog compiles and passes the            the sky130_fd_sc_hd standard-cell library. The Verification & De-
+        benchmark testbench simulation. For each benchmark, we                bug Module is permitted a maximum of two debug iterations per
+        report the number of passing designs and its corresponding            design.
+        percentage. Designs that fail to compile, time out, or pro-
+        duce output mismatches are counted as functional failures.            4.2     Key Results and Discussion
+    (2) Synthesizability: a design is counted as synthesizable when           Table 4 reports the four evaluation conditions on both benchmarks
+        logic synthesis completes without errors and produces a               under the staged flow of Section 4.1. We read the table along the
+        gate-level netlist. We evaluate synthesizability only for func-       four metrics defined there, from functional correctness to token
+        tionally correct designs, and report the number that syn-             cost.
+        thesize and the corresponding percentage. This metric sep-               Functional correctness. Functional correctness climbs across
+        arates designs that pass simulation from those a hardware             the evaluation conditions on both benchmarks. On RTLLM v2.0,
+        implementation flow can process.                                      functional correctness climbs across the evaluation conditions for
+    (3) PPA quality measures the implementation quality of syn-               both models. Direct generation passes 25 of 50 designs (50.0%)
+        thesizable designs in terms of power, area, and timing. For           with GPT-4-turbo and 32 of 50 designs (64.0%) with Sonnet 4.6.
+A Progressive Approach to Synthesizable RTL Design Generation Using LLMs
+
+
+VeriRefine-Direct lifts the two models to 34 of 50 (68.0%) and 41 of          Token cost. Token cost matters in deployment because LLM-
+50 (82.0%), an identical gain of 18.0% that comes from the audited         based frameworks are billed per token and often run under a fixed
+ASTF alone. VeriRefine reaches 47 of 50 (94.0%) with Sonnet 4.6, and       budget. On RTLLM v2.0, direct generation with Sonnet 4.6 spends
+the further 12.0% come from the verification-guided debug loop. On         0.06M tokens, VeriRefine-Direct 1.53M, and VeriRefine 3.0M. On
+VerilogEval-Human v2, the same ladder appears from a higher base.          VerilogEval-Human v2, the three conditions spend 0.09M, 5.91M,
+Direct generation passes 98 of 156 designs (62.8%) with GPT-4-turbo        and 8.1M, and VerilogCoder spends 30.5M.
+and 133 of 156 designs (85.3%) with Sonnet 4.6. VeriRefine-Direct             VerilogCoder’s 30.5M tokens yield 155 correct designs, 197K per
+improves GPT-4-turbo by 10.3% to 73.1% and Sonnet 4.6 by 6.4%              correct design, while VeriRefine’s 8.2M yield 153, 54K per correct
+to 91.7%. VeriRefine reaches 153 of 156 (98.1%) with Sonnet 4.6,           design, a 3.7-fold difference at nearly the same functional correct-
+adding another 6.4% through the Verification & Debug Module. The           ness rate. Under a fixed token budget, this difference determines
+reproduced VerilogCoder passes 155 of 156 (99.4%), 5.2% above its          how many designs a framework can attempt at all. With a budget
+published GPT-4-turbo result.                                              equal to VeriRefine’s total spend of 8.2M tokens, VerilogCoder’s
+   Comparing the result of these benchmarks reveals a pattern. In          average per-design cost would allow it to attempt roughly 42 of
+absolute numbers, the more designs direct generation fails, the more       the 156 problems, so even if every attempted design succeeded, it
+VeriRefine improves. With Sonnet 4.6, direct generation leaves 36.0%       would pass at most 42 against VeriRefine’s 153. These results show
+of designs unsolved on RTLLM v2.0 but only 14.7% on VerilogEval-           VeriRefine to be the more token-efficient framework, trailing the
+Human v2, and VeriRefine correspondingly recovers 30.0% of the             state-of-the-art baseline by only two designs (153 against 155) at
+designs on RTLLM v2.0 against 12.8% on VerilogEval-Human v2.               roughly a quarter of its token cost.
+A closer look shows that the two improvements differ in size but
+not in rate. VeriRefine reduces the number of unsolved designs
+by 83% on RTLLM v2.0 and 87% on VerilogEval-Human v2, nearly               4.3    Ablation Study
+the same rate on both benchmarks. This shows that VeriRefine’s             We design the ablation study to separate the contribution of the
+improvement rate in functional correctness does not depend on              audited ASTF from the debug loop. The ASTF side is measured
+benchmark difficulty. At a minimum, the framework’s benefit is             by VeriRefine-Direct, the single-pass configuration defined in Sec-
+not limited to one specific benchmark.                                     tion 4.1, and it appears as debug iteration 0 in Figure 7. The debug
+   Synthesizability. Synthesizability stays within a narrow high           side is measured by the two iterations that follow, the maximum
+band across all six conditions, from 93.8% to 100% of functionally         our setting allows. In iteration 1, the Verification & Debug Module
+correct designs. We take this uniformity as practical confirmation         receives a failure log of the design that failed simulation, classifies
+of the metric hierarchy in Section 4.1. Functional correctness is          failure as an ASTF issue or an RTL issue, and regenerates the ASTF
+the binding constraint under every condition, and synthesis rarely         or the RTL with that feedback before re-simulating. Iteration 2
+rejects a design that simulation has accepted. Within the band, the        repeats the same procedure for the designs whose first fix still fails,
+ASTF-constrained conditions hold the upper positions for each              this time guided by the failure log of the repaired candidate rather
+model. VeriRefine-Direct with Sonnet 4.6 synthesizes all 143 of its        than the original one. Figure 7 reports the outcome of this process.
+correct designs on VerilogEval-Human v2, and VeriRefine passes 45          On RTLLM v2.0, iteration 1 recovers 3 designs and lifts functional
+of 47 on RTLLM v2.0 against 30 of 32 for direct generation with the        correctness from 82.0% to 88.0%, and iteration 2 recovers 3 more to
+same model. We conclude that the designs recovered by refinement           reach 94.0%. On VerilogEval-Human v2, the two iterations recover 7
+and debug are not marginal candidates that fail downstream, and            and 3 designs, lifting 91.7% to 96.2% and then 98.1%.
+the correctness gains carry through to the netlist stage.                     Through this analysis, we find that the audited ASTF is the pri-
+   PPA quality. PPA products in Table 4 are averaged over each             mary contributor to VeriRefine’s improvement. It contributes 18.0%
+condition’s synthesizable designs, so the rows describe different          of the total 30.0% on RTLLM v2.0 and 6.4% of 12.8% on VerilogEval-
+design sets and are not directly comparable. A condition that solves       Human v2, and already places iteration 0 well above the direct-
+more designs folds harder designs into its average. Direct genera-         generation baselines of 64.0% and 85.3%. The debug iterations con-
+tion with Sonnet 4.6 reports the smallest product on RTLLM v2.0            tribute the rest by converting each concrete failure into a targeted
+at 2.761e-03, yet this average covers only the 30 designs it synthe-       fix. We therefore conclude that VeriRefine’s strongest ability lies in
+sizes, the simpler portion of the benchmark. We attribute the small        the first-pass generation the audited ASTF enables, with the debug
+product to this easier design mix rather than to better hardware           loop completing the remainder.
+from direct generation, since the harder designs it fails to solve
+never enter its average. The informative comparison is therefore
+between conditions with nearly matched coverage. On RTLLM v2.0,            4.4    Failure Cases Analysis
+VeriRefine synthesizes 45 designs and VerilogCoder 43 from largely         VeriRefine has six designs unsolved across the two benchmarks,
+overlapping sets, and VeriRefine’s product of 4.052e-03 sits about         three on RTLLM v2.0 and three on VerilogEval-Human v2. We inves-
+20% below VerilogCoder’s 5.046e-03. On VerilogEval-Human v2, the           tigate each failure and group their root causes into three categories.
+two frameworks are effectively tied at 3.321e-04 and 3.300e-04. We            We attribute three of the failures, radix2_div, freq_divbyeven,
+read these results as evidence that the rule-governed generation of        and Prob099, to benchmark defects, where the specification and the
+Section 3.4 does not sacrifice implementation quality. Fixing each         benchmark testbench contradict each other, so no implementation
+signal’s hardware class before code generation leaves power, area,         faithful to the specification can pass. radix2_div fails because the
+and timing on par with the strongest agentic baseline.                     testbench requires a res_ready handshake that the specification
+                                                                                     Xiangfei Kong, Tasnim Tabassum, Marwan Abdelwahab, and Hao Zheng
+
+
+                                                                              The failure analysis also marks the boundary of VeriRefine and
+                                                                          points to our future work. A framework fully faithful to its spec-
+                                                                          ification inherits the specification’s defects, and four of the six
+                                                                          remaining failures fall exactly there, where the specification contra-
+                                                                          dicts the official testbench or leaves a behavior open to more than
+                                                                          one understanding. Our future work therefore targets specification
+                                                                          refinement. Instead of trusting the specification unconditionally, the
+                                                                          framework should question it, checking the specification’s internal
+                                                                          consistency and flagging contradictory sentences, underdetermined
+                                                                          behaviors, and forced assumptions before they propagate into the
+                                                                          ASTF. The framework would then improve not only the RTL gen-
+                                                                          eration but also the quality of the specification itself, making it a
+Figure 7: Functional correctness by repair iteration with Son-            more correct and precise description of the intended design.
+net 4.6, where iteration 0 is the single-pass generation cor-
+responding to VeriRefine-Direct and the dashed line marks                 Acknowledgment
+the direct-generation baseline.                                           This work is supported by the National Science Foundation under
+                                                                          Grant No. 2434247. Any opinions, findings, and conclusions or rec-
+                                                                          ommendations expressed in this material are those of the author(s)
+                                                                          and do not necessarily reflect the views of the funding agencies.
+never mentions. Prob099 fails because the testbench connects out-
+puts Y2 and Y4 to a reference module that does not declare them,
+                                                                          References
+so simulation stops before any behavior is tested. freq_divbyeven
+                                                                           [1] Mohammadreza Akyash, Kimia Azar, and Hadi Kamali. 2025. RTL++: Graph-
+carries the same class of specification-to-testbench mismatch.                 enhanced LLM for RTL code generation. In 2025 IEEE International Conference
+freq_divbyeven fails because the specification names the module                on LLM-Aided Design (ICLAD).
+                                                                           [2] Anonymous. 2025. ChipSeek: Optimizing Verilog generation via EDA-integrated
+freq_diveven while the testbench instantiates freq_divbyeven,                  reinforcement learning. arXiv preprint arXiv:2507.04736 (2025).
+and the testbench further assumes a division factor of six that the        [3] Anonymous. 2025. ComplexVCoder: An LLM-driven framework for systematic
+specification leaves unspecified. Our internal testbench, generated            generation of complex Verilog code. arXiv preprint arXiv:2504.20653 (2025).
+                                                                           [4] Anonymous. 2025. HDLCoRe: A training-free framework for mitigating halluci-
+from the specification alone, passes the radix2_div and Prob099                nations in LLM-generated HDL. arXiv preprint arXiv:2503.16528 (2025).
+designs that the official testbench rejects, which locates the de-         [5] Anonymous. 2025. Lorecast: Layout-aware performance and power forecasting
+fect between the specification and the testbench rather than in the            from natural language. arXiv preprint arXiv:2503.11662 (2025).
+                                                                           [6] Anonymous. 2025. VeriOpt: PPA-aware high-quality Verilog generation via
+generated RTL.                                                                 multi-role LLMs. arXiv preprint arXiv:2507.14776 (2025).
+   The serial2parallel failure stands apart as specification ambi-         [7] Anonymous. 2026. EvolVE: Evolutionary search for LLM-based Verilog genera-
+                                                                               tion and optimization. arXiv preprint arXiv:2601.18067 (2026).
+guity. Its specification allows the output valid signal to be asserted     [8] Anonymous. 2026. VeriGraphi: A multi-agent framework of hierarchical RTL
+either in the cycle of the eighth input bit or one cycle later, and the        generation for large hardware designs. arXiv preprint arXiv:2604.14550 (2026).
+testbench accepts only the later reading. Our audit checks whether         [9] Prithwish Basu Roy et al. 2025. Veritas: Deterministic Verilog code synthesis
+                                                                               from LLM-generated conjunctive normal form. arXiv preprint arXiv:2506.00005
+the ASTF is faithful to the specification, and both readings are               (2025).
+faithful, so this failure class is invisible to the audit by design.      [10] Matthew DeLorenzo, Kevin Tieu, Prithwish Jana, Piyush Jha, Dileep Kalathil,
+   The remaining two failures, Prob149 and Prob153, reflect ca-                Vijay Ganesh, and Jeyavijayan Rajendran. 2025. Abstractions-of-Thought: Inter-
+                                                                               mediate Representations for LLM Reasoning in Hardware Design. arXiv preprint
+pability limits. The two designs, a sequential control design and a            arXiv:2505.15873 (2025).
+gshare branch predictor, fail with a mismatch signature that stays        [11] Chenhui Deng, Yun-Da Tsai, Guan-Ting Liu, Zhongming Yu, and Haoxing Ren.
+                                                                               2025. ScaleRTL: Scaling LLMs with reasoning data and test-time compute for
+nearly constant across all regenerated candidates. A constant signa-           accurate RTL code generation. arXiv preprint arXiv:2506.05566 (2025).
+ture points to a stable misreading of the required logic rather than      [12] Wei Fu et al. 2026. From natural language to silicon: The representation bottle-
+random error, and more debug iterations alone would not close it.              neck in LLM hardware design. arXiv preprint arXiv:2604.17097 (2026).
+                                                                          [13] Chia-Tung Ho, Haoxing Ren, and Brucek Khailany. 2025. Verilogcoder: Au-
+                                                                               tonomous verilog coding agents with graph-based planning and abstract syntax
+                                                                               tree (ast)-based waveform tracing tool. In Proceedings of the AAAI Conference on
+5   Conclusion                                                                 Artificial Intelligence, Vol. 39. 300–307.
+We presented VeriRefine, an agentic framework that separates spec-        [14] Ruixin Hong, Hongming Zhang, Xinyu Pan, Dong Yu, and Changshui Zhang.
+                                                                               2024. Abstraction-of-Thought makes language models better reasoners. arXiv
+ification understanding from code generation through the ASTF, a               preprint arXiv:2406.12442 (2024).
+per-signal intermediate representation with verbatim provenance.          [15] Ziteng Hu, Yiwen Xia, Xiang Chen, and Liang Kuang. 2025. SecFSM: Knowledge
+A closed schema and a five-layer audit verify each ASTF before                 graph-guided Verilog code generation for secure finite state machines in SoC.
+                                                                               arXiv preprint arXiv:2508.12910 (2025).
+any Verilog exists, and a spec-only internal testbench drives the         [16] Lei Huang et al. 2026. QiMeng-CRUX: Narrowing the gap between natural
+debug loop after simulation. With Claude Sonnet 4.6, VeriRefine                language and Verilog via core refined understanding expression for circuit design.
+                                                                               arXiv preprint arXiv:2511.20099 (2026).
+reaches 94.0% functional correctness on RTLLM v2.0 and 98.1% on           [17] Zahin Ibnat, Paul E Calzada, Rasin Mohammad Ihtemam, Sujan Kumar Saha,
+VerilogEval-Human v2, within two designs of the state-of-the-art               Jingbo Zhou, Farimah Farahmandi, and Mark Tehranipoor. 2025. DeepV: A
+baseline at roughly a quarter of its token cost with synthesizability          model-agnostic retrieval-augmented framework for Verilog code generation
+                                                                               with a high-quality knowledge base. arXiv preprint arXiv:2510.05327 (2025).
+and PPA quality on par with that baseline, and the ablation shows         [18] Mingjie Liu, Nathaniel Pinckney, Brucek Khailany, and Haoxing Ren. 2023. Ver-
+the audited ASTF is the primary contributor.                                   ilogeval: Evaluating large language models for verilog code generation. In 2023
+A Progressive Approach to Synthesizable RTL Design Generation Using LLMs
+
+
+       IEEE/ACM International Conference on Computer Aided Design (ICCAD). IEEE,         [27] Ning Wang, Bingkun Yao, Jie Zhou, Yuchen Hu, Xi Wang, Nan Guan, and Zhe
+       1–8.                                                                                   Jiang. 2025. Insights from verification: Training a Verilog generation LLM with
+[19]   Mingjie Liu, Yun-Da Tsai, Wenfei Zhou, and Haoxing Ren. 2025. CraftRTL:                reinforcement learning with testbench feedback. arXiv preprint arXiv:2504.15804
+       High-quality synthetic data generation for Verilog code models with correct-           (2025).
+       by-construction non-textual representations and targeted code repair. arXiv       [28] Nan Wang, Bingkun Yao, Jie Zhou, Yuchen Hu, Xi Wang, Nan Guan, and Zhe
+       preprint arXiv:2409.12993 (2025).                                                      Jiang. 2025. VeriReason: Reinforcement learning with testbench feedback for
+[20]   Shang Liu, Wenji Fang, Yao Lu, Qijun Zhang, Hongce Zhang, and Zhiyao Xie.              reasoning-enhanced Verilog generation. arXiv preprint arXiv:2505.11849 (2025).
+       2024. Rtlcoder: Outperforming gpt-3.5 in design rtl generation with our open-     [29] Yuhao Wu et al. 2026. LLM-FSM: Scaling large language models for finite-state
+       source dataset and lightweight solution. In 2024 IEEE LLM Aided Design Workshop        reasoning in RTL code generation. arXiv preprint arXiv:2602.07032 (2026).
+       (LAD). IEEE, 1–5.                                                                 [30] Zhongkai Yu, Mingjie Liu, Max Zimmer, Yi-Chun Lin, Yang Liu, and Haoxing
+[21]   Qing Luo et al. 2025. AutoFSM: A multi-agent framework for FSM code genera-            Ren. 2025. Spec2RTL-Agent: Automated hardware code generation from complex
+       tion with intermediate representation and SystemC-based testing. arXiv preprint        specifications using LLM agent systems. In 2025 IEEE International Conference
+       arXiv:2512.11398 (2025).                                                               on LLM-Aided Design (ICLAD).
+[22]   Haoyuan Ping et al. 2025. VERIMOA: A mixture-of-agents framework for spec-        [31] Patrick Yubeaton, Andre Nakkab, Wenjie Xiao, Luca Collini, Ramesh Karri, Chin-
+       to-HDL generation. arXiv preprint arXiv:2510.27617 (2025).                             may Hegde, and Siddharth Garg. 2025. VeriThoughts: Enabling automated
+[23]   Siyu Qiu, Muzhi Wang, Raheel Afsharmazayejani, Mohammad Moradi Shahmiri,               Verilog code generation using reasoning and formal verification. arXiv preprint
+       Benjamin Tan, and Hammond Pearce. 2025. Towards LLM-based Root Cause                   arXiv:2505.20302 (2025).
+       Analysis of Hardware Design Failures. In 2025 IEEE International Conference on    [32] Jiazheng Zhang, Cheng Liu, Long Cheng, Xiaowei Li, and Huawei Li. 2026.
+       Omni-layer Intelligent Systems (COINS). IEEE, 1–6.                                     Understanding and mitigating errors of llm-generated rtl code. IEEE Transactions
+[24]   Wenhao Sun, Bohan Li, Grace Li Zhang, Xunzhao Yin, Cheng Zhuo, and Ulf                 on Computer-Aided Design of Integrated Circuits and Systems (2026).
+       Schlichtmann. 2025. Paradigm-based automatic HDL code generation using            [33] Yang Zhao, Di Huang, Chongxiao Li, Pengwei Jin, Ziyuan Nan, Tianyun Ma,
+       large language models. arXiv preprint arXiv:2501.12702 (2025).                         Lei Qi, Yansong Pan, Zhenxing Zhang, Rui Zhang, et al. 2025. CodeV: Empow-
+[25]   Fu Teng et al. 2025. VeriRL: Boosting LLM-based Verilog code generation via            ering LLMs for Verilog generation through multi-level summarization. IEEE
+       reinforcement learning. arXiv preprint arXiv:2508.18462 (2025).                        Transactions on Computer-Aided Design of Integrated Circuits and Systems (2025).
+[26]   Shailja Thakur, Baleegh Ahmad, Hammond Pearce, Benjamin Tan, Brendan              [34] Yujie Zhao, Hejia Zhang, Hanxian Huang, Zhongming Yu, and Jishen Zhao. 2025.
+       Dolan-Gavitt, Ramesh Karri, and Siddharth Garg. 2024. Verigen: A large language        Mage: A multi-agent engine for automated rtl code generation. In 2025 62nd
+       model for verilog code generation. ACM Transactions on Design Automation of            ACM/IEEE Design Automation Conference (DAC). IEEE, 1–7.
+       Electronic Systems 29, 3 (2024), 1–31.
+

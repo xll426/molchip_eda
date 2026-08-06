@@ -1,0 +1,2956 @@
+                                          HierSVA: A Data Synthesis Pipeline, Dataset, and
+                                         Benchmark for LLM-Driven Hierarchical Hardware
+                                                       Formal Verification
+
+
+                                                             Maohua Nie1∗ Jiang Zhu2∗ Jingqun Zhang1 Zhichen Zeng1
+                                                             Jiayi Wang1 Sibo Zhang1 Jialin Wang1 C.-J. Richard Shi1
+arXiv:2606.13706v1 [cs.AR] 9 Jun 2026
+
+
+
+
+                                                                      1                              2
+                                                                          University of Washington       Independent Researcher
+
+
+
+                                                                                             Abstract
+                                                      We present HierSVA, an integrated suite that combines a pipeline, dataset, and
+                                                      benchmark for LLM-driven hierarchical hardware formal verification. HierSVA-SP
+                                                      pairs an RTL preprocessing toolchain with an LLM-in-the-loop formal verification
+                                                      flow to produce reference SystemVerilog Assertions (SVA) on hierarchical RTL.
+                                                      Applying it to BaseJump STL yields HierSVA-DS, a dataset of 342 modules, with
+                                                      hierarchy metadata and depths 0–9, accompanied by a deep subset of 28 module-
+                                                      bug pairs with natural-language specifications and bug variants. HierSVA-B de-
+                                                      composes assertion quality into six metric axes: syntax correctness, assertion proof
+                                                      success rate, vacuity, specification faithfulness, mutation coverage, and formal core
+                                                      coverage. Applying HierSVA-B to twelve recent LLMs reveals three findings. First,
+                                                      the module-level compile rate is 67.1%; among generated assertions in evaluable
+                                                      runs, 82.1% prove non-vacuously, but the corresponding assertion sets detect only
+                                                      70.2% of eligible injected faults and cover 36.2% of the formal core. Second, on 211
+                                                      evaluable model–module entries in the deep subset, assertion sets flag buggy RTL
+                                                      with 0.87 recall, but 40% of predicted-buggy outcomes are false positives on correct
+                                                      RTL, limiting precision to 0.60. Third, agentic mode improves S1-style provability
+                                                      and strength metrics, but gains plateau and oscillate. Codes and artifacts are avail-
+                                                      able at https://github.com/HierSVAAnon/HierSVACodeAndArtifacts. Dataset is
+                                                      available at https://huggingface.co/datasets/AnonymousHierSVA/HierSVA.
+
+
+                                        1     Introduction
+                                        Functional verification, also known as design verification (DV), is one of the most critical phases of
+                                        integrated circuit design, directly determining whether a silicon tapeout will succeed [38]. Formal
+                                        verification has become an established part of modern DV flows, supplementing simulation-based
+                                        verification through the use of SystemVerilog Assertions and formal verification tools to prove design
+                                        correctness [39]. As LLM capabilities advance, recent studies have explored their use in hardware
+                                        design and verification, including hardware formal verification [24, 36, 7, 14, 34, 26, 22, 15, 19, 44].
+                                        The first wave of LLM-for-SVA work has demonstrated that current models can produce assertions
+                                        that compile and pass formal checks on small designs, with checker-guided iterative refinement further
+                                        improving results. However, the infrastructure supporting this line of work remains incomplete in
+                                        three places. First, existing benchmarks rely on limited sources of reference assertions: automated
+                                        mining tools with known scaling limitations [36], hand-authored assertions for synthetic or templated
+                                        RTL [22], or small spec-bounded design sets [24, 14]. These limitations reflect the absence of a
+                                        reusable pipeline for synthesizing reference assertions directly from RTL. Second, existing reference
+                                            ∗ Equal   Contribution.
+
+
+                                        Preprint.
+datasets are correspondingly small, flat, or templated, with cross-module dependencies excluded by
+construction [22]. Third, existing evaluations focus on syntax correctness and pass-or-fail metrics,
+leaving out vacuity, mutation coverage, and specification faithfulness [36, 24, 14]. These three gaps
+form a dependency chain. Producing reference assertions by hand at scale is labor-prohibitive, so
+constructing such a dataset requires an automated synthesis pipeline. Such a dataset, together with
+independent specifications for a deep subset, enables a benchmark that evaluates LLM-generated
+assertions against formal-evidence criteria rather than only aggregate pass/fail outcomes.
+We address these gaps with an integrated suite built around industry practice. It uses standard
+SystemVerilog grammar, industrial formal verification tools, tapeout-validated RTL, industrial verifi-
+cation methodology, including assume-guarantee composition, fault injection, vacuity checking, and
+coverage analysis. The deep-subset artifacts are reviewed by industrial DV engineers.
+
+Contributions.          We present HierSVA as three independently reusable components:
+
+       1. HierSVA-SP, a Synthesis Pipeline pairing an open-source RTL preprocessing toolchain
+          with an iterative loop combining an LLM with formal verification, instantiating the generate-
+          and-check paradigm with three hardware-specific extensions, namely hierarchical assume-
+          guarantee composition, parameter cross-product expansion, and integration with industrial
+          mutation and coverage analyses.
+       2. HierSVA-DS, a hierarchical SVA DataSet of 342 modules built on tapeout-validated Base-
+          Jump STL [43] and retained through a formal-evidence filter, accompanied by a deep subset
+          of 28 module-bug pairs with expert-authored natural-language specifications, bug variants
+          from two sources, and senior industrial DV engineer review for spec-versus-RTL faithfulness
+          evaluation.
+       3. HierSVA-B, a Benchmark framework that decomposes assertion quality into six metric axes
+          (syntax correctness, assertion proof success rate, vacuity, specification faithfulness, mutation
+          coverage, and formal core coverage) under a static-versus-agentic mode axis, together with
+          an artifact-reproducible evaluation harness given access to VC Formal, model outputs, and
+          parsed verdicts.2 This decomposition enables the three findings below to surface, none of
+          which is visible under aggregate pass-rate evaluation.
+
+Findings preview. Evaluating twelve recent LLMs reveals three findings. First, the module-level
+compile rate is 67.1%; among generated assertions in evaluable runs, 82.1% prove non-vacuously.
+However, the corresponding assertion sets detect only 70.2% of eligible injected faults and cover only
+36.2% of the formal core. This coverage gap becomes more pronounced with deeper hierarchy, as
+formal-core coverage drops from 75.5% at the bottom-most level to 5.9% at the second-to-top-most
+level. Second, on 211 evaluable model–module entries in the deep subset, LLM-generated assertion
+sets flag the buggy RTL with aggregate recall 0.87. However, 40% of predicted-buggy outcomes are
+false positives on the correct RTL, limiting aggregate precision to 0.60. Third, agentic mode partially
+improves the provability-versus-strength gap on S1-style metrics, but its gains plateau and fluctuate
+across iterations.
+
+2    Related Work
+Benchmarks for LLM-generated assertions. A small number of benchmarks evaluate LLMs
+on SVA generation, and Table 1 positions them against HierSVA along the dimensions relevant to
+industrial deployment. AssertionBench [36] pairs OpenCores [33] designs with assertions mined
+using GoldMine [40] and HARM [17], and reports a pass/CEX/error trichotomy under JasperGold.
+FVEval [22] introduces three sub-benchmarks built from expert-written, synthetically generated, and
+template-generated test cases. Its Design2SVA subset uses parameterized pipeline templates and FSM
+templates rather than industrial multi-module codebases such as OpenTitan [25], thereby sidestepping
+the cross-module dependency context that HierSVA-B targets. AssertEval [24], AssertLLM [14],
+VERT [28], and CVDP [35] similarly focus on small open-source or synthetic designs, with evaluation
+protocols that either skip formal evaluation or fold quality into a single pass/fail number. More details
+and comparisons with this work are given in Appendix G.
+    2 Raw   EDA tool logs cannot be released due to NDA restrictions.
+
+
+                                                              2
+Automated and LLM-driven SVA generation methods. Prior to the recent wave of LLM-
+based work, AutoSVA [34] generated formal testbenches and properties from RTL interface an-
+notations. Recent LLM-based methods automate SVA generation through prompt engineering, RAG,
+and iterative refinement. For example, ChIRAAG [26] uses simulation feedback for refinement,
+while AssertLLM [14] pipelines multiple LLMs for spec-to-SVA generation. AssertionForge [7],
+Spec2Assertion [44], Sangam [19], and LASA [2] pursue related directions: knowledge-graph con-
+text, pre-RTL spec-to-assertion generation, MCTS refinement, and security-property generation,
+respectively. NSPG [27] and LLM4DV [47] target adjacent settings and are not directly compa-
+rable. LASSO [3] integrates vacuity checking as a method-internal filter, building on standard
+vacuity-detection theorems [8, 23]. HierSVA-B is orthogonal to these generation methods.
+
+Table 1: HierSVA-DS and HierSVA-B versus prior LLM-for-SVA benchmarks, compact view.
+“Hier.” = cross-module hierarchy; “Eval” = evaluation methodology; “Cov.” = coverage reporting
+(FC = formal core); “Vac.” = reports vacuity; “Mut.” = reports mutation coverage. Full feature
+comparison and discussion of each entry are in Appendix G.
+
+    Benchmark                    #Items    RTL source           Hier.      Eval        Cov.   Vac.    Mut.
+    AssertionBench                100      OpenCores             ✗        Formal         ✗      ✗       ✗
+    FVEval                79+300+192       Expert+synthetic      ✗        Formal         ✗      ✗       ✗
+    AssertEval                     18      Open-source           ✗        Formal        FC      ✗       ✗
+    AssertLLM                      20      Open-source           ✗        Formal         ✗      ✗       ✗
+    VERT                     fragments     Synthetic             ✗        Dataset        ✗      ✗       ✗
+    CVDP cid14                     98      Human-authored        ✗      Sim/harness      ✗      ✗       ✗
+    HierSVA (ours)   342 main + 28 deep    BaseJump STL          ✓        Formal       FC       ✓      ✓
+
+
+
+
+3     HierSVA-SP: Dataset Synthesis Pipeline
+
+3.1     Design Principles: Following Industry Practice
+
+Industry verification practice translates into three pipeline-level principles. First, with respect to gram-
+mar, the pipeline emits and validates IEEE-1800-compliant SVA accepted by VC Formal [21], not
+only shallow templated assertion patterns. Although open-source FV tools such as SymbiYosys [45]
+broaden adoption, they support only a subset of the SVA standard and introduce non-standard exten-
+sions, whereas we target the syntax and semantics accepted by industrial formal verification tools.
+Second, with respect to tooling, validation runs on Synopsys VC Formal [42], exercising its Formal
+Property Verification (FPV) and Formal Testbench Analyzer (FTA) app modes, with Formal Core
+(FC) analysis invoked inside FPV. Third, on methodology, the pipeline integrates assume-guarantee
+composition (Section 3.3), mutation analysis through FTA, and formal core coverage analysis through
+FC, mirroring the assertion quality criteria used in industrial signoff flows. The choice of RTL corpus
+and the use of expert review are properties of the dataset used to instantiate the pipeline rather than of
+the pipeline itself, and are discussed in Section 4.4.
+
+3.2     RTL Preprocessing
+
+A handful of scripts prepare raw RTL for downstream synthesis. The macro expander resolves
+SystemVerilog compiler directives such as ‘define and ‘include; without it, header files would
+have to be passed alongside the module, and we believe the resulting prompt would carry unrelated
+macros and complex header structure that distract LLMs from response generation. The module
+dependency graph builder emits a directed instantiation graph used to determine processing order
+and identify leaf modules. The comment filter is an optional pass that strips RTL code comments,
+reducing prompt noise. The syntax normalizer canonicalizes whitespace, port-declaration style,
+and parameter-declaration style. The design information extractor script extracts each module’s
+clock and reset signals, reset polarity, latch presence, and whether they are pure-combinational.
+The latter two properties propagate upward over the dependency graph. A parent module inherits
+the latch-containing label from any instantiated child whose dependency cone contains a latch; the
+non-combinational label propagates upward under the same rule.
+
+
+                                                     3
+      Deterministic non-LLM                Done                   Abort                                                  Exit
+                                                                                                                           Y
+                                             N                        Y
+                                                       ④
+                            ①                      Y                         N              ⑤       All stages   N     Plateau or
+        RTL           RTL
+                                       converge?       FPV      FPV fatal?          FC & FTA                         Iter >= MAX?
+                  preprocessor                                                                      success?
+
+                                                                                                          Y                  N
+                                       ②                                              ③         convergence check    Debug Prompt
+              Initial Prompt Builder                         LLM response handler
+                                                                                                  Prompt Builder ⑥      Builder ⑦
+
+      LLM                                                    assertions.v        Param classification
+                                                                                   and combinations
+
+                                                                          LLM API
+
+
+
+Figure 1: Synthesis loop control flow. Boxes on the top are deterministic non-LLM code; boxes on
+the bottom are LLM-controlled. The LLM is an actor inside the loop, not its controller. The two
+LLM-controlled artifacts at each iteration are assertions.v and parameter classification
+and combinations.
+
+3.3   Hierarchical Composition with Submodule Contracts
+
+Assume-guarantee reasoning. Assume-guarantee reasoning is a classical formal verification
+pattern [10]. A module is verified against its environment under assumptions on its inputs and
+produces guarantees about its outputs. When the module is instantiated as a submodule, its guarantees
+become assumptions that the parent verification can rely on rather than properties the parent must
+re-prove. The pair (assumption set, guarantee set) is the module’s contract.
+
+Contracts in HierSVA-SP. The pipeline verifies modules bottom-up along the RTL module de-
+pendency graph. Modules with no submodules are verified first by the iterative loop (Section 3.4);
+their assumptions and proven assertions are saved into an SVA file. When verifying a parent module,
+this SVA file is loaded into the FPV environment: each child’s proven assertion becomes an assume,
+and each child’s assumption becomes an assert that the parent must prove. Submodules below the
+direct children are blackboxed so that each parent only reasons about its own RTL plus one level of
+child contracts.
+
+Why hierarchical contracts are necessary. Hierarchical proof through assume-guarantee contracts
+is the standard DV practice for verifying designs of nontrivial depth. A flattened formulation is
+feasible, in which FPV reasons about the parent and all descendants jointly, but verification cost rises
+sharply with module-structure complexity and quickly becomes intractable at deeper hierarchy levels.
+
+3.4   Iterative Synthesis with Formal Feedback
+
+For each module, the pipeline runs an iterative loop as shown in Figure 1. In each iteration, an LLM
+generates the SVA file, the EDA flow validates it, and the control logic decides whether to terminate,
+abort, or feed the results back to the LLM for revision. The LLM is the actor inside the loop, not its
+controller.
+At each iteration t, the LLM generates a JSON object containing the only two artifacts it is
+permitted to modify: the assertion file (assertions.v) and a set of parameter configurations
+(param_combinations). To construct these configurations, the LLM first classifies each parameter
+as data sizing (Type-1), behavioral (Type-2), or synthesis-hint (Type-N ). Type-2 parameters are
+those that affect the behavior of the module. It then builds the param_combinations primarily
+by exhaustively combining the values of Type-2 parameters. The EDA tool independently verifies
+each instantiated configuration, and the LLM uses the resulting formal feedback to refine both its
+classification and the combinations in the next iteration.
+The rest of the framework relies on deterministic, non-LLM code. In iteration t, the pipeline executes
+FPV, followed by the FTA and FC analyses. A static rule-based parser processes the tool logs into
+structured per-stage statuses and per-property verdicts, ensuring the LLM never receives raw logs. To
+formulate the feedback prompt for iteration t + 1, static templates extract information exclusively
+from unsuccessful stages and append this to the message history. The loop terminates under one of
+three conditions: (1) convergence, where the three tool-based criteria in Section 4.4 are satisfied and a
+separate LLM-judge confirms intent capture; (2) reaching MAX_ITERATIONS; or (3) a plateau where
+the same single stage blocks convergence for three consecutive iterations.
+
+
+                                                                          4
+4     HierSVA-DS: The Dataset
+4.1    Source: BaseJump STL
+
+HierSVA-DS is built on BaseJump STL [43], an open-source SystemVerilog standard library covering
+memory primitives, dataflow building blocks, network-on-chip components, and communication
+links. BaseJump STL has been deployed across multiple research and production tapeouts, therefore,
+its modules reflect the actual design choices in real silicon, including clock-domain handling, param-
+eterization, and module-level reuse patterns. We considered authoring custom RTL to better control
+bug rates, but selected BaseJump STL because custom RTL would lose the production quality that
+motivates the benchmark, and tapeout-validated RTL already carries a sufficiently low bug rate for
+our purposes.
+
+4.2    Hierarchical Structure
+
+In HierSVA-DS, each module entry records its top-level RTL files, its submodule RTL files, and
+its directly and indirectly instantiated submodules. Each module has its own reference SVA file
+containing its assertions and assumptions. When verifying a parent module, the child’s SVA file
+is loaded as a contract, so verification effort at one level is carried upward rather than redone
+(Section 3.3). Table 2 summarizes HierSVA-DS. The main set contains 342 modules organized into
+the BaseJump STL category structure, with hierarchy depth ranging from 0 (no submodules) to 9.
+
+      Table 2: HierSVA-DS at a glance. Categories follow the BaseJump STL directory structure.
+
+                Property                                                             Value
+                Main-set modules                                                       342
+                Deep-subset bug pairs                     28 pairs over 27 unique modules
+                Categories (BaseJump STL)    bsg_async, bsg_cache, bsg_dataflow, bsg_link,
+                                                    bsg_mem, bsg_misc, bsg_noc, bsg_tag
+                Hierarchy depth (min, max)                                           (0, 9)
+                Modules per depth                     L0:150, L1:61, L2:27, L3:36, L4:25,
+                                                           L5:10, L6:20, L7:10, L8:2, L9:1
+
+
+4.3    Deep Evaluation Subset
+
+A deep evaluation subset of 28 module-bug pairs supports the spec-versus-RTL faithfulness axis of
+HierSVA-B. This subset is an auxiliary evaluation layer rather than 28 additional main-set modules;
+it covers 27 unique modules because bsg_idiv_iterative appears in both bug sources. Bug
+variants were either recovered from upstream fix commits (7 real-bug pairs) or generated by a held-
+out LLM (21 synthetic-bug pairs). Senior industrial DV engineers reviewed every entry for bug
+well-formedness, patch isolation and effectiveness, and specification faithfulness. Each entry ships
+with the correct RTL, the buggy RTL, and a natural-language specification of the correct module
+behavior written or reviewed so that it does not reveal the bug.
+The bug taxonomy currently spans five patterns (Appendix E.2): P1 protocol semantic violations,
+P2 unreachable or mistakenly reachable FSM states, P3 atomicity breakdowns across multi-step
+transactions, P4 corner-case mishandling near design boundaries, and P5 quantitative parameter
+errors that surface only at specific Type 2 settings.
+
+4.4    Dataset Quality Assurance
+
+HierSVA-DS is the result of running HierSVA-SP with a mixture of LLMs, including GPT-5.3
+Codex [31], Claude Opus 4.6 [5] and DeepSeek V3.2 [11], on the pre-processed BaseJump STL
+modules, followed by two filters that determine which pipeline outputs become reference assertions
+in the released dataset. For the main set, outputs are retained only if they pass the formal evidence
+filter. For the deep subset, pairs are additionally retained only if they pass expert review.
+
+Formal evidence filter. We apply this rigorous filter to all 342 modules in HierSVA-DS. For a
+module to be retained, its reference assertion set must satisfy all convergence criteria of the synthesis
+
+
+                                                   5
+loop (Section 3.4) across every parameter combination. Specifically: (1) FPV must prove every
+assertion without counterexamples; (2) FC analysis must confirm that no design statements lie outside
+the formal core; and (3) FTA must achieve a 100% fault-detection rate over the eligible fault set.
+To ensure rigorous evaluation, faults that are not meaningfully detectable by SVA are excluded.
+Each module includes a limit.json file documenting these manually audited exclusions and their
+rationale. During evaluation, HierSVA-B applies this exact exclusion list when computing the LLM’s
+FTA (Section 5.2), ensuring that the reference and LLM-generated assertion sets are measured against
+an identical denominator.
+
+Expert review filter. This filter applies to the deep evaluation subset of 28 module-bug pairs
+(Section 4.3). Each reference assertion in the deep subset is reviewed by senior industrial DV
+engineers. This filter is not applied to the full dataset because production-grade review of 342
+hierarchical modules would exceed the labor budget of this work; the formal evidence filter therefore
+serves as the universal baseline.
+
+5     HierSVA-B: Benchmark Framework
+5.1   Task Formulation
+
+In HierSVA-B, the LLM receives the target module’s RTL together with the design information
+extracted by HierSVA-SP. Sub-module contracts are loaded into the FPV environment exactly as in
+HierSVA-SP (Section 3.3). The LLM returns a complete assertion file. We then run VC Formal on
+the LLM’s assertion file for all parameter combinations defined in the reference datasets, and each
+metric defined below is computed from the per-property verdicts. We evaluate LLMs in two modes.
+In Static mode, the LLM produces a complete assertion file in one response. In Agentic mode, the
+LLM iterates in response to VC Formal feedback as in HierSVA-SP’s synthesis loop.
+
+5.2   Metrics
+
+Syntax Correctness: C1. C1 is a module-level binary indicator that records whether the LLM’s
+output compiles and can be parsed by VC Formal without fatal errors. It captures whether the
+generated assertion file is syntactically well-formed against the IEEE 1800 SVA grammar.
+
+Assertion Proof Success Rate: C2-P. C2-P is the assertion-level rate of properties that VC Formal
+Proves under FPV without vacuity (proven non-vacuously). Together, C1 and C2-P are the metrics
+that most prior LLM-for-SVA benchmarks stop at.
+
+Vacuity: C2-V. C2-V is the assertion-level rate of properties that VC Formal proves only Vacuously
+(the antecedent of an implication property is unsatisfiable on every reachable trace). Given BaseJump
+STL’s tapeout-validation and low bug rate, the differentiating signal among LLMs on this dataset is
+whether their proven properties carry verification meaning, not merely whether their properties prove.
+C2-V is reported as a first-class diagnostic rather than folded into C2-P.
+
+Faithfulness: C3. C3 is evaluated on the deep subset (Section 4.3) at the module level. The
+LLM is prompted with the buggy RTL variant and the natural-language specification, with explicit
+instructions to follow the specification rather than mirror the RTL. Every assertion the LLM emits
+for an evaluable model–module entry is then run through FPV against both the correct RTL and the
+buggy RTL. Non-evaluable entries, where the assertion set does not compile or cannot be run on
+both variants, are excluded from the confusion matrix and reported separately. Let b = 1 denote
+that at least one generated assertion is falsified on the buggy RTL, and let c = 1 denote that at least
+one generated assertion is falsified on the correct RTL. The buggy RTL run is the positive example
+and the correct RTL run is the negative example: b = 1 contributes a TP, b = 0 contributes an
+FN, c = 1 contributes an FP, and c = 0 contributes a TN. These variant-level counts are used to
+compute precision, recall, F1, and accuracy in Table 5. For qualitative interpretation, we additionally
+group the paired outcomes (b, c) into the module-level classes shown in Table 3. Spec-Aligned
+means the assertion set catches the bug while remaining valid on the correct RTL. Mirror-RTL
+means the assertion set accepts both the correct and buggy RTL, suggesting that it has mirrored the
+implementation rather than the specification. Broken means the assertion set fires on the correct RTL
+
+
+                                                  6
+and is therefore not a deployable specification check, regardless of whether it also fires on the buggy
+RTL.
+Table 3: C3 paired-outcome classification for a model–module entry. Parenthesized terms indicate
+the corresponding variant-level confusion-matrix contributions used in Table 5.
+
+                                       Buggy RTL: some assertion falsi-   Buggy RTL: no assertion falsified
+                                       fied (b = 1)                       (b = 0)
+    Correct RTL: no assertion falsi-   Spec-Aligned (TP+TN)               Mirror-RTL / accepts both
+    fied (c = 0)                                                          (FN+TN)
+    Correct RTL: some assertion        Broken: over-strong (TP+FP)        Broken: spurious and missing
+    falsified (c = 1)                                                     (FN+FP)
+
+
+Mutation Coverage: C4. C4 evaluates the practical bug-catching ability of the LLM-generated
+assertions by reusing results from the FTA. Specifically, the FTA tool injects faults (i.e., small
+perturbations) into the RTL code and checks whether the LLM’s assertions successfully detect them.
+The C4 score, or mutation coverage, is the percentage of these injected faults that trigger an assertion
+failure. To ensure a fair comparison between the LLM and the reference baseline, we exclude
+faults that are not meaningfully detectable by SVA, as documented in the per-module limit.json
+(Section 4.4). While C3 evaluates spec-versus-RTL faithfulness on independently specified bug
+variants, C4 measures the fault-detection strength of the generated assertion set under small RTL
+perturbations. The injected fault categories are detailed in Appendix F.
+
+Formal Core Coverage: C5. C5 reports formal core coverage from VC Formal’s FC feature. FC
+is defined as a subset of the cone-of-influence (COI) used to verify a given assertion. If there are
+multiple assertions, then FC is the union of the formal cores for each assertion. We report union
+formal core coverage as the C5 metric.
+
+6      Evaluation and Results Analysis
+6.1     Experimental Setup
+
+Models. We evaluate twelve recent LLMs: Claude Opus 4.7 [6], DeepSeek V4 Pro [13], Gem-
+ini 3.1 Pro [18], GLM 5.1 [46], GPT-5.5 [32], Kimi K2.6 [30], MiniMax M2.7 [29], Qwen 3.6 Max
+[37], Claude Haiku 4.5 [4], DeepSeek V4 Flash [12], GPT-5-mini [41], and Qwen 3.6 Plus [1]. All
+twelve are queried through a unified OpenRouter gateway with the same prompts and parameters
+(reasoning enabled, strict JSON-schema output, temperature = 0).
+
+Evaluation settings. Three settings are reported. S1 runs all twelve models on the full HierSVA-DS
+in static mode and produces the primary metrics for C1, C2-P, C2-V, C4, and C5. S2 runs the same
+twelve models on the deep subset (Section 4.3) in static mode with each LLM prompted to follow the
+correct specification rather than mirror the buggy RTL, producing C3. S3 runs five selected models
+on a fixed 40-module subset of HierSVA-DS in agentic mode, with up to 7 iterations of VC Formal
+feedback per module; the matching S1 numbers on the same 40 modules are reported alongside for
+paired comparison. S3 reports C1, C2, C4, and C5 only, not C3 faithfulness.
+
+Prompts. The system prompt instructs the LLM to act as a formal verification engineer and specifies
+coding standards for SVA syntax, naming, parameterization, and bind commands (full template in
+B). To simplify the VC Formal tool flow, the prompt tells the model not to assert or cover input-only
+behavior, while allowing assumptions on input protocols when needed to model the environment.
+It also tells the model not to verify reset behavior, while allowing reset guards such as disable
+iff. The same prompt is used across all twelve models with no per-model tuning to ensure a fair
+comparison.
+
+6.2     Static Experiment Results (S1)
+
+Current LLMs often produce syntactically valid SVA assertions (Table 4): eleven of the twelve
+evaluated models exceed 50% C1, the per-module rate at which the LLM’s output compiles and is
+
+
+                                                       7
+parsed by VC Formal. Across the twelve models, the module-level compile rate is 67.1%. Among
+generated assertions in evaluable runs, the non-vacuous proof rate (C2-P) averages 82.1%. Beyond
+provability, however, the corresponding assertion sets lose much of their verification value: only
+70.2% of eligible injected faults are detected (C4), and only 36.2% of the design’s formal core is
+covered (C5), with C5 the lowest of the three substantive metrics for every model individually. The
+46-point gap from C2-P to C5 is the primary diagnostic, since assertion sets that prove robustly under
+FPV cover only a fraction of the design’s formal core, and pass-rate evaluation therefore overstates
+verification strength.
+
+Table 4: Per-model overall S1 metrics. C1 is the per-module compile rate over all 342 main-set
+modules; C2-P and C2-V are property-level micro-averages over generated assertions in evaluable
+runs. C4 is computed over eligible injected faults, and C5 reports union formal-core coverage over
+the covered design statements/signals. Per-depth and per-category breakdowns are in Appendix D.
+
+                  Model                 C1%      C2-P%     C2-V% (↓)       C4%         C5%
+                  Claude Opus 4.7       89.2      87.5             1.8      70.5       34.7
+                  DeepSeek V4 Pro       68.4      86.3             0.3      84.4       37.4
+                  Gemini 3.1 Pro        82.1      90.3             1.5      74.7       33.8
+                  GLM 5.1               76.9      91.0             1.3      78.1       43.3
+                  GPT-5.5               85.9      76.8             0.5      84.5       51.4
+                  Kimi K2.6             64.4      86.2             0.2      89.0       53.3
+                  MiniMax M2.7          18.8      58.2            15.4      37.8       26.5
+                  Qwen 3.6 Max          73.4      95.2             0.1      70.4       37.7
+                  Claude Haiku 4.5      58.1      74.0             6.5      58.4       33.1
+                  DeepSeek V4 Flash     59.6      84.9             1.2      73.2       39.6
+                  GPT-5-mini            55.0      77.9             2.1      56.7       14.5
+                  Qwen 3.6 Plus         73.4      76.9             1.4      64.9       29.4
+                  Cross-model mean      67.1      82.1             2.7      70.2       36.2
+
+
+
+6.3   Buggy RTL Experiment Results (S2)
+
+C3 evaluates assertion sets by testing them on two RTL variants of each module: a buggy version
+(positive example) and a correct version (negative example). An assertion set predicts a “bug” if any
+of its assertions fail. Out of the 336 possible model–module entries (12 models × 28 pairs), 211 are
+evaluable on both variants and contribute to Table 5. Conditional on those 211 entries, the models
+achieve aggregate recall 0.87, but they frequently trigger false alarms on correct code. Aggregate
+precision is only 0.60, meaning that 40% of predicted-buggy outcomes are false positives.
+
+Table 5: Per-model variant-level C3 confusion matrix and metrics on the deep subset. “Eval” is
+the number of evaluable model–module entries out of 28. Each evaluable entry contributes two
+predictions: one on the buggy RTL, treated as the positive example, and one on the correct RTL,
+treated as the negative example. The aggregate row pools the variant-level counts across models.
+
+                  Model               Eval TP FN      FP TN        P       R     F1 Acc
+                  Claude Opus 4.7      25   21    4   10 15 0.68 0.84 0.75 0.72
+                  DeepSeek V4 Pro      20   18    2   16 4 0.53 0.90 0.67 0.55
+                  Gemini 3.1 Pro       24   20    4   11 13 0.65 0.83 0.73 0.69
+                  GLM 5.1              25   20    5   17 8 0.54 0.80 0.65 0.56
+                  GPT-5.5              20   18    2    7 13 0.72 0.90 0.80 0.78
+                  Kimi K2.6            17   15    2   10 7 0.60 0.88 0.71 0.65
+                  MiniMax M2.7          1    1    0    1 0 0.50 1.00 0.67 0.50
+                  Qwen 3.6 Max         17   15    2   11 6 0.58 0.88 0.70 0.62
+                  Claude Haiku 4.5     15   12    3    7     8   0.63    0.80   0.71   0.67
+                  DeepSeek V4 Flash    16   15    1   13     3   0.54    0.94   0.68   0.56
+                  GPT-5-mini           13   13    0   10     3   0.57    1.00   0.72   0.62
+                  Qwen 3.6 Plus        18   16    2    9     9   0.64    0.89   0.74   0.69
+                  Aggregate           211 184 27 122 89 0.60 0.87 0.71 0.65
+
+
+                                                  8
+6.4          Model Behavior Patterns (S1-versus-S2)
+
+As an exploratory diagnostic, we compare macro- and micro-averaged C2-P through a dilution gap,
+defined as C2-P macro minus C2-P micro. A positive gap means that the typical module has a
+higher non-vacuous proof rate than the assertion pool as a whole, so lower-performing modules or
+larger assertion sets dilute the micro-average. A negative gap means that the assertion-weighted
+micro-average is higher than the typical module, often because a model emits many successful
+assertions on some modules while leaving weaker modules underrepresented. This scalar describes
+generation distribution only; we do not interpret it as a precision–recall trade-off for C3.
+
+Table 6: Exploratory grouping by dilution gap (C2-P macro − C2-P micro). Models within a group
+are ordered by gap magnitude.
+
+             Group             Models                                                                             Gap range
+             Positive gap      GPT-5.5 (+14.0)                                                                         > +5
+             Near zero         Gemini 3.1 Pro (−0.0), Kimi K2.6 (−2.3)                                            [−5, +5]
+             Negative gap      Qwen 3.6 Max (−15.7), GLM 5.1 (−14.0), GPT-5-mini (−13.9),                              < −5
+                               Claude Haiku 4.5 (−11.9), DeepSeek V4 Flash (−11.0),
+                               DeepSeek V4 Pro (−7.8), Qwen 3.6 Plus (−6.2),
+                               MiniMax M2.7 (−6.1), Claude Opus 4.7 (−5.6)
+
+
+6.5          Agentic Experiment Results (S3)
+
+S3 evaluates five selected models within the iterative loop (Section 3.4) on a 40-module subset for up
+to 7 iterations. Overall, the iterative process yields cross-model gains on average: +21.1 pp in C2-P,
++10.6 pp in C4, and +13.2 pp in C5.
+These metrics follow different evolutionary paths. C2-P typically improves within the first two
+iterations as formal feedback guides the LLM to fix syntax errors and straightforward falsifications.
+Conversely, verification-strength metrics (C4 and C5) progress unevenly and often oscillate. For
+example, the C4 trajectories for DeepSeek V4 Pro and GPT-5-mini fluctuate sharply across iterations.
+This occurs because LLMs tend to resolve assertion failures by deleting or weakening the falsified
+properties. This repair strategy restores C2-P but can remove fault-detecting predicates, leading to
+drops in C4. When the LLM subsequently introduces new assertions to regain coverage, it often
+triggers new failures. Thus, iterative feedback improves C2-P and verification-strength metrics on
+average, but it does not monotonically improve all metrics or guarantee syntax convergence.
+
+                Claude Opus 4.7                 DeepSeek V4 Pro             Gemini 3.1 Pro         GPT-5-mini          GPT-5.5
+ 100                                  100                              100                              100
+                                                                           80                           80
+    80                                80
+                                                                           60                           60
+    60                                60                                                                40
+                                                                           40
+                                                                                                        20
+    40                                40                                   20
+         0       2       4        6         0        2      4      6            0    2       4      6         0    2       4     6
+                C1-iteration                       C2P-iteration                    C4-iteration                  C5-iteration
+Figure 2: S3 per-iteration trajectories of C1, C2-P, mutation coverage (C4), and formal core coverage
+(C5) for the five evaluated models on the 40-module subset.
+
+
+
+7        Conclusion and Discussion
+
+HierSVA provides a connected pipeline, dataset, and benchmark for LLM-driven hardware formal
+verification. Across twelve models, provability overstates verification strength. The main limitation
+is the manually audited eligible-fault denominator for FTA; standardizing or automating it remains
+future work.
+
+
+                                                                       9
+References
+ [1] Alibaba Cloud Qwen Team. Qwen3.6-Plus: Towards Real World Agents. https://www.
+     alibabacloud.com/blog/qwen3-6-plus-towards-real-world-agents_603005,
+     2026. Accessed: 2026-05-02.
+ [2] Dinesh Reddy Ankireddy, Sudipta Paria, Aritra Dasgupta, Sandip Ray, and Swarup Bhunia.
+     Lasa: Enhancing soc security verification with llm-aided property generation. arXiv preprint
+     arXiv:2506.17865, 2025.
+ [3] Dinesh Reddy Ankireddy, Sudipta Paria, Aritra Dasgupta, Sandip Ray, and Swarup Bhunia.
+     Lasso: Llm-aided security property generation for assertion-based soc verification. In 2025
+     ACM/IEEE 7th Symposium on Machine Learning for CAD (MLCAD), pages 1–10. IEEE, 2025.
+ [4] Anthropic. Claude Haiku 4.5 System Card. https://assets.anthropic.com/m/
+     99128ddd009bdcb/Claude-Haiku-4-5-System-Card.pdf, 2025. Accessed: 2026-05-02.
+ [5] Anthropic.  Claude Opus 4.6 System Card.  https://www-cdn.anthropic.com/
+     14e4fb01875d2a69f646fa5e574dea2b1c0ff7b5.pdf, 2026. Accessed: 2026-05-02.
+ [6] Anthropic. Claude Opus 4.7 System Card. https://cdn.sanity.io/files/4zrzovbb/
+     website/037f06850df7fbe871e206dad004c3db5fd50340.pdf, 2026. Accessed: 2026-
+     05-02.
+ [7] Yunsheng Bai, Ghaith Bany Hamad, Syed Suhaib, and Haoxing Ren. Assertionforge: Enhancing
+     formal verification assertion generation with structured representation of specifications and rtl.
+     In 2025 IEEE International Conference on LLM-Aided Design (ICLAD), pages 85–92. IEEE,
+     2025.
+ [8] Ilan Beer, Shoham Ben-David, Cindy Eisner, and Yoav Rodeh. Efficient detection of vacuity in
+     temporal model checking. Formal Methods in System Design, 18(2):141–163, 2001.
+ [9] Timothy A Budd, Richard J Lipton, Richard A DeMillo, and Frederick G Sayward. The design
+     of a prototype mutation system for program testing. In AFIPS National Computer Conference,
+     pages 623–629, 1978.
+[10] Krishnendu Chatterjee and Thomas A Henzinger. Assume-guarantee synthesis. In International
+     Conference on Tools and Algorithms for the Construction and Analysis of Systems, pages
+     261–275. Springer, 2007.
+[11] DeepSeek-AI. DeepSeek-V3.2: Efficient Reasoning & Agentic AI. https://huggingface.
+     co/deepseek-ai/DeepSeek-V3.2, 2025. Accessed: 2026-05-02.
+[12] DeepSeek-AI.    DeepSeek-V4-Flash.       https://huggingface.co/deepseek-ai/
+     DeepSeek-V4-Flash, 2026. Accessed: 2026-05-02.
+[13] DeepSeek-AI.     DeepSeek-V4-Pro.        https://huggingface.co/deepseek-ai/
+     DeepSeek-V4-Pro, 2026. Accessed: 2026-05-02.
+[14] Wenji Fang, Mengming Li, Min Li, Zhiyuan Yan, Shang Liu, Hongce Zhang, and Zhiyao Xie.
+     Assertllm: Generating and evaluating hardware verification assertions from design specifications
+     via multi-llms. arXiv preprint arXiv:2402.00386, 2024.
+[15] Lik Tung Fu, Qihang Wang, Shaokai Ren, Mengli Zhang, Sichao Yang, Jun Liu, and Xi Wang.
+     Automated sva generation with llms. arXiv preprint arXiv:2604.11044, 2026.
+[16] Timnit Gebru, Jamie Morgenstern, Briana Vecchione, Jennifer Wortman Vaughan, Hanna
+     Wallach, Hal Daumé Iii, and Kate Crawford. Datasheets for datasets. Communications of the
+     ACM, 64(12):86–92, 2021.
+[17] Samuele Germiniani and Graziano Pravadelli. Harm: a hint-based assertion miner. IEEE
+     Transactions on Computer-Aided Design of Integrated Circuits and Systems, 41(11):4277–4288,
+     2022.
+
+
+                                                 10
+[18] Google DeepMind. Gemini 3.1 Pro Model Card. https://deepmind.google/models/
+     model-cards/gemini-3-1-pro/, 2026. Accessed: 2026-05-02.
+
+[19] Adarsh Gupta, Bhabesh Mali, and Chandan Karfa. Sangam: Systemverilog assertion generation
+     via monte carlo tree self-refine. In 2025 IEEE International Conference on LLM-Aided Design
+     (ICLAD), pages 180–187. IEEE, 2025.
+
+[20] R.G. Hamlet. Testing Programs with the Aid of a Compiler . IEEE Transactions on Software
+     Engineering, 3(04):279–290, July 1977. ISSN 1939-3520. doi: 10.1109/TSE.1977.231145.
+     URL https://doi.ieeecomputersociety.org/10.1109/TSE.1977.231145.
+
+[21] IEEE. Ieee standard for systemverilog–unified hardware design, specification, and verification
+     language. IEEE Std 1800-2023 (Revision of IEEE Std 1800-2017), pages 1–1354, 2024. doi:
+     10.1109/IEEESTD.2024.10458102.
+
+[22] Minwoo Kang, Mingjie Liu, Ghaith Bany Hamad, Syed M Suhaib, and Haoxing Ren. Fveval:
+     Understanding language model capabilities in formal verification of digital hardware. In 2025
+     Design, Automation & Test in Europe Conference (DATE), pages 1–6. IEEE, 2025.
+
+[23] Orna Kupferman, Moshe Y Vardi, and Pierre Wolper. Module checking. Information and
+     Computation, 164(2):322–344, 2001.
+
+[24] Shang Liu, Yao Lu, Wenji Fang, Mengming Li, and Zhiyao Xie. Openllm-rtl: Open dataset
+     and benchmark for llm-aided design rtl generation. In Proceedings of the 43rd IEEE/ACM
+     International Conference on Computer-Aided Design, pages 1–9, 2024.
+
+[25] lowRISC contributors. OpenTitan: Open Source Silicon Root of Trust (RoT). https://
+     opentitan.org/, 2026. Accessed: 2026-05-02.
+
+[26] Bhabesh Mali, Karthik Maddala, Vatsal Gupta, Sweeya Reddy, Chandan Karfa, and Ramesh
+     Karri. Chiraag: Chatgpt informed rapid and automated assertion generation. In 2024 IEEE
+     Computer Society Annual Symposium on VLSI (ISVLSI), pages 680–683. IEEE, 2024.
+
+[27] Xingyu Meng, Amisha Srivastava, Ayush Arunachalam, Avik Ray, Pedro Henrique Silva, Rafail
+     Psiakis, Yiorgos Makris, and Kanad Basu. Nspg: Natural language processing-based security
+     property generator for hardware security assurance. In Proceedings of the 61st ACM/IEEE
+     Design Automation Conference, pages 1–6, 2024.
+
+[28] Anand Menon, Samit Miftah, Shamik Kundu, Souvik Kundu, Amisha Srivastava, Arnab Raha,
+     Gaberiel Sonnenschien, Suvadeep Banerjee, Deepak Mathaikutty, and Kanad Basu. Enhancing
+     large language models for hardware verification: A novel systemverilog assertion dataset. ACM
+     Transactions on Design Automation of Electronic Systems, 2025.
+
+[29] MiniMax. MiniMax-M2.7. https://huggingface.co/MiniMaxAI/MiniMax-M2.7, 2026.
+     Accessed: 2026-05-02.
+
+[30] Moonshot AI. Kimi-K2.6. https://huggingface.co/moonshotai/Kimi-K2.6, 2026.
+     Accessed: 2026-05-02.
+
+[31] OpenAI. GPT-5.3-Codex System Card. https://deploymentsafety.openai.com/
+     gpt-5-3-codex, 2026. Accessed: 2026-05-02.
+
+[32] OpenAI. GPT-5.5 System Card. https://deploymentsafety.openai.com/gpt-5-5,
+     2026. Accessed: 2026-05-02.
+
+[33] OpenCores. OpenCores: The Reference Community for Free and Open Source Gateware IP
+     Cores. https://opencores.org/, 2026. Accessed: 2026-05-02.
+
+[34] Marcelo Orenes-Vera, Aninda Manocha, David Wentzlaff, and Margaret Martonosi. Autosva:
+     Democratizing formal verification of rtl module interactions. In 2021 58th ACM/IEEE Design
+     Automation Conference (DAC), pages 535–540. IEEE, 2021.
+
+
+                                                11
+[35] Nathaniel Pinckney, Chenhui Deng, Chia-Tung Ho, Yun-Da Tsai, Mingjie Liu, Wenfei Zhou,
+     Brucek Khailany, and Haoxing Ren. Comprehensive verilog design problems: A next-generation
+     benchmark dataset for evaluating large language models and agents on rtl design and verification.
+     arXiv preprint arXiv:2506.14074, 2025.
+[36] Vaishnavi Pulavarthi, Deeksha Nandal, Soham Dan, and Debjit Pal. Assertionbench: A bench-
+     mark to evaluate large-language models for assertion generation. In Findings of the Association
+     for Computational Linguistics: NAACL 2025, pages 8058–8065, 2025.
+[37] Qwen Team. Qwen3.6-Max-Preview: Smarter, Sharper, Still Evolving. https://qwen.ai/
+     blog?id=qwen3.6-max-preview, April 2026. Accessed: 2026-05-02.
+[38] Jan M. Rabaey. Digital integrated circuits: a design perspective. Prentice-Hall, Inc., USA,
+     1996. ISBN 0131786091.
+[39] Erik Seligman, Tom Schubert, and MV Achutha Kiran Kumar. Formal verification: an essential
+     toolkit for modern VLSI design. Elsevier, 2023.
+[40] David Sheridan. Goldmine: An integration of data mining and static analysis for automatic
+     generation of hardware assertions. PhD thesis, University of Illinois at Urbana-Champaign,
+     2011.
+[41] Aaditya Singh, Adam Fry, Adam Perelman, Adam Tart, Adi Ganesh, Ahmed El-Kishky, Aidan
+     McLaughlin, Aiden Low, AJ Ostrow, Akhila Ananthram, et al. Openai gpt-5 system card. arXiv
+     preprint arXiv:2601.03267, 2025.
+[42] Synopsys, Inc. VC Formal: Formal Verification Solution. https://www.synopsys.com/
+     verification/static-and-formal-verification/vc-formal.html, 2026. Accessed:
+     2026-05-02.
+[43] Michael Bedford Taylor. Basejump stl: Systemverilog needs a standard template library for
+     hardware design. In Proceedings of the 55th Annual Design Automation Conference, pages 1–6,
+     2018.
+[44] Fenghua Wu, Evan Pan, Rahul Kande, Michael Quinn, Aakash Tyagi, David Kebo Houngninou,
+     Jeyavijayan Rajendran, and Jiang Hu. Spec2assertion: Automatic pre-rtl assertion generation
+     using large language models with progressive regularization. arXiv preprint arXiv:2505.07995,
+     2025.
+[45] YosysHQ. SymbiYosys (sby): Front-end for Yosys-based Formal Verification Flows. https:
+     //github.com/YosysHQ/sby, 2026. Accessed: 2026-05-02.
+[46] Z.ai. GLM-5.1. https://huggingface.co/zai-org/GLM-5.1, 2026. Accessed: 2026-05-
+     02.
+[47] Zixi Zhang, Balint Szekely, Pedro Gimenes, Greg Chadwick, Hugo McNally, Jianyi Cheng,
+     Robert Mullins, and Yiren Zhao. Llm4dv: Using large language models for hardware test
+     stimuli generation. In 2025 IEEE 33rd Annual International Symposium on Field-Programmable
+     Custom Computing Machines (FCCM), pages 133–137. IEEE, 2025.
+
+
+
+
+                                                 12
+A     Datasheet for HierSVA-DS
+This datasheet follows the questionnaire proposed by [16].
+
+A.1   Motivation
+
+For what purpose was the dataset created? HierSVA-DS was created to support evaluation
+of LLMs on hierarchical SVA generation under industrial formal verification methodology. The
+Hugging Face release is a plain-file dataset containing preprocessed BaseJump STL RTL (rtl/),
+per-module reference SVA bundles and metadata (golden/), hierarchy manifests (json/), and deep-
+evaluation files (buggy_rtl/, buggy_rtl2/, and spec/). The full main set is retained through a
+formal-evidence filter, and the deep subset is additionally reviewed by senior industrial DV engineers.
+
+Who created the dataset and on behalf of which entity? (This field is anonymized for double-
+blind submission and will be completed at camera-ready.)
+
+Who funded the creation of the dataset? (This field is anonymized for double-blind submission
+and will be completed at camera-ready.)
+
+A.2   Composition
+
+What do the dataset instances represent? Each main-set instance is a preprocessed hierarchical
+RTL module from the BaseJump STL standard library [43] paired with a reference bundle under
+golden/. This bundle includes formally retained SVA plus module metadata used to interpret and
+score the module. The deep dataset contains module-bug pairs derived from the same preprocessed
+RTL corpus, together with bug variants, bug-pattern notes, and natural-language specifications for C3
+evaluation.
+
+How many instances are there in total? The dataset contains 342 modules in the main set,
+distributed as 342 golden/ reference bundles over a preprocessed rtl/ snapshot of BaseJump STL.
+It also contains eight category-level hierarchy manifests under json/ and an auxiliary deep subset of
+28 module-bug pairs over 27 unique modules. The deep subset includes 21 synthetically injected bugs
+in buggy_rtl/, 7 real-history bugs in buggy_rtl2/, and 27 module specifications plus a coverage
+map in spec/. Modules span hierarchy depths 0 to 9 across the BaseJump STL category structure
+(bsg_async, bsg_cache, bsg_dataflow, bsg_link, bsg_mem, bsg_misc, bsg_noc, bsg_tag).
+
+Does the dataset contain all possible instances or is it a sample? The dataset contains every
+BaseJump STL module that the HierSVA-SP preprocessing toolchain admitted and that subsequently
+cleared the formal evidence layer of Section 4.4. Modules excluded during preprocessing (parser
+failures on non-1800-compliant constructs or unresolved external dependencies) or by the convergence
+criteria (assertions not satisfying all three convergence criteria of the synthesis loop) are not included
+as dataset instances.
+
+What data does each instance consist of? For each main-set module, the dataset
+contains preprocessed BaseJump STL RTL under rtl/ and a reference bundle un-
+der golden/basejump_stl/rtl/basejump_stl/<group>/<module>/.                       The bundle con-
+tains design_info.json and a final/ directory with assertions.v, param_info.json,
+limit.json, and, for some modules, a short x.md summary. The json/<group>.json files
+record top RTL paths, hierarchy depth, and direct and transitive submodule sets. The deep dataset
+additionally carries independent natural-language specifications, a spec-to-bug coverage map, buggy
+RTL variants, and per-bug markdown notes. Bug variants were either recovered from upstream fix
+commits or generated by a held-out LLM; senior industrial DV engineers reviewed them for bug
+well-formedness, patch isolation and effectiveness, and spec faithfulness before inclusion in the
+released subset.
+
+Is there a label or target associated with each instance? The reference assertion file functions
+as a formally retained reference specification rather than absolute ground truth. Most HierSVA-B
+metrics (C1, C2-P, C2-V, C4, and C5) are computed by submitting the LLM’s output to VC Formal
+directly and reading the engine’s verdicts on the LLM, with the reference assertions never consulted.
+
+
+                                                   13
+Is any information missing from individual instances? None of the fields above are missing
+from any released module. Modules whose pipeline runs did not produce artifacts satisfying all three
+convergence criteria are excluded rather than released with partial fields.
+
+Are relationships between individual instances made explicit? Yes. The preprocessed RTL
+preserves the BaseJump STL module hierarchy, and json/<group>.json records each module’s
+top file, hierarchy depth, direct submodules, and transitive submodule set. Reference bundles are
+provided for retained modules in that hierarchy.
+
+Are there recommended data splits? HierSVA-DS is an evaluation benchmark and is not intended
+to be split into train/validation/test. The full main set is the primary evaluation corpus, and the deep
+dataset is the target of C3 and bug-detection studies. S3 uses a fixed 40-module subset of the main
+set.
+
+Are there any errors, sources of noise, or redundancies in the dataset? BaseJump STL is
+tapeout-validated and carries a low residual bug rate but is not bug-free. Reference assertions
+therefore characterize the design as it appears in the tapeout-validated source tree rather than as an
+idealized specification, and the deep-subset bugs are deliberately injected relative to this baseline.
+
+Is the dataset self-contained, or does it link to external resources? The dataset release contains
+the plain-file tree needed to inspect the benchmark inputs: rtl/, golden/, json/, buggy_rtl/,
+buggy_rtl2/, spec/, the dataset card, and repository metadata. It links to the original BaseJump
+STL repository for provenance. Experimental artifacts such as benchmark logs, model outputs,
+parsed verdicts, harness scripts, and the HierSVA-SP code are released separately and are not dataset
+instances.
+
+Does the dataset contain data that might be considered confidential, offensive, or sensitive? No.
+The dataset contains only open-source hardware design files, derived reference assertions, generated
+metadata, hierarchy manifests, and deep-dataset bug/specification artifacts.
+
+A.3   Collection Process
+
+How was the data associated with each instance acquired? The RTL files were obtained by
+cloning the BaseJump STL repository at commit a43571d and preprocessing the admitted modules.
+The design_info.json, param_info.json, limit.json, hierarchy manifests, and reference
+assertions were produced by HierSVA-SP (Section 3), which runs an LLM proposer in an iterative
+VC Formal loop providing formal feedback. Deep-subset bug variants were either recovered from
+upstream fix commits or generated by a held-out LLM. Senior industrial DV engineers reviewed
+the variants for well-formedness, patch isolation and effectiveness, and spec faithfulness. Natural-
+language specifications were authored or reviewed to describe the correct behavior without revealing
+the bug.
+
+What mechanisms or procedures were used to collect the data? The data were collected using
+an automated software pipeline comprising git clone, Python preprocessing scripts (Section 3.2),
+LLM API calls through a unified OpenRouter gateway to a mixture of GPT-5.3 Codex, Claude
+Opus 4.6, and DeepSeek V3.2, VC Formal invocation through TCL, and Python loop control with
+rule-based log parsing. Deep-subset specification authoring was a manual process performed by
+senior DV engineers.
+
+If the dataset is a sample from a larger set, what was the sampling strategy? HierSVA-SP
+attempts every BaseJump STL module that the preprocessing toolchain accepts. Modules that
+fail preprocessing or fail to satisfy the three convergence criteria are excluded. This constitutes
+documented deterministic filtering rather than sampling.
+
+Who was involved in the data collection process?          (This field is anonymized for double-blind
+submission and will be completed at camera-ready.)
+
+Over what timeframe was the data collected?          2026.
+
+
+                                                  14
+Were any ethical review processes conducted? Not applicable. The dataset is built from open-
+source hardware design files and does not involve human subjects, personal data, or sensitive
+information.
+
+A.4   Preprocessing, Cleaning, and Labeling
+
+Was any preprocessing or cleaning of the data done? Yes. Section 3.2 describes the preprocessing
+toolchain in detail: macro expansion for ‘define and ‘include directives, module dependency
+graph construction, optional comment stripping, syntax normalization of whitespace and declaration
+styles, and design information extraction (clocks, resets, latch and combinational flags propagated
+over the dependency graph).
+
+Was the raw data saved in addition to the preprocessed data? The dataset release contains the
+preprocessed RTL under rtl/ and a pointer to the original BaseJump STL files at the pinned commit,
+allowing downstream users to inspect provenance or rerun preprocessing under different settings.
+
+Is the software used to preprocess the data available? Yes. The HierSVA-SP preprocessing
+and synthesis toolchain is released as code accompanying the paper artifact, but it is not part of
+HierSVA-DS.
+
+A.5   Uses
+
+Has the dataset been used for any tasks already?          The twelve-LLM evaluation reported in
+Section 6 is the primary use to date.
+
+What other tasks could the dataset be used for? Intended additional uses include evaluation of
+agentic-formal hybrid methods, studying the convergence behavior of LLM-formal feedback loops,
+evaluating new assertion-quality metrics, and supporting assertion-quality methodology research.
+Users wishing to extend the dataset with new RTL libraries should run HierSVA-SP on those libraries
+rather than training directly on HierSVA-DS itself.
+
+Is there anything about the composition of the dataset that might affect future uses? The
+reference assertions are LLM-proposed, formally verified, and (for the deep subset) expert-reviewed.
+Users treating HierSVA-DS as fine-tuning supervision should be aware that the assertion style reflects
+the proposing LLMs’ output distribution under the convergence criteria of HierSVA-SP, rather than a
+human-complete SVA distribution. The benchmark was designed for evaluation rather than training.
+
+Are there tasks for which the dataset should not be used? HierSVA-DS should not be used to
+train an LLM that is then evaluated on HierSVA-DS, as this would create train/test leakage. The
+headline findings of Section 6 depend on the evaluated models not having been exposed to the
+reference assertions.
+
+A.6   Distribution
+
+Will the dataset be distributed to third parties?     Yes, publicly under an open-source license.
+
+How will the dataset be distributed? The dataset will be distributed through GitHub for version-
+controlled releases and through Hugging Face for a packaged tarball with explicit version tags.
+
+When will the dataset be distributed?      The dataset is submitted alongside the paper.
+
+Will the dataset be distributed under a copyright or IP license? The original BaseJump STL
+files retain their upstream license. The derived dataset artifacts (preprocessed RTL, reference
+assertions, design_info.json, param_info.json, limit.json, hierarchy manifests, and deep-
+dataset bug/specification files) are released under Solderpad Hardware License version 2.1, selected
+for compatibility with the BaseJump STL upstream license.
+
+Have any third parties imposed IP-based or other restrictions? No. BaseJump STL is open-
+source, and the derived artifacts are subject to no further restrictions beyond the chosen license.
+
+
+                                                 15
+     A.7   Maintenance
+
+     Who will be supporting, hosting, and maintaining the dataset? (This field is anonymized for
+     double-blind submission and will be completed at camera-ready.)
+
+     How can the maintainers be contacted? Maintainers can be contacted through the release reposi-
+     tory’s issue tracker for technical questions.
+
+     Are there errata? Errata, version notes, and known issues will be published in the repository’s
+     CHANGELOG.
+
+     Will the dataset be updated? Yes. Updates may track upstream BaseJump STL changes and
+     ship corrections to existing preprocessed RTL, reference SVA, metadata, hierarchy manifests, or
+     deep-dataset entries when issues are reported. Users are also encouraged to run HierSVA-SP on their
+     own RTL libraries to extend the dataset locally; the toolchain is released for this purpose.
+
+     Will older versions continue to be supported, hosted, and maintained? Yes. Each release is
+     tagged in Git and archived on the dataset host, with the version evaluated in this paper designated as
+     the canonical citable artifact.
+
+     If others want to extend, augment, build on, or contribute to the dataset, is there a mechanism
+     for them to do so? Yes. HierSVA-SP is the recommended mechanism for producing compatible
+     rtl/, golden/, and json/ entries from new RTL libraries. Contributors can submit pull requests
+     containing compatible dataset entries and, when applicable, deep-dataset review packages under the
+     buggy_rtl/, buggy_rtl2/, and spec/ layout.
+
+     B     Full Prompt Templates
+     All prompts are in Python code format.
+
+     B.1   Dataset Synthesis System Prompt
+
+     The prompt template historically included four FV run types, although COV is disabled in the final
+     dataset and benchmark. Formal core is a better metric for coverage analysis.
+
+ 1   prompt["system_init"] = lambda rely_on_rtl_comments, verified_design, insert_json=False,
+     include_bsg_interface_description=True: f'''
+ 2   Role: You are an expert Digital Verification Engineer specializing in Formal Verification
+     using SystemVerilog Assertions (SVA).
+ 3
+ 4
+ 5   Core Competencies:
+ 6   1. Deep understanding of digital logic as well as important protocols such as AXI, AHB,
+     APB, PCIe, USB, etc.
+ 7   2. Expertise in writing concurrent assertions, cover properties, and assume constraints.
+ 8   3. Ability to analyze EDA tool logs and counter-examples to refine and fix assertions.
+ 9   4. Rich experience in formal verification methodologies and best practices, including
+     assertion-based verification, cover-driven verification, and verification planning.
+10
+11
+12   Responsibilities:
+13   You are responsible for maintaining and refining a formal verification assertion set for a
+     given RTL design across multiple iterations.
+14   There are four types of FV runs:
+15       - FPV: Check if all assert/cover properties are proven to be correct. Sub-module
+         asserts are converted to assumes; only current module's assertions are verified.
+16       - FTA: Check if injected faults in the CURRENT MODULE ONLY can be detected. Sub-module
+         RTL is not perturbed.
+
+
+                                                      16
+17       - COV: Evaluate line/toggle/condition/branch coverage of the CURRENT MODULE ONLY.
+         Sub-module coverage is handled separately.
+18       - FC: Analyze formal core to identify RTL logic in the CURRENT MODULE that is outside
+         the formal core of the top-level assertions.
+19
+20
+21   Global Constraints & Coding Standards (Apply to ALL turns):
+22   1. **Language:** Use English for all code comments and explanations.
+23   2. ** Verification Scope: **
+24           * Do not modify the RTL design. Only modify or add SVA, assumptions, cover
+             properties, or auxiliary assertion logic.
+25           * If there are multiple modules in a single RTL file, focus only on the needed
+             module as specified by the user.
+26           * Do not change design intent.
+27           * Do NOT create assert/assume/cover for input signals.
+28           * The RTL (Verilog/SystemVerilog) code you receive is guaranteed to be
+             syntactically valid. Do NOT spend effort on syntax checking or speculate about
+             syntax errors; focus only on behavior, interfaces, and property generation.
+29           {rely_on_rtl_comments_sysprompt if rely_on_rtl_comments else ""}
+30           {verified_design_sysprompt if verified_design else ""}
+31           * Add assume properties if necessary to constrain the design behavior.
+32           * Add auxiliary RTL logic if necessary to aid the assertions.
+33           * Do NOT generate assert/assume/cover properties for reset behaviour
+34           * Sub-module behavior is already formally verified. Their proven assertions will be
+             converted to assumes at the top level. Do NOT re-verify sub-module internal
+             properties. Treat sub-module behavior as guaranteed contracts.
+35           * When writing top-level assertions, you may reference sub-module output signals
+             directly. Build on top of sub-module contracts rather than reimplementing them.
+36   3. ** Immediate vs Concurrent Assertions: **
+37           * Do NOT use immediate assert/assume/cover for sequential logic. Use concurrent
+             assert/assume/cover only.
+38           * Do NOT use concurrent assert/assume/cover for purely combinational logic. Use
+             immediate assert/assume/cover only. Must wrap immediate assert/assume/cover in
+             always_comb blocks.
+39   4. ** SVA Syntax, Naming and Semantics: **
+40           * Do NOT use `ifdef` or non-standard macros.
+41           * Do NOT use initial blocks.
+42           * Do NOT declare variables with initializers inside procedural blocks within
+             generate constructs. Formal EDA does not support static initialization of block
+             variables in generates. Move variable declarations outside the procedural block, or
+             declare them without initializers and assign separately. Wrong: `for (...) begin
+             integer row = k / N;` Right: `integer row; for (...) begin row = k / N;`
+43           * Use generate constructs if necessary.
+44           * All concurrent assert/assume/cover must have unique names. Must use statement
+             labels to name assert/assume/cover properties. The name of the property must be the
+             same as the statement label.
+45           * All begin-end blocks that have assert/assume/cover statements inside must have
+             names.
+46           * Do NOT change the name of assert/assume/cover properties across iterations. If
+             you need to add new assert/assume/cover, give them new unique names.
+47           * All assertions should be self-contained within the generated file.
+48           * All assertions should have clocking unless the design is purely combinational.
+49           * All assertions should have disable checking on reset unless there's no reset
+             signal.
+50   5 . ** Parameterized Designs: **
+51           * Do NOT hardcode any parameter values in the assertions. Use the parameters as-is
+             from the top module.
+
+
+
+
+                                                 17
+52           * Classify each parameter into one of three categories:
+53             - **Type-1 (Sizing/Structural):** Width, depth, element count, etc. These do NOT
+               change the functional spec. Examples: width_p, els_p, segments_p.
+54             - **Type-2 (Behavioral/Mode):** Mode select, priority policy, operation type,
+               scan direction, etc. These change what the module DOES. Examples:
+               clear_over_set_p, xor_p, lo_to_hi_p, hold_on_sr_p.
+55             - **Type-N (Non-functional):** Synthesis hints that have NO effect on RTL
+               behavior. Examples: harden_p, strength_p, vertical_p, debug_p. These should NEVER
+               appear in param_combinations — they do not create different logic paths and
+               verifying them wastes resources.
+56           * If any Type-2 parameter changes the functional behavior, write assertions that
+             cover ALL values using generate blocks. Each value should have a corresponding
+             generate branch with appropriate assertions.
+57           * Populate the "param_combinations" field in the JSON output following these rules:
+58             **Validity:**
+59             - Every combination MUST be elaboration-safe. Check the RTL to trace how each
+               parameter feeds into signal widths, array sizes, and loop bounds. Do NOT include
+               any combination that would result in zero-width signals, zero-size arrays, or
+               out-of-range bit selects — whether directly (width_p=0) or indirectly (e.g.,
+               max_val_p=0 when ptr_width = $clog2(max_val_p+1) = 0). The minimum useful value
+               for any parameter that determines a signal width is typically 1.
+60             - Do NOT include degenerate initial values that make the module non-functional
+               (e.g., LFSR with init_val_p=0 is stuck at zero forever).
+61             - If the default parameters are invalid for elaboration, the first element must
+               use the smallest valid configuration.
+62             - If the module only works for power-of-2 sizes (check RTL comments and logic),
+               do NOT include non-power-of-2 sizes.
+63             - For mutually exclusive mode parameters (e.g., xor_p/and_p/or_p where only one
+               can be 1), do NOT cross-product them — enumerate each mode individually instead.
+64             **Coverage:**
+65             - Each element is a dict that must list ALL parameters with their values (do NOT
+               use {{}} for defaults — always spell out every parameter explicitly).
+66             - The first element should be the RTL default parameter values (if valid).
+67             - For Type-2 parameters: include ALL valid values. If there are multiple Type-2
+               parameters, include the cross-product of their values (not just one-at-a-time).
+               Example: if op can be xor/and/or and direction can be lo_to_hi/hi_to_lo, include
+               all 6 combinations, not just 4.
+68             - For Type-1 parameters: include the default value plus ONE edge case (typically
+               the minimum valid value, e.g., width_p=1). Do NOT create many sizing variants —
+               two (default + minimal) is sufficient.
+69             - For Type-N parameters: do NOT vary them. Use the default value in all
+               combinations.
+70             - If related parameters must be consistent (e.g., upper_width_p must be >=
+               ceil(log2(num_banks_p)) + some offset), ensure every combination satisfies these
+               constraints.
+71             **Example** for a module with width_p (Type-1, default=10), clear_over_set_p
+               (Type-2, default=0, values 0/1), and harden_p (Type-N, default=1):
+72             "parameter_info": {{"width_p": {{"type": 1, "default": 10}}, "clear_over_set_p":
+               {{"type": 2, "default": 0}}, "harden_p": {{"type": "N", "default": 1}}}}
+73             "param_combinations": {{"fv1": {{"width_p": 10, "clear_over_set_p": 0,
+               "harden_p": 1}}, "fv2": {{"width_p": 10, "clear_over_set_p": 1, "harden_p": 1}},
+               "fv3": {{"width_p": 1, "clear_over_set_p": 0, "harden_p": 1}}, "fv4":
+               {{"width_p": 1, "clear_over_set_p": 1, "harden_p": 1}}}}
+74   6. ** SVA Module: **
+75           * All ports of the SVA module should be declared as input ports matching the
+             Top-Level Module signals.
+
+
+
+
+                                                 18
+ 76           * Ensure all internal signals needed for assert/assume/cover are properly declared
+              as inputs.
+ 77           * Explicitly import any required SystemVerilog packages.
+ 78   7. ** User Interaction: **
+ 79           * Treat all user messages as part of the same verification task unless explicitly
+              stated otherwise.
+ 80           * Later user messages may provide additional RTL files, simulation results, formal
+              tool feedback, counterexamples, or failure descriptions.
+ 81           * Even when refining a small part of the logic, you must always output the
+              **COMPLETE** content for each assert/assume/cover in the JSON. Do not use
+              placeholders like `// ... same as before ...`.
+ 82   8. ** Design Bugs: **
+ 83           * The "design_bug" field lists design bugs identified in iterations.
+ 84           * Each string in the "design_bugs" list should be a concise description of a
+              specific design bug, with reference to the related signals, assertions, and RTL
+              code sections.
+ 85   9. ** Bind: **
+ 86           * The bind command must follow the format:`bind <module_name>
+              <module_name>_assertions #(<param_connections_or_empty>) i_assertions (.*);`
+ 87           * If the top module has parameters, pass them explicitly using .PARAM(PARAM)
+              syntax. Example: `bind fifo fifo_assertions #(.WIDTH(WIDTH), .DEPTH(DEPTH))
+              i_assertions (.*);`
+ 88           * If the top module has no parameters, omit the #(...) entirely. Example: `bind top
+              top_assertions i_assertions (.*);`
+ 89           * Always use bind to module definition name, not instance path.
+ 90   {"""10. ** Interface Handshake Description: **
+ 91           * In module's handshake protocols, "helpful" means a side provides its handshake
+              information up front, without depending on the other side's current response.
+              "Demanding" means a side must first observe the other side's handshake signal
+              before deciding its own.
+ 92           * Protocol semantics are as follows:
+ 93               - r&v: both sides are helpful.
+ 94               - r->v: the side providing ready is helpful; the side generating valid based on
+                  ready is demanding.
+ 95               - v->r (valid-yumi): the side providing valid is helpful; the side generating
+                  yumi/ready based on valid is demanding.
+ 96               - valid-credit: both sides are helpful.
+ 97           * The consumer/return-side signal name depends on the protocol:
+ 98               - `ready_and` for r&v
+ 99               - `ready_then` for r->v
+100               - `yumi` for v->r (valid-yumi)
+101               - `credit` for valid-credit
+102   """ if include_bsg_interface_description else ""}
+103
+104
+105   Output Contract:
+106   - Return a STRICT JSON object. No markdown formatting outside the JSON.
+107   - The JSON must include:
+108     - verification plan ("verification_plan" field)
+109     - design functionality summary ("functionality" field)
+110     - module declaration ("module_declaration" field)
+111     - signal usage analysis ("signal_extractions" field)
+112     - bind statement ("bind_command" field)
+113     - structured explanation for each assertion ("assert_explanations" field), each
+        assumption ("assume_explanations" field) and each cover property ("cover_explanations"
+        field).
+114     - full assertion module code ("assertions.v" field)
+115     - special fields ("design_bugs", "converged" fields)
+
+
+                                                  19
+116   - Strictly follow the **Critical Reminders** section in every user prompt regarding
+      "converged" fields.
+117   - Update the verification plan in the JSON if there are any changes to the assertions,
+      assumptions, or cover properties. The verification plan should reflect the current state of
+      the assertions and the intended verification strategy.
+118
+119
+120   {"EXAMPLE JSON FORMAT:" if insert_json else ""}
+121   {json_format if insert_json else ""}
+122   '''.replace("\\n", "\n")
+
+
+
+      B.2   Dataset Synthesis Initial User Prompt
+
+  1   prompt["initial"] = lambda module_name, rtl_json, submodule_context=None : f'''
+  2   I am providing the RTL source files for a new verification task. Top-level module is
+      {module_name}.
+  3
+  4   **Input Design Data (JSON):**
+  5   ```json
+  6   {json.dumps(rtl_json)}
+  7   ```
+  8
+  9   {f"""**Sub-module Contexts (already formally verified):**
+ 10   The following sub-modules are instantiated in {module_name}. Their interfaces and
+ 11   proven assertions are provided as contracts you can rely on. Do NOT re-verify
+ 12   these properties. Use them as assumed guarantees when writing top-level assertions.
+ 13   ```json
+ 14   {json.dumps(submodule_context)}
+ 15   ```
+ 16   """ if submodule_context else ""}
+ 17
+ 18   **Immediate Request:**
+ 19   1. **Analyze:** Perform the functionality analysis and signal extraction as defined in the
+      System Prompt.
+ 20   2. **Plan:** Devise a comprehensive formal verification plan based on the design
+      functionality.
+ 21   3. **Generate:** Create the complete `assertions.v` file and the corresponding bind
+      command.
+ 22
+ 23   **Critical Reminders:**
+ 24   * **Output Format:** Return ONLY the strict JSON object. Do not wrap it in Markdown code
+      blocks.
+ 25   * **Completeness:** The value for the SVA file must contain the **FULL, COMPILABLE**
+      SystemVerilog source code.
+ 26   * **Plan Consistency:** Ensure the verification plan aligns with the generated assertions.
+ 27   * **Design Bugs:** Set "design_bugs" to an empty list for this run.
+ 28   '''
+
+
+
+      B.3   Evaluation System Prompt
+
+  1   json_format = '''
+  2   {
+  3     "assertions.v": "module <DUT>_assertions(\\n    input clk,\\n    input rst_n,\\n
+        ...\\n);\\n // full assertion body\\nendmodule",
+  4     "bind_command": "bind <DUT> <DUT>_assertions #(.PARAM(PARAM)) i_assertions (.*);"
+  5   }
+
+
+
+                                                    20
+ 6   '''.strip()
+ 7
+ 8
+ 9   # ---------------------------------------------------------------------------
+10   # Auxiliary text blocks. Edit these — they will dominate the prompt's length.
+11   # ---------------------------------------------------------------------------
+12
+13   SCHEMA_FIELD_GUIDE = """
+14   ## Output Schema (STRICT — return ONLY these two fields)
+15
+16   Return a single JSON object with the following fields and nothing else:
+17
+18   - **assertions.v** (string, REQUIRED): the FULL contents of the `<DUT>_assertions` module —
+     one
+19     self-contained SystemVerilog file. Must be syntactically valid. Every DUT port is
+       declared `input`.
+20     The assertions module MUST work for every parameter combination listed in the eval
+       harness's
+21     fixed `param_info.json` (which you do NOT see and do NOT control). Use parameters
+       symbolically
+22     rather than hardcoding values; this is the only way your assertions can pass across all
+23     Type-2 sweep variants the harness will exercise.
+24   - **bind_command** (string, REQUIRED): one of:
+25       `bind <DUT> <DUT>_assertions #(.PARAM(PARAM)...) i_assertions (.*);`
+26       `bind <DUT> <DUT>_assertions i_assertions (.*);`     // when DUT has no parameters
+27
+28   Do NOT emit any other top-level fields. No `functionality`, no `verification_plan`, no
+29   `signal_extractions`, no `assert_explanations` / `assume_explanations` /
+     `cover_explanations`,
+30   no `parameter_info`, no `param_combinations`, no `design_bugs`, no `converged`. Return
+     STRICT
+31   JSON — no markdown fences, no commentary, no chain-of-thought outside the JSON.
+32   """
+33
+34
+35   SVA_STYLE_GUIDE = """
+36   ## SVA Style Guide
+37
+38   ### Naming and structure
+39   - Every concurrent assert/assume/cover MUST have a unique statement label. The Pydantic
+     `name`
+40     field MUST equal the SVA statement label.
+41   - Wrap related properties inside named `begin ... end : block_name` blocks. Do NOT leave
+     anonymous
+42     blocks containing assert/assume/cover.
+43   - All assertions live in a single module named `<DUT>_assertions` whose ports mirror the
+     DUT 1:1
+44     (every port declared `input`). Use `bind` to attach.
+45   - Do NOT change a property's name across iterations. To add new properties, give them new
+     names.
+46
+47   ### Clocking and reset
+48   - Concurrent properties MUST use `@(posedge clk)` (or the DUT's clock). Use `disable iff
+     (!rst_n)`
+49     (or matching polarity) on every concurrent property — except modules with no reset
+       signal.
+50   - Pure combinational designs MUST NOT use concurrent properties at all. Wrap immediate
+51     assert/assume/cover inside `always_comb` blocks.
+
+
+                                                 21
+52   - Sequential designs MUST NOT use immediate assertions for sequential behavior.
+53
+54   ### Operator choice
+55   - `|->` (overlapping) checks the consequent in the SAME cycle the antecedent holds.
+56   - `|=>` (non-overlapping) checks the consequent ONE cycle after.
+57   - Use `##N` for explicit cycle delay, `##[a:b]` for ranges. Never use `##0` — use `|->`
+     instead.
+58   - Use `$past(sig, n)` for value at n cycles ago. Always pair `$past` with a guard against
+59     the first n cycles after reset (e.g., `$past(rst_n) && ...`).
+60   - Use `$stable(sig)` / `$rose(sig)` / `$fell(sig)` instead of hand-rolled equivalents.
+61   - For "always eventually" use `s_eventually` only when bounded; unbounded liveness is
+     rarely
+62     provable in practice — express as a bounded `##[1:N]` instead.
+63
+64   ### Assumptions
+65   - Add `assume`s to constrain INPUT signals when needed (e.g., handshake protocol
+     obligations
+66     on the producer side). Do NOT add assertions on input signals.
+67   - Submodule output assertions have already been proven during the synthesis pipeline; you
+68     receive them as contracts (assumes). Do NOT re-verify submodule properties.
+69
+70   ### Auxiliary logic
+71   - If a property needs a counter or shadow register to express, declare that logic INSIDE
+     the
+72     assertions module under `auxiliary_rtl_logic`. Do NOT modify the DUT.
+73   - Auxiliary logic must follow the same clk/rst as the DUT region it tracks.
+74
+75   ### Parameter handling
+76   - The harness's fixed `param_info.json` decides which parameter combinations get exercised;
+77     you only need to make `assertions.v` correct under ALL of them.
+78   - For Type-2 mode parameters that change which logic path is taken, write assertions that
+     cover
+79     every legal value via `generate` blocks (one branch per Type-2 value), not just the
+       default.
+80   - For Type-1 sizing parameters, never hardcode a numeric width — always reference the
+     parameter
+81     symbolically (e.g., `count_o == {width_p{1'b1}}`).
+82   """
+83
+84
+85   COMMON_PITFALLS = """
+86   ## Common Pitfalls (verified failure modes from prior runs)
+87
+88   These are the recurring ways generated SVA gets rejected by the formal tool. Avoid them.
+89
+90   1. **Vacuous antecedents.** A property like `assert property (@(posedge clk) disable iff
+     (!rst_n)
+91      (foo == 4'hF) |-> bar)` will pass vacuously if `foo == 4'hF` never holds. Always add a
+        `cover`
+92      for the antecedent so vacuity is observable. Better still, choose antecedents that *are*
+93      exercised by the design's normal operation.
+94
+95   2. **Off-by-one in `|->` vs `|=>`.** If you say "when ready_o rises, valid_i must already
+     be high",
+96      that's `|->`. If you say "one cycle after a request, response must come", that's `|=>`
+        or `##1`.
+97      Mismatching this is the #1 source of false falsifications.
+98
+
+
+
+
+                                                 22
+ 99   3. **Reset-window violations.** Properties referencing `$past(x)` will fail in the first
+      cycle
+100      after reset because `$past(x)` is undefined there. Either guard with `$past(rst_n)` or
+         use
+101      `disable iff` aggressively.
+102
+103   4. **Asserting on inputs.** Properties of the form `assert property (... input_signal ...)`
+      where
+104      the right-hand side is purely an input combination will be falsified by any
+         unconstrained
+105      waveform. Constrain inputs with `assume` (or accept that you're describing input
+         protocol
+106      obligations, in which case use `assume` not `assert`).
+107
+108   5. **Hardcoded parameter values.** Writing `assert property (count_o == 4'd15)` when the
+      DUT has
+109      `parameter width_p = 4` makes the assertion fail for every other `width_p`. Always use
+         the
+110      parameter symbolically: `assert property (count_o == {width_p{1'b1}})`.
+111
+112   6. **Generate-block scope.** If your assertion lives inside a `generate` block, every
+      property
+113      needs a unique label PER GENERATE INSTANCE. Use the `genvar` in the label or wrap each
+114      instance's properties in a named begin/end.
+115
+116   7. **Concurrent vs immediate misuse.** Combinational designs (no flip-flops) cannot use
+117      `@(posedge clk)` properties — there's no clock to anchor them on. Use immediate
+118      `always_comb begin assert (cond); end`.
+119
+120   8. **Cover starvation.** A passing assertion set with NO cover properties produces no
+      signal
+121       about whether the assertions exercise interesting design states. Add at least one cover
+          for
+122       each major interface event (handshake fire, FIFO not-empty / full transition, etc.).
+123   """
+124
+125
+126   SVA_DESIGN_BUGS_NOTE = """
+127   ## When the RTL Has a Bug
+128
+129   You are evaluating a tape-out validated design. Bugs are unlikely. If a property genuinely
+130   cannot pass under any correct interpretation of the design, write the assertion you BELIEVE
+131   is correct (according to your design intent reading) and accept that it may be falsified —
+132   do NOT add prose explaining the bug; the schema has no field for that.
+133   """
+134
+135
+136   SVA_DESIGN_BUGS_NOTE_SPEC_MODE = """
+137   ## When the RTL Contradicts the Spec
+138
+139   The RTL provided below is a CANDIDATE implementation that may contain bugs. The
+140   natural-language specification given in the user message is the source of truth.
+141
+142   If you observe ANY contradiction between the spec and the RTL — different reset
+143   behavior, different output value, different timing, different control-flow polarity,
+144   different parameter handling, anything — you MUST write the assertion against the
+145   SPEC. Doing so means the assertion will FALSIFY when run on this particular RTL.
+146   That is the correct outcome: the falsification is the bug being caught.
+
+
+
+                                                   23
+147
+148   Specifically:
+149   - Do NOT "fix" the assertion to match what the RTL does.
+150   - Do NOT relax the property until it passes on the RTL shown.
+151   - Do NOT skip writing an assertion just because the RTL implementation looks
+152     inconsistent with the spec on that property.
+153   - An assertion that PASSES on the buggy RTL is a bug-detection FAILURE; an
+154     assertion that FAILS on the buggy RTL while being faithful to the spec is
+155     the GOAL.
+156
+157   Submodule contracts (when present) and the parameter sweep stay authoritative as
+158   before — only the top-level RTL is potentially buggy.
+159   """
+160
+161
+162   # ---------------------------------------------------------------------------
+163   # system_init — the enriched 0-shot system prompt
+164   # ---------------------------------------------------------------------------
+165
+166   def system_init(rely_on_rtl_comments=True, verified_design=True,
+167                   include_bsg_interface_description=True):
+168       bsg_block = """
+169   ## BaseJump STL Handshake Conventions
+170
+171   In BaseJump's protocols, "helpful" means a side asserts its handshake info up front,
+      without
+172   waiting for the other side; "demanding" means a side decides only after seeing the other
+      side.
+173
+174   | Protocol | Producer side | Consumer side | Consumer signal name |
+175   |---|---|---|---|
+176   | r&v (ready-and-valid)   | helpful   | helpful   | `ready_and` |
+177   | r->v (ready-then-valid) | helpful   | demanding | `ready_then` |
+178   | v->r (valid-then-yumi) | helpful    | demanding | `yumi`       |
+179   | valid-credit            | helpful   | helpful   | `credit`     |
+180   """ if include_bsg_interface_description else ""
+181
+182       rely_block = (
+183           "- You may rely on RTL code comments to disambiguate behavior."
+184           if rely_on_rtl_comments else
+185           "- Treat RTL comments as untrusted; ground every assertion in observable signal
+              behavior."
+186       )
+187       verified_block = (
+188           "- The RTL is silicon-validated and assumed bug-free. Your job is to write
+              assertions that\n"
+189           " are formally provable, not to find design bugs. Assume the design is correct."
+190           if verified_design else
+191           "- The RTL below is a CANDIDATE implementation that may contradict the spec given
+              in the\n"
+192           " user message. The SPEC IS THE SOURCE OF TRUTH. Write each assertion against the
+              spec,\n"
+193           " not against the RTL — assertions that falsify on the RTL because the RTL
+              violates the\n"
+194           " spec are the desired outcome (they detect the bug)."
+195       )
+196
+197       # In spec/Tier-2 mode the standard 'tape-out validated, bugs unlikely' framing is
+
+
+
+                                                  24
+198       # actively misleading. Swap in a spec-aware note that tells the LLM to keep
+199       # writing the spec-faithful assertion even when it falsifies on the buggy RTL.
+200       bugs_note_block = SVA_DESIGN_BUGS_NOTE if verified_design else
+          SVA_DESIGN_BUGS_NOTE_SPEC_MODE
+201
+202       return f"""
+203   # Role
+204   You are an expert Digital Verification Engineer. Your task: given a SystemVerilog/Verilog
+      RTL
+205   module, generate a complete SVA assertion module that can be formally proven on VC Formal.
+206
+207   # Verification Pipeline
+208   After your assertions are generated, four formal tools run automatically:
+209     - **FPV** (formal property verification): proves each assert / inspects each cover.
+210     - **FTA** (fault-tolerance analysis / mutation testing): mutates the RTL and checks each
+211       assertion catches the mutation. A high mutation-detection rate signals strong
+          assertions.
+212     - **COV** (structural coverage): line / toggle / condition / branch coverage of the RTL
+213       when driven by the assumes you write.
+214     - **FC** (formal core): which RTL signals participate in proving each assert. Signals
+215       *outside* the formal core indicate the assertion is too weak.
+216
+217   You are scored on: assertion proof success rate (C2-P), non-vacuous proof rate (C2-NV),
+      mutation detection
+218   rate (C4), and coverage (structural + formal-core). Trivially-true assertions hurt C2-NV;
+      weak
+219   assertions hurt C4 and FC.
+220
+221   # Hard Constraints
+222   - The RTL is syntactically valid. Do NOT speculate about syntax errors.
+223   - Do NOT modify the DUT. Only write the `<DUT>_assertions` module.
+224   - Do NOT use `ifdef`, initial blocks, or non-standard macros.
+225   - Do NOT declare variables with initializers inside procedural blocks within `generate`
+226     (formal does not support static init in generates).
+227   - Do NOT generate assert/assume/cover for reset behavior or for input signals.
+228   - Submodule properties are provided as PROVEN CONTRACTS (converted to assumes). Do NOT
+229     re-verify them. Build on top of them.
+230   {rely_block}
+231   {verified_block}
+232
+233   {SCHEMA_FIELD_GUIDE}
+234
+235   {SVA_STYLE_GUIDE}
+236
+237   {COMMON_PITFALLS}
+238
+239   {bugs_note_block}
+240   {bsg_block}
+241
+242   # Output
+243   Return a STRICT JSON object matching the schema above. No markdown, no prose outside the
+      JSON.
+244
+245   EXAMPLE JSON FORMAT:
+246   {json_format}
+247   """.strip()
+
+
+
+
+                                                  25
+     B.4   Evaluation User Init Prompt
+
+ 1   def initial(module_name, rtl_json, submodule_context=None, spec_text=None):
+ 2       """Build the initial user message. param_combinations is NOT solicited from the LLM —
+ 3       the eval harness uses golden's param_info.json for the parameter sweep.
+ 4
+ 5         The RTL JSON keys are basename-only (the directory portion of every file path is
+ 6         stripped) so the LLM cannot infer the source tree. Tier-2 / C3 must remain blind
+ 7         to whether the RTL came from a `golden`, `buggy_rtl`, or `buggy_rtl2` location.
+ 8
+ 9         Optional Tier-2 input:
+10           spec_text: natural-language spec / intent (markdown). When present, it is inserted
+11                      as the source of truth and the RTL below is described as a candidate
+12                      implementation.
+13         """
+14         import os as _os
+15         rtl_basename = {_os.path.basename(k): v for k, v in (rtl_json or {}).items()}
+16
+17       sub_block = (
+18           f"""
+19   **Sub-module Contracts (already formally proven — treat as guaranteed):**
+20   The sub-modules instantiated in `{module_name}` are listed below. For each, the entry
+21   includes `module_name` and `assertions_v` — the verbatim SystemVerilog text of the
+22   sub-module's bound assertion module. The port list and every `assert` / `assume` /
+23   `cover` you see there is already proven; you may rely on them as assumes and you must
+24   NOT re-verify them.
+25   ```json
+26   {json.dumps(submodule_context)}
+27   ```
+28   """ if submodule_context else ""
+29       )
+30
+31       spec_block = (
+32           f"""
+33   **Natural-language Specification (source of truth for intended behavior):**
+34   The RTL below is a CANDIDATE implementation that may contain bugs. The specification
+35   below describes the intended behavior — design every assertion against the SPEC.
+36
+37   **Conflict resolution rule:** if the RTL behavior contradicts the spec on any property
+38   (reset value, output mapping, timing, control polarity, parameter handling — anything),
+39   the SPEC WINS. Write the assertion as the spec requires, even when this means the
+40   assertion will FALSIFY when run on the RTL shown below. A spec-faithful assertion
+41   that fails on this RTL is the *desired* outcome — it detects the bug. Do NOT relax,
+42   remove, or rewrite the property to match what the RTL happens to do.
+43
+44   ```markdown
+45   {spec_text}
+46   ```
+47   """ if spec_text else ""
+48       )
+49
+50       return f"""
+51   Top-level module: `{module_name}`.
+52   {spec_block}
+53   **Input Design Data (JSON):**
+54   ```json
+55   {json.dumps(rtl_basename)}
+56   ```
+
+
+
+                                                   26
+57   {sub_block}
+58
+59   **Task:** Generate the assertion module for `{module_name}`. Return STRICT JSON containing
+60   ONLY `assertions.v` and `bind_command`. The `assertions.v` field must hold the FULL,
+61   COMPILABLE SystemVerilog source.
+62   """.strip()
+
+
+
+     B.5   Feedback Prompt
+
+ 1   def return_fpv(status, status_txt, verified_design, vcd_content):
+ 2       if status == StageStatus.NOT_RUN:
+ 3           return ""
+ 4       if status == FPVRunStatus.ALL_PASSED:
+ 5           return ""
+ 6       elif status == FPVRunStatus.FAILED:
+ 7           return f"""
+ 8   The previous FPV run failed. Logs:
+ 9   {status_txt}
+10   For the failed FPV run
+11   1. Analyze the failure. Determine if it's due wrong syntax in assertions or failed
+     extraction of clock and reset signals.
+12   2. If it's due to wrong assertion syntax or failed extraction of clock and reset signals,
+     refine the assertions or correct the signal extraction.
+13   3. Return the FULL updated JSON.
+14   """
+15       else:
+16           if not status_txt.strip():
+17                return ""
+18
+19           return f"""
+20   The following assertions or cover properties are either falsified, vacuous, inconclusive or
+     uncoverable. There also might be some timeout issues:
+21   {status_txt}
+22   Couter-Example Waveforms:
+23   {vcd_content}
+24   For these falsified/vacuous/inconclusive assertions, uncoverable cover properties, or
+     timeout issues:
+25   1a. For each falsified assertion, analyze the counter-example waveform to distinguish
+     between design bug vs assertion bug.
+26   1b. For each vacuous assertion, analyze the antecedent conditions.
+27   1c. For each inconclusive assertion, analyze the related logic and conditions.
+28   1d. For each uncoverable cover property, analyze the related logic and conditions.
+29   1e. For each timeout issue, analyze the related logic and conditions.
+30   2. Modify the assertions to ensure that all assertions are non-vacuously passing, unless a
+     design bug is identified. For timeout issues, refine the assertions to avoid the timeout,
+     or add necessary assume properties to constrain the design behavior and avoid the timeout.
+31   If the CEX waveform is not provided, focus on other failed assertions first.
+32   """
+33
+34
+35   def return_cov(status, status_txt):
+36       if status == StageStatus.NOT_RUN:
+37           return ""
+38       if status == COVRunStatus.ALL_COVERED:
+39           return ""
+40
+41         return f"""
+
+
+
+                                                  27
+42   The following lines/toggles/conditions/branches are not covered in COV run:
+43   {status_txt}
+44   For these uncovered lines/toggles/conditions/branches:
+45   1. Analyze the RTL code and assertions used in the verification.
+46   2. Modify or add assertions to ensure
+47       - the RTL logic that are outside the formal core of the assertions are properly
+         covered.
+48       - all lines/toggles/conditions/branches are covered.
+49   """
+50
+51   def return_fta(status, status_txt):
+52       if status == StageStatus.NOT_RUN:
+53           return ""
+54       if status == FTARunStatus.ALL_DETECTED:
+55           return ""
+56
+57       return f"""
+58   There are FTA issues. These may include non-detected faults and/or timeout issues:
+59   {status_txt}
+60   For these non-detected faults or timeout issues:
+61   1. Analyze the assertion and the related design logic.
+62   2. Modify the assertions or add new assertions to ensure all injected faults can be
+     detected.
+63   For timeout issues, analyze the related assertions and design logic, and refine the
+     assertions or add necessary assume properties to constrain the design behavior and avoid
+     the timeout.
+64   """
+65
+66   def return_fc(status, status_txt):
+67       if status == StageStatus.NOT_RUN:
+68           return ""
+69       if status == FCRunStatus.ALL_PASSED:
+70           return ""
+71
+72       return f"""
+73   The following RTL logic are outside the formal core of the assertions:
+74   {status_txt}
+75   For these RTL logic:
+76   1. Analyze the RTL code and assertions used in the verification.
+77   2. Modify or add assertions to ensure
+78       - the RTL logic that are outside the formal core of the assertions are properly
+         covered.
+79       - all lines/toggles/conditions/branches are covered.
+80   """
+81
+82   def return_unified(run_type_status, run_type_status_txt, verified_design, vcd_content):
+83       fpv_part = return_fpv(
+84           run_type_status[Stages.FPV],
+85           run_type_status_txt[Stages.FPV],
+86           verified_design,
+87           vcd_content,
+88       )
+89       cov_part = return_cov(run_type_status[Stages.COV], run_type_status_txt[Stages.COV])
+90       fta_part = return_fta(run_type_status[Stages.FTA], run_type_status_txt[Stages.FTA])
+91       fc_part = return_fc (run_type_status[Stages.FC], run_type_status_txt[Stages.FC])
+92
+93       return f"""
+94   {fpv_part}
+
+
+
+                                                   28
+ 95   {cov_part}
+ 96   {fta_part}
+ 97   {fc_part}
+ 98   Note that
+ 99   * **Convergence:** Set "converged" field to false for this iteration.
+100   * **Design Bugs:** If a design bug is identified from the analysis of failed assertions,
+      add the description of the design bug to the "design_bugs" list field.
+101   """
+102
+103
+104   prompt["unified"] = return_unified
+
+
+
+      B.6   Convergence Check Prompt
+
+  1   prompt["convergence"] = """
+  2   The previous verification run has successfully completed without assertion failures. Also,
+      all lines/toggles/conditions/branches are covered, and all injected faults are detected.
+  3
+  4   **Instructions:**
+  5   1. Analyze the RTL code and assertions used in the verification.
+  6   2. Determine if the assertions sufficiently cover the intended functionality of the design,
+      and if there are enough cover properties to ensure thorough verification.
+  7   3a. If you believe the verification is comprehensive and the design is verified, respond
+      with a JSON object with the field "converged" set to true.
+  8   3b. If you believe the verification is NOT comprehensive enough, respond with a JSON object
+      with the field "converged" set to false, and add more assertions or cover properties as
+      needed.
+  9
+ 10   **Critical Reminders:**
+ 11   * **Output Format:** Return ONLY the strict JSON object. Do not wrap it in Markdown code
+      blocks.
+ 12   * **Completeness:** The value for the SVA file must contain the **FULL, COMPILABLE**
+      SystemVerilog source code.
+ 13   * **Plan Consistency:** If assertions are added, ensure the verification plan is also
+      updated to reflect the changes.
+ 14   * **Design Bugs:** If a design bug is identified from the analysis of failed assertions,
+      add the description of the design bug to the "design_bugs" list field.
+ 15   """
+
+
+
+      C     SVA Primer for an ML Audience
+
+      This appendix gives a self-contained introduction to SystemVerilog Assertion concepts, formal-
+      verification workflow, and tool-specific semantics required to read the rest of this paper. It is intended
+      for readers without prior exposure to hardware design or formal RTL verification. For a more detailed
+      treatment, we refer the reader to Seligman et al. [39].
+
+      C.1   Introduction to SystemVerilog Assertions and Hardware Verification
+
+      A digital hardware design is described in a register-transfer-level (RTL) language such as Verilog or
+      SystemVerilog, which expresses the design as a network of registers and combinational logic clocked
+      by one or more periodic signals. Hardware functional verification asks whether a given RTL design
+      behaves according to its specification and is a critical phase of pre-silicon design because once a chip
+      is fabricated, bug fixes are prohibitively expensive.
+      A SystemVerilog Assertion (SVA) is a property statement written alongside the RTL that captures a
+      piece of intended behavior, for example, "after a request is asserted, an acknowledgment must arrive
+
+
+                                                         29
+    within five clock cycles." SVA serves two functions in industrial verification design. In simulation-
+    based verification, an SVA is monitored as the design is exercised by stimulus, and any violation is
+    reported as a simulation failure. In formal property verification (FPV), an SVA is mathematically
+    proven against the design without stimulus by exhaustively reasoning about the entire reachable state
+    space. HierSVA targets the formal regime exclusively.
+
+    C.2   Temporal Operators and Properties
+
+    An SVA property combines Boolean expressions over RTL signals with temporal operators that
+    constrain when and how those expressions must hold. Common operators are the overlapped
+    implication |-> and the non-overlapped implication |=>, which encode whether, when the left-hand
+    side holds at the current clock tick, the right-hand side must hold at the same tick (|->) or one tick
+    later (|=>)." The cycle-delay operator ##k expresses a delay of exactly k clock ticks. Sequence
+    operators such as [*n] for repetition, intersect, and within compose temporal expressions across
+    multiple clock ticks. A simple example is:
+
+1    (req && !ack) |-> ##[1:5] ack
+
+
+    which states that whenever req is asserted while ack is low, ack must arrive within one to five
+    subsequent clock ticks.
+
+    C.3   Formal Verification Workflow
+
+    A formal property verifier takes the RTL design and an SVA property and returns a verdict. Synopsys
+    VC Formal [42] is the commercial tool used in our evaluation. It exposes several application modes,
+    two of which are central to HierSVA. Formal Property Verification (FPV) takes each SVA property
+    and either proves it (the property holds on every reachable trace), reports a counterexample (a concrete
+    trace that violates the property), or returns inconclusive (the engine ran out of resources). The terminal
+    status of an FPV goal is one of PROVEN, VACUOUS, FALSIFIED, or INCONCLUSIVE. Formal Testbench
+    Analyzer (FTA) systematically injects small mutations into the RTL and reports which assertions
+    detect each fault, providing a robustness signal for the assertion set. Within FPV, the Formal Core
+    (FC) feature reports the minimal subset of design statements that contribute to each proof, providing
+    a coverage signal relative to the cone-of-influence of each proven assertion rather than against the full
+    design.
+
+    C.4   Vacuity Detection
+
+    A vacuous property is a conditional statement that is true because the antecedent cannot be satisfied.
+    For example, the property p |-> q trivially passes if p is never true. Such a property almost always
+    flags an issue in the environment or property.
+    Vacuity has a richer theory in the model-checking literature [23], covering cases where any subformula
+    does not influence the truth value of the property. In practice, tool support for vacuity is more restricted.
+    VC Formal flags vacuity for the specific case of |-> and |=> properties whose left-hand antecedent
+    is never satisfiable on any reachable trace. When vacuity checking is enabled, VC Formal classifies
+    a successful proof attempt as one of two terminal statuses, namely PROVEN (proof succeeded and
+    the vacuity goal is non-vacuous) or VACUOUS (proof succeeded but the antecedent is unsatisfiable).
+    HierSVA uses this distinction directly in its metric framework. C2-P counts only PROVEN (proven non-
+    vacuously), and C2-V counts only VACUOUS; the two are reported separately rather than aggregated
+    into a single provability number.
+
+    C.5   Mutation-Based Testbench Analysis
+
+    Mutation testing originated in software testing [20, 9] as a way to evaluate test-suite quality by
+    inserting small syntactic faults into the program and measuring how many of the inserted faults the
+    test suite catches. The same idea applies to hardware assertion sets. A mutation operator perturbs the
+    RTL in a small, well-defined way (flipping a comparison operator, deleting a statement, swapping
+    operands, changing a constant value), and an assertion set is said to detect a fault if at least one
+    assertion fails on the mutated RTL while passing on the original. The detection rate over a set of
+
+
+                                                        30
+    non-equivalent faults is a measure of how robustly the assertion set constrains the RTL it accompanies.
+    VC Formal’s FTA app implements this systematically and reports which assertions detected each
+    generated fault.
+
+    C.6   Worked Example: A Toy FIFO
+
+    Consider a single-clock first-in-first-out (FIFO) buffer of depth eight, with input handshake signals
+    enq (push request) and full (cannot accept), and output handshake signals deq (pop request) and
+    empty (nothing to pop). A reasonable assertion set might include
+
+1   no_overflow: full |-> !enq
+2   no_underflow: empty |-> !deq
+3   count_bound: count <= 8
+
+
+    The first property states that the FIFO never accepts a push while full; the second states the dual
+    condition for the empty case; and the third asserts that the internal occupancy counter never exceeds
+    the FIFO depth. Each of these compiles to an SVA property that VC Formal can verify using FPV. On
+    a correct FIFO, all three should reach PROVEN status. On a buggy FIFO that incorrectly increments
+    the counter, count_bound would reach FALSIFIED with a counterexample trace.
+    The first two properties illustrate why vacuity matters. If the formal environment assumptions make
+    the full state unreachable, the first property’s antecedent is never satisfied on any reachable trace,
+    and VC Formal would report it as VACUOUS rather than PROVEN.
+
+    C.7   Glossary
+
+    Assertion. A property statement attached to the design that captures intended behavior, evaluated
+    either dynamically during simulation or statically by formal verification.
+
+    Clocking block. The clock signal whose ticks define the temporal progression of an SVA property.
+
+    Cone of influence (COI). The minimal subset of design signals and statements whose values can
+    affect the truth of a given assertion, used to limit the scope of formal analysis.
+
+    Counterexample. A concrete execution trace produced by the formal engine that demonstrates
+    how an assertion can be violated.
+
+    Formal core. The minimal subset of design statements whose values are required to prove a given
+    assertion, reported by VC Formal’s FC feature inside FPV.
+
+    FPV (Formal Property Verification). The application mode that proves SVA properties against
+    the design over the entire reachable state space.
+
+    FTA (Formal Testbench Analyzer).        The application mode that injects RTL mutations and reports
+    which assertions detect each fault.
+
+    Implication operator. The operators |-> (overlapped) and |=> (non-overlapped), which connect
+    an antecedent to a consequent at the same or next clock tick.
+
+    Property. The full SVA construct combining a clocking block, an optional disable iff, and a
+    Boolean or temporal expression.
+
+    RTL (Register-Transfer Level). The level of abstraction at which digital hardware is described as
+    a network of registers and combinational logic, expressed in Verilog or SystemVerilog.
+
+    Sequence. A multi-cycle pattern of Boolean expressions composed using sequence operators, used
+    as a building block inside properties.
+
+
+                                                      31
+Vacuity. A condition under which an assertion proves trivially because the antecedent is never
+satisfiable, reported by VC Formal as terminal status VACUOUS.
+
+D     Per-Model Detailed Results
+
+This appendix reports the full per-model breakdown of evaluation results referenced from Section 6.
+Models follow a consistent ordering throughout, with the two within-table groups separated by a
+midrule.
+
+D.1   Overall Setting 1 Metrics per Model
+
+Table 7 reports the per-model S1 metric vector micro-averaged across all modules with a successful
+run. C1 is the per-module compile rate over all 342 main-set modules. C2-P and C2-V are property-
+level micro-averages over generated assertions in evaluable runs. C4 is computed over eligible
+injected faults, and C5 reports union formal-core coverage.
+
+Table 7: Per-model overall S1 metrics. Micro-averaged across modules and assertions. “Asserts/mod”
+is the mean number of assertions emitted per evaluable module.
+
+           Model                 C1%     C2-P%     C2-V% (↓)             C4%     C5%     Asserts/mod
+           Claude Opus 4.7       89.2      87.5            1.8           70.5    34.7           10.6
+           DeepSeek V4 Pro       68.4      86.3            0.3           84.4    37.4           24.2
+           Gemini 3.1 Pro        82.1      90.3            1.5           74.7    33.8            8.0
+           GLM 5.1               76.9      91.0            1.3           78.1    43.3           27.4
+           GPT-5.5               85.9      76.8            0.5           84.5    51.4           22.0
+           Kimi K2.6             64.4      86.2            0.2           89.0    53.3           10.9
+           MiniMax M2.7          18.8      58.2           15.4           37.8    26.5            7.6
+           Qwen 3.6 Max          73.4      95.2            0.1           70.4    37.7           44.7
+           Claude Haiku 4.5      58.1      74.0               6.5        58.4    33.1           11.7
+           DeepSeek V4 Flash     59.6      84.9               1.2        73.2    39.6            9.4
+           GPT-5-mini            55.0      77.9               2.1        56.7    14.5            8.6
+           Qwen 3.6 Plus         73.4      76.9               1.4        64.9    29.4            7.7
+           Cross-model mean      67.1      82.1               2.7        70.2    36.2               –
+
+
+D.2   Formal Core Coverage Stratified by Hierarchy Depth (S1)
+
+Table 8 reports per-model formal core coverage stratified by module depth.
+
+Table 8: Per-model formal core coverage (%) stratified by hierarchy depth (static, micro-averaged
+within each depth bucket). Cells marked “–” indicate the model had no successful modules at that
+depth.
+
+             Model                 L0     L1      L2    L3          L4     L5     L6     L7   L8
+             Claude Opus 4.7      82.6   76.5   72.9   56.4    55.1       37.3   34.6    4.8 25.0
+             DeepSeek V4 Pro      80.6   57.6   28.6   30.7    51.6       12.0   34.6   20.3 1.6
+             Gemini 3.1 Pro       90.6   68.4   75.8   51.9    55.6       33.1   14.7    5.4 5.7
+             GLM 5.1              85.0   70.6   71.7   63.4    63.9       36.2   37.0   14.6 9.0
+             GPT-5.5              97.0   72.0   81.8   64.2    88.0       39.0   32.0   26.9 9.8
+             Kimi K2.6            72.9   72.0   66.4   69.9    69.7       21.3   24.8   11.2 6.7
+             MiniMax M2.7         23.1   52.8    0.0   40.2    32.0        5.3    6.7   21.4 0.0
+             Qwen 3.6 Max         70.4   67.9   67.4   73.4    70.7       50.9   34.8    1.3 6.7
+             Claude Haiku 4.5     73.9   48.1   17.6   25.6    49.1       21.7   20.0 27.2    0.0
+             DeepSeek V4 Flash    91.4   71.1   30.5   34.9    65.3       16.6   25.5 17.1    6.7
+             GPT-5-mini           63.1   20.8   23.0   27.4    29.0       20.0   19.6 4.5     0.0
+             Qwen 3.6 Plus        75.7   53.8   60.0   45.2    49.3       18.5   16.4 13.6    0.0
+             Cross-model mean     75.5 61.0 49.6 48.6 56.6 26.0 25.1 14.0                     5.9
+
+
+                                                  32
+D.3   Behavior Summary and Dilution Gap (S1)
+
+
+Table 9 reports the exploratory dilution-gap diagnostic of Section 6.4, with C2-P macro and dilution
+gap (macro−micro). The gap describes how module-level and assertion-weighted success rates differ;
+it is not interpreted as a C3 precision–recall trade-off.
+
+
+
+
+Table 9: Per-model behavior summary. “C1%” is the module compile rate. “C2-P macro” is the
+per-module proven non-vacuous rate averaged across modules. “C2-P micro” is the per-assertion
+proven non-vacuous rate pooled across all assertions. “Dilution” is macro−micro.
+
+         Model                C1%       C2-P macro%     C2-P micro%     Dilution      Asserts/mod
+         Claude Opus 4.7        89.2            80.6           87.5           −5.6            10.6
+         DeepSeek V4 Pro        68.4            77.5           86.3           −7.8            24.2
+         Gemini 3.1 Pro         82.1            88.3           90.3           −0.0             8.0
+         GLM 5.1                76.9            75.5           91.0          −14.0            27.4
+         GPT-5.5                85.9            90.9           76.8          +14.0            22.0
+         Kimi K2.6              64.4            84.0           86.2           −2.3            10.9
+         MiniMax M2.7           18.8            47.3           58.2           −6.1             7.6
+         Qwen 3.6 Max           73.4            78.2           95.2          −15.7            44.7
+         Claude Haiku 4.5       58.1            61.1           74.0          −11.9            11.7
+         DeepSeek V4 Flash      59.6            72.6           84.9          −11.0             9.4
+         GPT-5-mini             55.0            63.7           77.9          −13.9             8.6
+         Qwen 3.6 Plus          73.4            69.8           76.9           −6.2             7.7
+
+
+
+
+D.4   Per-Model S1 Metrics Stratified by Hierarchy Depth
+
+
+Tables 10 through 18 report the full S1 metric vector per model stratified by hierarchy depth.
+
+
+
+
+                       Table 10: Per-model S1 metrics at hierarchy depth 0.
+
+              Model                    C1%    C2-P%    C2-V% (↓)   C4%         C5%     #mod
+              Claude Opus 4.7          90.0    87.2          3.4      90.5     82.6     270
+              DeepSeek V4 Pro          74.1    92.3          0.0      95.2     80.6     270
+              Gemini 3.1 Pro           95.6    92.2          3.5      92.1     90.6     270
+              GLM 5.1                  81.5    96.2          0.4      93.5     85.0     270
+              GPT-5.5                  91.9    57.8          0.0      91.5     97.0     270
+              Kimi K2.6                78.5    91.0          0.0      97.1     72.9     270
+              MiniMax M2.7             27.8    54.8         23.8      18.8     23.1     270
+              Qwen 3.6 Max             85.5    99.3          0.1      66.9     70.4     269
+              Claude Haiku 4.5         65.2    84.8          1.4      79.3     73.9     270
+              DeepSeek V4 Flash        61.5    95.7          0.7      86.6     91.4     270
+              GPT-5-mini               70.7    83.7          2.0      54.2     63.1     270
+              Qwen 3.6 Plus            77.8    81.1          3.7      80.3     75.7     270
+
+
+                                                  33
+        Table 11: Per-model S1 metrics at hierarchy depth 1.
+
+Model               C1%    C2-P%     C2-V% (↓)   C4%    C5%     #mod
+Claude Opus 4.7     86.8     94.3          0.2   79.2    76.5    114
+DeepSeek V4 Pro     76.3     95.3          0.0   84.3    57.6    114
+Gemini 3.1 Pro      92.1     96.9          0.2   81.3    68.4    114
+GLM 5.1             78.1     90.0          0.2   89.1    70.6    114
+GPT-5.5             65.8     95.5          0.0   92.3    72.0    114
+Kimi K2.6           50.9     93.0          0.0   93.6    72.0    114
+MiniMax M2.7        27.2     40.5          6.8   46.1    52.8    114
+Qwen 3.6 Max        75.4     92.5          0.0   91.0    67.9    114
+Claude Haiku 4.5    63.2     81.6          2.0   74.7    48.1    114
+DeepSeek V4 Flash   63.2     91.4          1.1   79.0    71.1    114
+GPT-5-mini          53.5     78.2          0.0   47.6    20.8    114
+Qwen 3.6 Plus       59.6     62.0          0.7   54.6    53.8    114
+
+
+
+
+        Table 12: Per-model S1 metrics at hierarchy depth 2.
+
+Model               C1%    C2-P%     C2-V% (↓)   C4%    C5%     #mod
+Claude Opus 4.7     94.7     89.7          0.0   62.5    72.9     57
+DeepSeek V4 Pro     52.6     81.4          0.6   82.5    28.6     57
+Gemini 3.1 Pro      77.2     80.0          0.0   55.2    75.8     57
+GLM 5.1             66.7     77.6          2.0   85.6    71.7     57
+GPT-5.5             80.7     94.5          1.3   98.4    81.8     57
+Kimi K2.6           47.4     82.1          0.0   89.4    66.4     57
+MiniMax M2.7         3.5     69.2         23.1    0.0     0.0     57
+Qwen 3.6 Max        61.4     88.8          0.7   86.9    67.4     57
+Claude Haiku 4.5    47.4     49.0          9.2   30.9    17.6     57
+DeepSeek V4 Flash   63.2     50.8          4.5   63.2    30.5     57
+GPT-5-mini          28.1     76.3          4.6   75.3    23.0     57
+Qwen 3.6 Plus       78.9     65.9          0.9   54.2    60.0     57
+
+
+
+
+        Table 13: Per-model S1 metrics at hierarchy depth 3.
+
+Model               C1%    C2-P%     C2-V% (↓)   C4%    C5%     #mod
+Claude Opus 4.7     96.8     93.6          3.0   72.5    56.4     94
+DeepSeek V4 Pro     56.4     75.5          1.3   77.8    30.7     94
+Gemini 3.1 Pro      80.9     91.0          0.3   59.9    51.9     94
+GLM 5.1             64.9     90.3          4.6   80.6    63.4     94
+GPT-5.5             89.4     93.3          2.2   86.0    64.2     94
+Kimi K2.6           58.5     86.8          0.8   84.1    69.9     94
+MiniMax M2.7         5.3     67.2         15.5   25.9    40.2     94
+Qwen 3.6 Max        60.6     64.1          0.4   61.6    73.4     94
+Claude Haiku 4.5    56.4     28.4         33.1   54.5    25.6     94
+DeepSeek V4 Flash   57.4     71.5          2.7   66.4    34.9     94
+GPT-5-mini          53.2     82.3          0.2   54.1    27.4     94
+Qwen 3.6 Plus       67.0     86.6          0.6   72.4    45.2     94
+
+
+                                34
+        Table 14: Per-model S1 metrics at hierarchy depth 4.
+
+Model               C1%     C2-P%     C2-V% (↓)   C4%    C5%    #mod
+Claude Opus 4.7     88.7     94.2           0.0   64.0   55.1     53
+DeepSeek V4 Pro     64.2     77.0           2.3   73.0   51.6     53
+Gemini 3.1 Pro      81.1     98.0           1.5   62.5   55.6     53
+GLM 5.1             69.8     88.6           0.0   81.9   63.9     53
+GPT-5.5             86.8     96.5           0.0   87.0   88.0     53
+Kimi K2.6           77.4     94.2           0.0   86.3   69.7     53
+MiniMax M2.7         3.8     50.0          50.0    0.0   32.0     53
+Qwen 3.6 Max        64.2     69.0           0.0   45.1   70.7     53
+Claude Haiku 4.5    66.0     15.1          37.5   36.1   49.1     53
+DeepSeek V4 Flash   60.4     77.7           0.0   92.4   65.3     53
+GPT-5-mini          28.3     72.1           0.0   71.3   29.0     53
+Qwen 3.6 Plus       83.0     87.8           2.3   66.6   49.3     53
+
+
+
+
+        Table 15: Per-model S1 metrics at hierarchy depth 5.
+
+Model               C1%     C2-P%     C2-V% (↓)   C4%    C5%    #mod
+Claude Opus 4.7      84.6     82.8          0.0   71.6   37.3     26
+DeepSeek V4 Pro      65.4     82.6          0.0   66.2   12.0     26
+Gemini 3.1 Pro       65.4     91.7          1.7   68.5   33.1     26
+GLM 5.1              76.9     86.7          0.0   86.2   36.2     26
+GPT-5.5             100.0     90.3          0.2   93.1   39.0     26
+Kimi K2.6            46.2     89.9          0.0   94.4   21.3     26
+MiniMax M2.7         30.8     81.0          0.0   69.6    5.3     26
+Qwen 3.6 Max         80.8     70.3          0.0   58.5   50.9     26
+Claude Haiku 4.5     26.9     59.1          0.0   54.8   21.7     26
+DeepSeek V4 Flash    30.8     10.0         10.0   61.2   16.6     26
+GPT-5-mini           26.9     74.4         20.5   67.5   20.0     26
+Qwen 3.6 Plus        84.6     84.0          0.0   61.1   18.5     26
+
+
+
+
+        Table 16: Per-model S1 metrics at hierarchy depth 6.
+
+Model               C1%     C2-P%     C2-V% (↓)   C4%    C5%    #mod
+Claude Opus 4.7     68.5     66.2           0.5   62.4   34.6     54
+DeepSeek V4 Pro     59.3     53.6           1.0   77.4   34.6     54
+Gemini 3.1 Pro      31.5     80.5           0.0   60.8   14.7     54
+GLM 5.1             79.6     65.7           0.0   84.7   37.0     54
+GPT-5.5             83.3     74.8           0.0   85.0   32.0     54
+Kimi K2.6           46.3     72.0           0.0   74.8   24.8     54
+MiniMax M2.7        13.0     75.0          20.4   49.6    6.7     54
+Qwen 3.6 Max        57.4     45.2           0.6   56.5   34.8     54
+Claude Haiku 4.5    25.9     88.3           0.0   61.4   20.0     54
+DeepSeek V4 Flash   53.7     66.4           0.0   53.7   25.5     54
+GPT-5-mini          35.2     63.4          13.1   52.3   19.6     54
+Qwen 3.6 Plus       51.9     46.0           0.0   59.8   16.4     54
+
+
+                                 35
+                       Table 17: Per-model S1 metrics at hierarchy depth 7.
+
+             Model                C1%     C2-P%     C2-V% (↓)   C4%     C5%    #mod
+             Claude Opus 4.7       94.6     71.8          0.0   39.3     4.8     37
+             DeepSeek V4 Pro       73.0     78.6          0.0   81.2    20.3     37
+             Gemini 3.1 Pro        51.4     96.8          1.6   73.3     5.4     37
+             GLM 5.1               89.2     89.6          2.1   48.6    14.6     37
+             GPT-5.5               94.6     94.8          0.0   66.9    26.9     37
+             Kimi K2.6             64.9     90.8          0.0   67.0    11.2     37
+             MiniMax M2.7          10.8     44.8          0.0   56.1    21.4     37
+             Qwen 3.6 Max          62.2     87.6          0.0   55.7     1.3     37
+             Claude Haiku 4.5      75.7     81.0          1.1   61.3    27.2     37
+             DeepSeek V4 Flash     62.2     75.0          0.0   67.9    17.1     37
+             GPT-5-mini            75.7     83.7          0.0   73.5     4.5     37
+             Qwen 3.6 Plus         97.3     88.4          0.0   51.7    13.6     37
+
+
+
+
+                       Table 18: Per-model S1 metrics at hierarchy depth 8.
+
+             Model                C1%     C2-P%     C2-V% (↓)   C4%     C5%    #mod
+             Claude Opus 4.7      100.0     19.5          0.0   100.0   25.0      5
+             DeepSeek V4 Pro      100.0      7.9          0.0   100.0    1.6      5
+             Gemini 3.1 Pro       100.0      3.3          0.0   100.0    5.7      5
+             GLM 5.1              100.0     24.6          0.0   100.0    9.0      5
+             GPT-5.5              100.0     32.0          0.0   100.0    9.8      5
+             Kimi K2.6             80.0      0.0          0.0     0.0    6.7      5
+             MiniMax M2.7           0.0      0.0          0.0     0.0    0.0      5
+             Qwen 3.6 Max          80.0      0.0          0.0     0.0    6.7      5
+             Claude Haiku 4.5       0.0      0.0          0.0     0.0    0.0      5
+             DeepSeek V4 Flash     80.0      0.0          0.0     0.0    6.7      5
+             GPT-5-mini            80.0      0.0          0.0     0.0    0.0      5
+             Qwen 3.6 Plus        100.0     21.6          0.0   100.0    0.0      5
+
+
+
+
+D.5   Per-Model S1 Metrics Stratified by Module Category
+
+Tables 19 through 26 report the full S1 metric vector per model stratified by BaseJump STL module
+category.
+
+
+                     Table 19: Per-model S1 metrics for category bsg_async.
+
+             Model                C1%     C2-P%     C2-V% (↓)   C4%     C5%    #mod
+             Claude Opus 4.7      93.9      80.2         14.3    97.3   69.6     66
+             DeepSeek V4 Pro      62.1      67.7          0.8    96.9   60.7     66
+             Gemini 3.1 Pro       95.5      88.2         11.8    94.6   70.3     66
+             GLM 5.1              81.8      77.1          6.8    99.4   88.1     66
+             GPT-5.5              81.8      96.5          1.3   100.0   59.0     66
+             Kimi K2.6            40.9      91.9          0.0    89.2   80.5     66
+             MiniMax M2.7         21.2      46.8         22.6    33.3   29.0     66
+             Qwen 3.6 Max         80.3      79.7          0.0    94.8   70.8     66
+             Claude Haiku 4.5     68.2      55.0         11.2    70.4   56.5     66
+             DeepSeek V4 Flash    65.2      68.9          9.0    73.7   48.8     66
+             GPT-5-mini           68.2      29.4          0.0    92.0   80.4     66
+             Qwen 3.6 Plus        77.3      51.5          0.0    90.3   49.9     66
+
+
+                                               36
+        Table 20: Per-model S1 metrics for category bsg_cache.
+
+Model                C1%    C2-P%     C2-V% (↓)   C4%    C5%     #mod
+Claude Opus 4.7      93.6     95.4          2.4   41.1    7.1      47
+DeepSeek V4 Pro      44.7     79.4          1.5   73.5   17.9      47
+Gemini 3.1 Pro       83.0     98.3          0.5   47.4    6.1      47
+GLM 5.1              80.9     92.4          0.2   59.1   18.7      47
+GPT-5.5              95.7     96.9          0.5   71.2   36.0      47
+Kimi K2.6            31.9     96.3          0.0   86.7   12.9      47
+MiniMax M2.7         10.6     32.4         60.2   39.6   25.7      47
+Qwen 3.6 Max         70.2     84.3          0.6   46.7    6.4      47
+Claude Haiku 4.5     36.2     86.1          1.7   31.7   39.1      47
+DeepSeek V4 Flash    36.2     77.3          7.3   61.0   24.8      47
+GPT-5-mini           57.4     75.7         13.1   46.5    4.9      47
+Qwen 3.6 Plus        66.0     87.2          0.0   44.7   14.3      47
+
+
+
+
+    Table 21: Per-model S1 metrics for category bsg_dataflow.
+
+Model                C1%    C2-P%     C2-V% (↓)   C4%    C5%     #mod
+Claude Opus 4.7      85.8     88.3          4.1   82.2   33.6     113
+DeepSeek V4 Pro      73.5     70.3          1.0   80.3   32.4     113
+Gemini 3.1 Pro       76.1     96.5          0.3   79.7   31.0     113
+GLM 5.1              68.1     86.1          0.3   87.8   52.7     113
+GPT-5.5              80.5     92.1          2.1   94.0   51.1     113
+Kimi K2.6            61.1     82.6          1.5   90.2   57.8     113
+MiniMax M2.7         13.3     41.9          8.1   24.2   13.7     113
+Qwen 3.6 Max         65.2     57.0          1.2   82.2   61.1     112
+Claude Haiku 4.5     60.2     49.2          0.5   63.7   30.7     113
+DeepSeek V4 Flash    69.0     79.8          0.0   76.3   29.4     113
+GPT-5-mini           51.3     64.9          2.2   67.9   20.1     113
+Qwen 3.6 Plus        70.8     78.8          0.8   70.6   38.9     113
+
+
+
+
+        Table 22: Per-model S1 metrics for category bsg_link.
+
+Model                C1%    C2-P%     C2-V% (↓)   C4%    C5%     #mod
+Claude Opus 4.7      83.7     34.8          0.7   64.2   12.0      49
+DeepSeek V4 Pro      87.8     53.1          1.6   85.9    8.8      49
+Gemini 3.1 Pro       49.0     45.9          4.5   67.2   12.0      49
+GLM 5.1              95.9     63.2          3.1   80.6   15.4      49
+GPT-5.5              95.9     76.5          0.0   79.1   14.0      49
+Kimi K2.6            69.4     51.9          0.0   58.6    3.8      49
+MiniMax M2.7         14.3     91.7          0.0   69.0    0.0      49
+Qwen 3.6 Max         65.3     43.1          0.0   74.7    2.0      49
+Claude Haiku 4.5     83.7     54.2         21.5   53.4    6.5      49
+DeepSeek V4 Flash    61.2     57.1          0.0   56.4    6.8      49
+GPT-5-mini           71.4     39.0          0.0   66.6    4.2      49
+Qwen 3.6 Plus        98.0     57.6          2.2   69.4    7.0      49
+
+
+                                 37
+        Table 23: Per-model S1 metrics for category bsg_mem.
+
+Model               C1%     C2-P%     C2-V% (↓)   C4%    C5%    #mod
+Claude Opus 4.7      89.7     88.0          0.0   93.7   75.3    146
+DeepSeek V4 Pro      54.8     65.1          0.0   84.8   61.4    146
+Gemini 3.1 Pro       80.1     86.8          0.0   93.5   76.8    146
+GLM 5.1              76.0     84.1          2.4   95.2   72.6    146
+GPT-5.5              90.4     85.0          0.0   99.2   82.3    146
+Kimi K2.6            64.4     88.0          0.0   93.7   74.9    146
+MiniMax M2.7         13.0     51.8         13.6   73.7   41.4    146
+Qwen 3.6 Max         54.1     63.6          0.7   94.0   77.7    146
+Claude Haiku 4.5     39.0     52.8         13.2   85.3   48.5    146
+DeepSeek V4 Flash    52.7     51.9          0.3   91.8   64.8    146
+GPT-5-mini           44.5     81.6          3.4   55.0   31.6    146
+Qwen 3.6 Plus        65.1     76.5          2.7   80.0   62.8    146
+
+
+
+
+        Table 24: Per-model S1 metrics for category bsg_misc.
+
+Model               C1%     C2-P%     C2-V% (↓)   C4%    C5%    #mod
+Claude Opus 4.7      90.3     94.8          1.5   78.3   51.8    227
+DeepSeek V4 Pro      82.4     81.3          0.4   91.1   50.5    227
+Gemini 3.1 Pro       95.6     96.6          2.8   79.2   53.7    227
+GLM 5.1              76.7     90.8          3.1   85.5   79.4    227
+GPT-5.5              88.1     56.0          0.2   92.2   64.2    227
+Kimi K2.6            80.6     93.8          0.0   95.2   85.6    227
+MiniMax M2.7         28.2     61.6         11.9   24.7   47.0    227
+Qwen 3.6 Max         90.3     97.6          0.2   69.9   80.2    227
+Claude Haiku 4.5     69.2     82.3          5.4   53.8   35.2    227
+DeepSeek V4 Flash    66.1     96.1          0.8   66.8   90.1    227
+GPT-5-mini           60.8     88.9          0.3   43.0   53.1    227
+Qwen 3.6 Plus        81.5     87.0          1.4   71.0   50.0    227
+
+
+
+
+        Table 25: Per-model S1 metrics for category bsg_noc.
+
+Model               C1%     C2-P%     C2-V% (↓)   C4%    C5%    #mod
+Claude Opus 4.7      88.5     84.5          0.4   81.2   38.8     52
+DeepSeek V4 Pro      51.9     95.6          0.0   82.6   53.8     52
+Gemini 3.1 Pro       65.4     98.0          0.0   81.8   51.3     52
+GLM 5.1              73.1     97.8          0.6   77.8   40.8     52
+GPT-5.5              67.3     79.5          0.0   89.6   46.5     52
+Kimi K2.6            61.5     82.9          0.0   74.2   43.8     52
+MiniMax M2.7         15.4     88.8          0.0   10.0    0.0     52
+Qwen 3.6 Max         78.8     99.2          0.0   83.2   48.0     52
+Claude Haiku 4.5     46.2     54.6         15.5   81.8   19.4     52
+DeepSeek V4 Flash    42.3     83.2          0.0   80.7   39.6     52
+GPT-5-mini           38.5     92.3          0.0   63.3   51.8     52
+Qwen 3.6 Plus        50.0     53.6          0.6   84.9   35.2     52
+
+
+                                 38
+                       Table 26: Per-model S1 metrics for category bsg_tag.
+
+             Model                     C1%      C2-P%      C2-V% (↓)     C4%      C5%      #mod
+             Claude Opus 4.7           70.0       66.7           0.0      27.0     14.3      10
+             DeepSeek V4 Pro           30.0       77.8           0.0     100.0    100.0      10
+             Gemini 3.1 Pro            30.0      100.0           0.0      25.0      4.9      10
+             GLM 5.1                   70.0       44.8           0.0      56.9     15.3      10
+             GPT-5.5                   60.0       87.5           0.0      69.8     27.0      10
+             Kimi K2.6                 30.0       57.1           0.0     100.0     80.0      10
+             MiniMax M2.7              20.0       36.4           0.0       4.4     35.5      10
+             Qwen 3.6 Max              40.0       61.1           0.0      43.0     22.8      10
+             Claude Haiku 4.5          40.0       81.8           0.0      63.6      0.0      10
+             DeepSeek V4 Flash         60.0       20.0           0.0     100.0     13.0      10
+             GPT-5-mini                20.0      100.0           0.0      46.1     16.3      10
+             Qwen 3.6 Plus             50.0       79.3           0.0      20.6      3.8      10
+
+
+
+
+D.6   S3 Per-Iteration Trajectory per Model
+
+
+Tables 27 through 31 report the cumulative per-iteration trajectory of C1, C2-P, C2-V, C4, and C5 for
+each of the five S3 models on the fixed 40-module subset. “Cumulative” here means that at iteration
+k each module contributes its latest evaluable result for any iteration ≤ k, so all panels share the
+same 40-module denominator throughout. The static row reports the matching one-shot numbers on
+the same 40 modules (Section 6.5).
+
+
+
+Table 27: Cumulative per-iteration trajectory for Claude Opus 4.7 on the 40-module agentic subset.
+
+                     Iteration          C1%      C2-P%      C2-V% (↓)      C4%     C5%
+                     Static (paired)     97.5       73.1           0.3     46.7     39.8
+                     Iter 0              90.0       76.4           0.0     61.2     53.3
+                     Iter 1              92.5       92.2           0.0     55.6     52.5
+                     Iter 2              85.0       89.6           0.9     67.4     56.5
+                     Iter 3              95.0       93.9           0.2     64.7     56.6
+                     Iter 4              85.0       82.4           0.0     63.2     62.4
+                     Iter 5              87.5       87.9           0.4     64.6     72.5
+                     Iter 6              90.0       98.5           0.5     61.4     55.1
+
+
+
+
+Table 28: Cumulative per-iteration trajectory for DeepSeek V4 Pro on the 40-module agentic subset.
+
+                     Iteration          C1%      C2-P%      C2-V% (↓)      C4%     C5%
+                     Static (paired)    60.0       61.6            3.0     68.3     34.0
+                     Iter 0             55.0       55.0            2.0     81.1     93.8
+                     Iter 1             67.5       55.2            8.0     54.9     47.0
+                     Iter 2             65.0       58.2            5.1     81.7     46.2
+                     Iter 3             65.0       48.4           13.3    100.0     27.5
+                     Iter 4             65.0       67.1            3.3     96.3     60.3
+                     Iter 5             55.0       69.8            1.6     60.5     37.1
+                     Iter 6             57.5       82.5            0.4     73.4     47.9
+
+
+                                                     39
+Table 29: Cumulative per-iteration trajectory for Gemini 3.1 Pro on the 40-module agentic subset.
+
+                      Iteration         C1%     C2-P%    C2-V% (↓)   C4%    C5%
+                      Static (paired)   82.5     73.2          0.5   47.2   32.0
+                      Iter 0            80.0     71.9          0.0   51.8   34.5
+                      Iter 1            85.0     73.9          0.0   86.0   42.5
+                      Iter 2            80.0     63.2          1.4   73.3   38.4
+                      Iter 3            87.5     70.2          0.5   71.4   47.7
+                      Iter 4            90.0     71.3          1.5   54.7   29.3
+                      Iter 5            72.5     90.2          0.4   66.7   49.7
+                      Iter 6            82.5     92.3          1.2   59.7   33.2
+
+
+
+      Table 30: Cumulative per-iteration trajectory for GPT-5.5 on the 40-module agentic subset.
+
+                      Iteration         C1%     C2-P%    C2-V% (↓)   C4%    C5%
+                      Static (paired)    82.5     81.4         0.4   67.8   46.1
+                      Iter 0             80.0     79.5         1.2   72.3   40.0
+                      Iter 1            100.0     77.4         0.2   97.5   64.2
+                      Iter 2             87.5     95.8         0.0   99.4   65.2
+                      Iter 3             90.0     84.9         0.0   86.0   62.5
+                      Iter 4             90.0     91.0         0.2   80.4   58.8
+                      Iter 5             92.5     87.8         0.2   97.0   61.3
+                      Iter 6             92.5     90.1         0.2   81.2   50.5
+
+
+
+    Table 31: Cumulative per-iteration trajectory for GPT-5-mini on the 40-module agentic subset.
+
+                      Iteration         C1%     C2-P%    C2-V% (↓)   C4%    C5%
+                      Static (paired)   50.0     56.2          2.3   35.6   16.7
+                      Iter 0            47.5     50.4          3.3   95.1   91.8
+                      Iter 1            85.0     59.3          0.4   43.2   22.2
+                      Iter 2            85.0     79.6          2.2   37.0   18.5
+                      Iter 3            80.0     81.5          2.0   37.6   30.1
+                      Iter 4            77.5     80.6          0.0   28.3   25.1
+                      Iter 5            82.5     82.3          3.1   57.7   34.0
+                      Iter 6            77.5     87.6          0.0   42.8   48.1
+
+
+
+E     Deep Subset: Bug Patterns and Specifications
+This appendix documents the deep evaluation subset used by the C3 axis of HierSVA-B. The subset
+combines two bug sources reviewed under the same expert protocol, organizes the bugs into a five-
+pattern taxonomy, and ships every entry with the artifacts a downstream user needs to reproduce the
+evaluation.
+
+E.1    Source Mix and Review
+
+The deep subset contains 28 module-bug pairs across 27 unique modules. The real-bug source (bug2)
+carries 7 modules whose buggy variants are the pre-fix revisions of confirmed BaseJump STL fix
+commits, with the upstream patch as the canonical fix. The synthetic-bug source (bug1) carries
+21 modules whose buggy variants were generated by an LLM separate from those evaluated in
+HierSVA-B, with the intended bug isolated by a patch. The single module appearing in both sources
+is bsg_idiv_iterative.
+Although the two sources differ in injection mechanism, every entry passes the same expert review
+pipeline. Each buggy RTL is reviewed by senior industrial DV engineers for three properties: bug
+well-formedness (the buggy RTL compiles and exposes a single semantic deviation rather than a
+
+
+                                                   40
+    syntax break), patch isolation (the diff localizes the deviation rather than mixing collateral edits),
+    and spec faithfulness (the natural-language specification reflects the intended behavior of the correct
+    module without revealing the bug). Entries failing any of the three are revised or excluded.
+
+    E.2     Bug Pattern Taxonomy
+
+    Bugs are classified into five patterns. The classification is descriptive rather than mutually exclusive;
+    a small number of entries fit two patterns, in which case the dominant failure mode is reported in the
+    catalog of Section E.3. For each pattern we describe the general failure mode, then walk through one
+    bug2 example end to end with the diff, the rationale, and the form of the SVA assertion that detects it.
+
+    E.2.1    P1 Protocol Semantic Violations
+    P1 covers RTL changes that break the design’s contract with its environment, where the buggy RTL
+    still compiles and elaborates without warning but the data or control protocol at the module boundary
+    no longer matches the specification. The module-internal logic is locally consistent and per-side
+    smoke checks pass; only end-to-end protocol assertions catch the bug.
+
+    Worked example: bsg_noc_repeater_node (commit ffacb789). bsg_noc_repeater_node
+    is a two-port wormhole-NoC repeater: a flit entering side A should be buffered and emitted on side B,
+    and vice versa. The buggy RTL wires each internal two-element FIFO’s output port set back to the
+    same side it reads from, producing a one-cycle echo on each side rather than a cross-side relay.
+
+1         bsg_two_fifo A_to_B
+2         ( ...
+3   -        ,.v_o    (links_B_cast_o.v)
+4   -        ,.data_o (links_B_cast_o.data)
+5   -        ,.yumi_i (links_B_cast_i.ready_and_rev & links_B_cast_o.v)
+6   +        ,.v_o    (links_A_cast_o.v)
+7   +        ,.data_o (links_A_cast_o.data)
+8   +        ,.yumi_i (links_A_cast_i.ready_and_rev & links_A_cast_o.v)
+9         );
+
+
+    The wiring error is a copy-paste swap that lints clean, elaborates without warnings, and respects all
+    per-side flow-control invariants. The bug is invisible to any property of the form “output A mirrors
+    input A’s stream” or “no flits are lost,” because the loopback consistently reproduces the input on the
+    same side. It is detected immediately by an end-to-end property of the form “every flit injected at
+    side A eventually emerges at side B,” which fails trivially because side B never receives any flit.
+
+    Sample LLM output: GLM 5.1. GLM 5.1 builds an auxiliary two-entry FIFO inside the assertion
+    module that tracks the expected count of in-flight A→B traffic, and then asserts the spec invariant
+    directly on the boundary signal of the opposite side:
+
+1   a_ab_fifo_valid: assert property (@(posedge clk_i) disable iff (reset_i)
+2       links_B_cast_o.v == (aux_count_ab > 0));
+
+
+    The same shape is repeated for the B→A direction (links_A_cast_o.v == (aux_count_ba >
+    0)) and for the data fields. On the correct RTL, all eight assertions in the file prove (8/8 proven). On
+    the buggy RTL, six of the eight are falsified at depth 2–6, because the A→B FIFO output is rewired
+    to links_A_cast_o.* so the B-side output stays inactive while the auxiliary count is nonzero. The
+    detection works because GLM 5.1 anchored the assertion on the cross-side invariant rather than on
+    per-side liveness, exactly as the spec describes.
+
+    E.2.2    P2 Unreachable or Mistakenly Reachable FSM States
+    P2 covers RTL changes that allow the design to enter a state that the specification declares unreachable,
+    or that prevent it from entering a state the specification requires. These bugs typically corrupt
+    downstream state in a way that survives across transactions and only surfaces under specific event
+    interleavings.
+
+
+                                                       41
+    Worked        example:             bsg_cache_non_blocking_mhu             (commit        63ee359f).
+    bsg_cache_non_blocking_mhu is the miss-handling unit of the non-blocking cache. Af-
+    ter a clean miss completes its eviction-then-fill sequence, the new block’s dirty bit must be cleared
+    because the new line was just loaded from DMA and cannot be dirty yet. The fix commit added a
+    new opcode e_stat_set_lru_and_clear_dirty that updates the LRU bits and clears the dirty
+    mask atomically. The buggy RTL uses the older e_stat_set_lru opcode at two miss-completion
+    sites, which updates the LRU bits but leaves the dirty mask unchanged.
+
+1       stat_mem_pkt.opcode = miss_fifo_empty_i
+2   -     ? (set_dirty_r ? e_stat_set_lru_and_dirty : e_stat_set_lru_and_clear_dirty)
+3   +     ? (set_dirty_r ? e_stat_set_lru_and_dirty : e_stat_set_lru)
+4         : e_stat_read;
+
+
+    The dirty bit of the newly filled clean line therefore inherits whatever the victim block left behind.
+    If the victim was dirty, the newly filled line carries a sticky dirty=1 across subsequent transactions,
+    and a later eviction wastefully writes the still-clean data back to DMA. The bug never produces an
+    X or a protocol violation; it only causes “too many DMA writes” plus subtle data-race scenarios in
+    the LRU-versus-dirty interaction. The detecting SVA has the form “a miss-fill of a clean line never
+    produces a subsequent dirty write-back without an intervening user store”; this property fails on the
+    buggy RTL when the victim way had been dirty.
+
+    Sample LLM output: GPT-5.5. GPT-5.5 lifts the spec’s stat-mem opcode contract directly into
+    three implication assertions on the MHU’s stat-mem packet:
+
+1   assert_mhu_never_emits_lru_only_opcode: assert property (@(posedge clk_i) disable iff
+    (reset_i)
+2       stat_mem_pkt_v_o |-> (stat_mem_pkt.opcode != e_stat_set_lru));
+3   assert_retiring_read_clears_dirty:      assert property (@(posedge clk_i) disable iff
+    (reset_i)
+4       (miss_retire_event && !set_dirty_r) |->
+5           (stat_mem_pkt_v_o && (stat_mem_pkt.opcode == e_stat_set_lru_and_clear_dirty)));
+
+
+    On the correct RTL all 9 of GPT-5.5’s assertions are proven; on the buggy RTL three are falsified,
+    including both shown above, because the buggy MHU emits e_stat_set_lru at the read-retire
+    site instead of e_stat_set_lru_and_clear_dirty. The detection works because the assertion
+    encodes “the MHU never retires a read with the LRU-only opcode” as a separately checkable invariant
+    rather than as a downstream observable (DMA write count).
+
+    E.2.3   P3 Atomicity Breakdowns Across Multi-Step Transactions
+    P3 covers bugs in which a multi-cycle transaction is broken into pieces that individually look correct
+    but collectively violate the atomicity the specification implies. The buggy RTL respects the per-cycle
+    interface but loses or corrupts data on specific multi-cycle interleavings.
+
+    Worked example: bsg_fifo_1r1w_small_hardened (commit 527b3bec). This FIFO uses a
+    hardened sync memory that disallows simultaneous read+write to the same address, plus a bypass
+    register that catches data_i on detected same-address collisions. The fix commit observes that once
+    a collision is detected, the write into hardened memory must also be blocked, so the next dequeue
+    must continue reading from the bypass register; the original one-cycle latch on the collision flag does
+    not cover that delayed-read path. The buggy RTL reverts three coupled changes: the write_mem_en
+    gating is removed, the memory’s r_v_i adds back an unguarded & ~read_write_same_addr_n,
+    and the bypass register loses its set/clear flop in favor of a plain one-cycle latch.
+
+1   -    wire write_mem_en = enque && (wptr_r != rptr_n);
+2        bsg_mem_1r1w_sync mem_1r1w_sync
+3          ( ...
+4   -       ,.w_v_i (write_mem_en)
+
+
+
+                                                      42
+5   +        ,.w_v_i (enque)
+6   -        ,.r_v_i (read_mem_en)
+7   +        ,.r_v_i (read_mem_en & ~read_write_same_addr_n)
+8           );
+
+
+    The combination produces silently wrong reads only on the corner “enqueue and dequeue with the
+    same head address, then wait one cycle, then dequeue again.” The detecting SVA has the form “every
+    dequeued value equals the value enqueued that many slots earlier”; it fails on traces where enque &
+    deque & (rptr == wptr+1) is followed by a second deque after a one-cycle pause.
+
+    Sample LLM output: Claude Opus 4.7. Claude Opus 4.7 lifts the spec invariant “while in bypass
+    mode, data_o equals the bypass register contents” into a single implication assertion:
+
+1   assert_bypass_data_o: assert property (@(posedge clk_i) disable iff (reset_i)
+2       bypass_mode_r |-> (data_o == bypass_data_r));
+
+
+    The LLM’s 9 assertions all pass on the correct RTL; assert_bypass_data_o is falsified on the
+    buggy RTL at both parameter combinations (fv1 and fv2) because the buggy RTL’s 1-cycle latch de-
+    asserts read_write_same_addr_r after one cycle, after which the read path falls through to the sup-
+    pressed hardened-mem read instead of the bypass register, breaking the data_o == bypass_data_r
+    invariant on the delayed-read path.
+
+    E.2.4   P4 Corner-Case Mishandling Near Design Boundaries
+    P4 covers bugs that only manifest at the boundary of the parameter or input space (degenerate widths,
+    single-element configurations, empty inputs, or maximum-value edges). The bulk of the parameter
+    envelope is correct; the bug fires only on the corner.
+
+    Worked example: bsg_priority_encode_one_hot_out (commit f2b1a1a0). This priority
+    encoder has two outputs: o (the one-hot priority-encoded vector) and v_o (a valid flag, asserted when
+    any input bit is set). For width_p == 1, both should equal the single input bit i. The buggy RTL
+    collapses the width_p == 1 generate branch and only drives o = i, leaving v_o undriven on this
+    branch.
+
+1       if (width_p == 1)
+2   -     begin: w1
+3   -      assign o   = i;
+4   -      assign v_o = i;
+5   -     end
+6   +     assign o = i;
+
+
+    The encoded output o looks correct, but the parent that uses v_o to qualify o sees X. The bulk of the
+    parameter envelope (width_p much greater than 1) goes through the unaffected nw1 branch; only
+    the trivial single-bit specialization exercises the buggy path. The detecting SVA has the form “v_o
+    == |i”; with width_p = 1 this fails because v_o is undriven.
+
+    Sample LLM output: GLM 5.1. GLM 5.1 writes both a generic invariant and a separately guarded
+    width_p == 1 clause:
+
+1   v_o_is_or_i: assert (v_o == (|i));
+2   generate if (width_p == 1) begin : gen_width1
+3       width1_v_o_eq_i: assert (v_o == i[0]);
+4   end endgenerate
+
+
+    At the default width_p > 1 parameter combination both assertions are proven on the correct and
+    the buggy RTL alike, because the buggy branch only fires at width_p = 1. At the width_p = 1
+
+
+                                                     43
+    parameter combination both assertions are proven on the correct RTL and falsified on the buggy
+    RTL: v_o is undriven on the collapsed branch, so v_o == |i and v_o == i[0] both fail. The
+    detection works because GLM 5.1 instantiates the spec’s width_p == 1 edge case as a separate
+    guarded property rather than collapsing it into the generic |i invariant alone.
+
+    E.2.5    P5 Quantitative Parameter Errors at Specific Type-2 Settings
+
+    P5 covers bugs that surface only at specific Type-2 (behavioral) parameter settings while the default
+    and most common settings remain correct. These bugs typically survive in the tree for years because
+    the regression matrix exercises only the common settings.
+
+    Worked example: bsg_hashing_ipoly (commit a1adf01e). bsg_hashing_ipoly imple-
+    ments an invertible polynomial hash from (addr_upper, bank_id) to a remapped bank id, de-
+    signed so that the map b -> new_bank_id is a bijection at fixed a. The buggy RTL reverts three
+    b[i] indices on the higher-order output bits to b[0], but only on the num_banks_p == 4 and
+    num_banks_p == 8 branches; the num_banks_p == 16 branch stays correct.
+
+1         if (num_banks_p == 8) begin
+2   -       assign new_bank_id_o[1] =   b[1]   ^   a[12]   ^   a[10]   ^   a[9]   ^   a[8]   ^   ...;
+3   -       assign new_bank_id_o[2] =   b[2]   ^   a[13]   ^   a[10]   ^   a[8]   ^   a[7]   ^   ...;
+4   +       assign new_bank_id_o[1] =   b[0]   ^   a[12]   ^   a[10]   ^   a[9]   ^   a[8]   ^   ...;
+5   +       assign new_bank_id_o[2] =   b[0]   ^   a[13]   ^   a[10]   ^   a[8]   ^   a[7]   ^   ...;
+6         end
+
+
+    When the high-order outputs all use b[0] the map degenerates and the overall hash collides
+    for half of the input space. The first output bit still differs across input pairs, so a smoke
+    check of “output toggles when input toggles” passes; only an injectivity check exposes the bug.
+    The detecting SVA has the form “(a, b1) != (a, b2) implies new_bank_id_o(a, b1) !=
+    new_bank_id_o(a, b2)”; with num_banks_p = 4 or 8 this fails (a counterexample is found by
+    SAT in milliseconds), with num_banks_p = 16 it holds. The num_banks_p = 16 branch is the
+    one used by all production manycore configurations of BaseJump STL, which is exactly why the bug
+    survived in the tree for several years.
+
+    Sample LLM output: GPT-5.5. GPT-5.5 transcribes the spec’s per-output-bit XOR fan-in into
+    per-parameter assertions that compare each new_bank_id_o[k] against an independently computed
+    reference, with the same-index passthrough term bank_id_i[k]:
+
+1   wire expected_bit1 = bank_id_i[1]
+2                      ^ get_upper_bit(11) ^ get_upper_bit(9) ^ get_upper_bit(8)
+3                      ^ get_upper_bit(6) ^ get_upper_bit(5) ^ get_upper_bit(3)
+4                      ^ get_upper_bit(2) ^ get_upper_bit(0);
+5   a_nb4_bit1_matches_spec: assert (new_bank_id_o[1] == expected_bit1);
+
+
+    At the num_banks_p = 4 parameter combination, this assertion is proven on the correct RTL and
+    falsified on the buggy RTL because the buggy RTL computes new_bank_id_o[1] from b[0] instead
+    of the spec’s same-index bank_id_i[1]. The same shape with a_nb8_bit1_matches_spec fires
+    symmetrically at num_banks_p = 8; the num_banks_p = 16 parameter combination is unaffected,
+    matching the spec. The detection works because the assertion encodes the same-index passthrough as
+    a separate boolean equality rather than relying on an injectivity property over the full input space.
+
+    E.3     Module Catalog
+
+    Table 32 lists every module in the deep subset together with its source, hierarchy depth in HierSVA-DS,
+    and dominant bug pattern.
+
+
+                                                           44
+Table 32: Per-module catalog of the deep evaluation subset. “Source” is the bug source (b1 =
+synthetic, b2 = real git-history). “D” is the module’s hierarchy depth in HierSVA-DS. “Pat.” is the
+dominant bug pattern (P1–P5, taxonomy of Section E.2). bsg_idiv_iterative appears in both
+sources and is listed twice.
+                         Module                            Source D Pat.
+                         Real git-history bugs (bug2)
+                         bsg_cache                         b2     7   P5
+                         bsg_cache_non_blocking_mhu        b2     3   P2
+                         bsg_fifo_1r1w_small_hardened      b2     4   P3
+                         bsg_hashing_ipoly                 b2     0   P5
+                         bsg_idiv_iterative                b2     2   P5
+                         bsg_noc_repeater_node             b2     3   P1
+                         bsg_priority_encode_one_hot_out   b2     1   P4
+                         Synthetic bugs (bug1)
+                         bsg_arb_round_robin_composable    b1     1   P1
+                         bsg_async_credit_counter          b1     3   P3
+                         bsg_async_fifo                    b1     3   P3
+                         bsg_async_ptr_gray                b1     2   P5
+                         bsg_cache_miss                    b1     3   P2
+                         bsg_circular_ptr                  b1     0   P3
+                         bsg_compare_and_swap              b1     0   P1
+                         bsg_credit_to_token               b1     1   P1
+                         bsg_fifo_1r1w_small               b1     5   P3
+                         bsg_fifo_reorder                  b1     2   P2
+                         bsg_fifo_tracker                  b1     1   P3
+                         bsg_flow_convert                  b1     0   P1
+                         bsg_idiv_iterative                b1     2   P5
+                         bsg_imul_iterative                b1     0   P5
+                         bsg_launch_sync_sync              b1     1   P3
+                         bsg_link_ddr_downstream           b1     7   P1
+                         bsg_link_sdr_downstream           b1     7   P1
+                         bsg_mem_banked_crossbar           b1     6   P1
+                         bsg_router_crossbar_o_by_i        b1     6   P1
+                         bsg_strobe                        b1     1   P5
+                         bsg_tag_client                    b1     2   P1
+
+
+
+E.4   Released Artifacts per Module
+
+Each entry in the deep subset ships as a self-contained directory under buggy_rtl/ (bug1) or
+buggy_rtl2/ (bug2) in the release. The directory layout and per-file role is uniform across both
+sources:
+
+      • <module>.sv (or .v): the buggy RTL variant.
+
+      • <module>.md: the module-specific documentation file containing the source commit ref-
+        erence (for bug2) or the injection prompt and audit notes (for bug1), the diff against the
+        correct RTL, the rationale (“why subtle” and “why it stayed in the tree”), the form of the
+        SVA assertion that detects the bug under FPV, and a detection-difficulty estimate.
+
+      • Companion files in the corresponding entry of the main HierSVA-DS release: the correct
+        RTL implementation, the natural-language specification, and the limit.json that the
+        formal evidence layer of Section 4.4 uses to align reference and LLM FTA denominators.
+
+The five worked examples in Section E.2 are taken verbatim from the corresponding <module>.md
+files in the release, so a reviewer can reproduce the discussion above by reading the files in the
+published artifact.
+
+
+                                                  45
+F     VC Formal Fault Classes
+This appendix introduces the VC Formal FTA fault classes that underlie the C4 mutation coverage
+metric (Section 5.2). FTA injects small, well-defined perturbations into the RTL and reports which of
+them the LLM’s assertion set detects. Each perturbation belongs to a fault class that combines the
+kind of perturbation with where in the RTL it lives. The eight classes that appear in HierSVA-DS are
+summarized below.
+
+       • InternalConnectivity. Stuck-at perturbations on signals internal to the module: input-port
+         connections of internal instantiations driven to 0, 1, or their negation. These faults model
+         wiring mistakes that affect signals between sub-modules without changing the boundary
+         interface, and typically only manifest under specific control-flow paths.
+       • ComboLogic. Operator-, operand-, and bit-level perturbations (operator swaps, operand
+         swaps, bit flips, dead operators or statements) located in combinational always or as-
+         sign structures. These faults model errors in combinational expressions that immediately
+         influence the result on the same cycle.
+       • TopOutputsConnectivity. Stuck-at perturbations on the module’s top-level output ports:
+         output stuck-at-0, stuck-at-1, or negated. These faults model wiring mistakes at the module
+         boundary itself, and have the strongest direct effect on assertions that reference the module’s
+         outputs.
+       • ComboLogicControlFlow. Control-flow perturbations (condition forced true or false,
+         condition negated, dead else or case item) located in combinational structures. These
+         faults model branch- and condition-level errors that change which combinational expression
+         drives a result without altering its arithmetic form.
+       • SynchronousControlFlow. The same family of control-flow perturbations as ComboLog-
+         icControlFlow, but located inside a clocked always block. These faults perturb registered
+         control logic and propagate across multiple cycles, which makes them more diagnostic for
+         verification quality than the combinational counterpart.
+       • SynchronousLogic. Operator-, operand-, and bit-level perturbations located inside a clocked
+         always block. As with SynchronousControlFlow, perturbations on registered state propa-
+         gate across cycles to module outputs and are typically caught by protocol- or invariant-level
+         assertions.
+       • SynchronousDeadAssign. Assignment-removal faults located in a clocked block, modelling
+         registered signals that are silently dropped from the design. These faults expose assertions
+         that constrain registered storage paths.
+       • ResetConditionTrue. Condition-forcing faults located inside a reset condition, which keep
+         portions of the design held in reset on every cycle. These faults model degenerate reset
+         behavior and are typically caught by post-reset liveness or progress assertions.
+
+The two “Synchronous” families and the reset class tend to be the most diagnostic for verifica-
+tion quality because faults on registered or always-active state propagate across multiple cycles to
+module outputs, while connectivity faults often only manifest under specific control paths and are
+correspondingly harder to detect with boundary-level assertions.
+
+G     Comparison with Prior LLM-for-SVA Benchmarks
+This appendix expands the compact comparison in Section 2 into a full feature-by-feature table and
+commentary on each prior benchmark. The commentary is anchored on claims the authors of each
+work make about their own scope and limitations, rather than on external critique.
+
+G.1    Per-Benchmark Discussion
+
+AssertionBench. AssertionBench [36] contains 100 Verilog designs from OpenCores of up to 1,150
+non-comment lines of code, paired with reference assertions produced by GoldMine and HARM [17]
+and verified with JasperGold. The benchmark evaluates four LLMs (GPT-3.5, GPT-4o, CodeLLaMa 2,
+LLaMa3-70B) under 1-shot and 5-shot ICL and reports an average pass rate bounded above by 44%,
+
+
+                                                  46
+Table 33: Full feature comparison of LLM-for-SVA benchmarks. Columns: RTL src = RTL prove-
+nance; #Items = number of designs, cases, fragments, or problems depending on benchmark format;
+Hier. = cross-module hierarchy preserved; Eval = evaluation methodology (Sim/h. = simulation/test-
+harness); Gram. = SVA grammar coverage (shal. = shallow temporal subset, tmpl. = templated
+patterns, frag. = fragment-level data, broad = broad assertion tasks, IEEE = IEEE-1800-compliant
+SVA accepted by an industrial formal engine); Cov. = coverage reporting (FC = formal-core / cone-
+of-influence; ✗ = not reported); Vac. = vacuity rate reported as a metric; Mut. = mutation coverage
+reported; Faith. = spec–RTL–SVA faithfulness evaluated; DV rev. = senior industrial DV engineer
+review on the reference assertions.
+Benchmark                RTL src        #Items                     Hier.    Eval    Gram.     Cov. Vac. Mut. Faith. DV rev.
+AssertionBench           OpenCores      100                         ✗      Formal   shal.      ✗    ✗    ✗      ✗       ✗
+FVEval                   Expert+syn.    79+300+192                  ✗      Formal sh./tmpl.    ✗    ✗    ✗      ✗       ✗
+AssertEval/OpenLLM-RTL   Open-src       18                          ✗      Formal   tmpl.     FC    ✗    ✗    partial   ✗
+AssertLLM                Open-src       20                          ✗      Formal   tmpl.      ✗    ✗    ✗    partial   ✗
+VERT                     Synth. frag.   fragments                   ✗      Dataset  frag.      ✗    ✗    ✗      ✗       ✗
+CVDP cid14               Hand-auth.     98                          ✗      Sim/h.  broad       ✗    ✗    ✗      ✗       ✓
+HierSVA (ours)           BaseJump STL 342 modules + 28 bug pairs    ✓      Formal   IEEE      FC    ✓    ✓      ✓       ✓
+
+
+
+
+with up to 63% counterexample rate and up to 33% syntactic-error rate. Four properties of this
+benchmark are relevant to positioning HierSVA. First, the reference assertions inherit the scaling
+characteristics of the underlying mining methodology, and the authors acknowledge that GoldMine,
+HARM, and related static-analysis-based miners have known difficulty scaling to industrial designs
+because of the algorithmic complexity of the static analysis they depend on. Second, the evaluation
+reports only an assertion-level pass/fail/error trichotomy, after a syntax-correction pass implemented
+as a separate GPT-3.5 call inserted between the LLM under test and JasperGold; this means reported
+pass rates are not a clean measurement of an individual LLM’s raw capability, since the fixed corrector
+sits in the loop and may alter assertion semantics during repair. Third, the assertion vocabulary is
+limited to overlapped and non-overlapped implication operators with shallow temporal forms. Fourth,
+the benchmark does not evaluate vacuity, mutation coverage, or faithfulness as first-class quality
+axes. HierSVA-SP replaces mining with an LLM-and-formal iterative synthesis loop anchored on
+a hierarchical industrial-style codebase, HierSVA-DS targets broader SVA grammar coverage, and
+HierSVA-B evaluates the LLM end-to-end with no in-loop corrector, treating quality decomposition
+(well-formedness, vacuity, faithfulness, mutation coverage) as the central evaluation question.
+
+FVEval. FVEval [22] contributes three sub-benchmarks for LLM-driven SVA tasks. NL2SVA-
+Human contains 79 expert-written natural-language-to-SVA cases. NL2SVA-Machine consists of 300
+synthetic natural-language and SVA pairs. Design2SVA pairs each LLM with parameter-randomized
+RTL drawn from two structural templates (arithmetic pipelines and finite-state-machine transition
+logic), with 96 instances per template. The headline methodological contribution is a Cadence
+JasperGold formal equivalence check that decides whether a generated assertion is exactly equivalent
+to a reference assertion, and that further reports a partial-equivalence verdict when the generated
+property implies or is implied by the reference. We regard this implication-aware metric as a real
+advance over plain pass/fail, and HierSVA-B’s syntax correctness, assertion proof success rate, and
+vacuity axes are intended to compose with it rather than replace it. FVEval’s Design2SVA benchmark
+is nevertheless synthetic and parameter-templated: its RTL is generated from arithmetic-pipeline
+and FSM templates rather than from existing industrial multi-module RTL. The authors note that
+although OpenTitan module instances are relevant to real-world FV use cases, they are not suitable for
+language-model evaluation because each module is part of a larger SoC and resolving all sub-module
+dependency information would require prohibitively large context. The most complex synthetic
+Design2SVA instances already exceed 16K tokens, leading the authors to exclude models with context
+windows below 32K from this sub-benchmark. HierSVA-DS is positioned at this scoped-out region,
+working with hierarchical industrial-style RTL from BaseJump STL and preserving sub-module
+dependencies in its deep subset.
+
+AssertEval/OpenLLM-RTL. AssertEval, the SVA component of OpenLLM-RTL [24], packages
+18 open-source designs covering five domains (cryptographic units, processor cores, arithmetic
+units, communication protocols, memory controllers). Each design ships with a natural-language
+specification document, a golden RTL, and a JasperGold script. The benchmark reports syntax pass
+rate, FPV pass rate, and cone-of-influence (COI) coverage. AssertEval’s design set is curated to
+
+
+                                                          47
+fit current LLM context budgets, with specifications under 60 pages and at most 60 architectural
+signals per design. The pairing of natural-language spec, golden RTL, and FPV script is the strongest
+feature of this benchmark, and HierSVA-DS’s deep subset preserves that pairing while extending it to
+hierarchical modules drawn from a single codebase. AssertEval’s 18-design budget does not exercise
+hierarchy, parameter cross-product, or cross-module dependency at the scale targeted by HierSVA.
+
+AssertLLM benchmark. AssertLLM [14] releases an associated benchmark suite as part of its
+method paper. The benchmark groups SVAs by intent into width, connectivity, and function categories,
+and the headline case study reports high syntactic and functional accuracy on an I2C design. As-
+sertLLM evaluates correctness with JasperGold; related AssertLLM/OpenLLM-RTL follow-up bench-
+marks additionally discuss coverage through COI-style analysis. The width/connectivity/function
+decomposition is orthogonal to HierSVA-B’s evaluation axes. AssertLLM partitions assertions by
+the role they play in catching different bug classes, while HierSVA-B partitions evaluation by the
+dimensions of generation quality that an SVA must satisfy to be deployable.
+
+VERT. VERT [28] releases a fine-tuning corpus of synthetic assertion fragments paired with partial
+RTL/code snippets rather than module-level designs. Its primary use case is training data rather than
+full benchmark evaluation, and it does not exercise full-module assertion generation, hierarchy, or
+any of the quality axes that HierSVA-B reports.
+
+CVDP cid14. CVDP [35] is a 783-problem benchmark spanning 13 task categories that include
+RTL generation, debugging, and design verification. Its assertion-generation category, cid14, contains
+68 Non-Agentic and 30 Agentic problems, for 98 problems total. CVDP evaluates LLM-generated
+assertions by executing a simulation/test-harness flow rather than by formal proof. As a result, cid14
+measures assertions in their simulation-time checker role, where an SVA is driven by stimulus from a
+testbench, rather than in the FPV regime where a property is proven against all legal input behaviors
+by a model checker. The two settings exercise different correctness criteria and different failure modes,
+so we view CVDP cid14 as complementary to rather than competitive with HierSVA. For the non-
+agentic cid14 assertion-generation setting, CVDP reports pass@1 rates no higher than 25% among
+frontier LLMs, illustrating that assertion generation remains difficult even under simulation-harness
+evaluation.
+
+H     Compute and Cost Accounting
+H.1   S1 Token Cost by Hierarchy Depth
+
+Table 34 reports per-model average tokens per module at each hierarchy depth in S1 (static mode,
+one response per module).
+
+          Table 34: S1 average total tokens per module (K), stratified by hierarchy depth.
+
+           Model                  L0    L1     L2     L3     L4     L5     L6     L7     L8     L9
+           Claude Opus 4.7      13.7   21.7   31.0   37.1   32.0   37.7   35.9   63.5   34.1   89.0
+           DeepSeek V4 Pro      23.7   32.2   33.9   40.2   39.6   43.9   39.9   50.8   30.7   88.8
+           Gemini 3.1 Pro       11.0   16.0   20.6   25.6   21.6   28.0   24.6   47.3   23.7   64.8
+           GLM 5.1              26.7   33.8   36.3   50.1   47.4   41.7   42.4   52.2   35.1   55.6
+           GPT-5.5              12.6   16.8   22.2   27.4   24.1   29.6   27.7   44.0   23.5   63.9
+           Kimi K2.6            23.2   32.9   37.4   45.6   43.7   47.7   47.4   62.5   30.3   83.9
+           MiniMax M2.7          8.9   10.7   18.7   24.4   21.1   28.1   22.1   40.2   21.0   60.1
+           Qwen 3.6 Max         15.5   21.6   25.3   31.3   27.4   32.9   30.7   48.0   30.3   68.4
+           Claude Haiku 4.5     20.6   28.0   33.8   37.4   34.4   41.4   37.5   60.7   34.2   82.6
+           DeepSeek V4 Flash    18.3   23.4   20.2   25.8   22.2   27.4   27.0   43.0   23.9   60.9
+           GPT-5-mini           11.5   14.1   19.5   24.4   21.4   26.1   24.5   41.4   23.1   58.7
+           Qwen 3.6 Plus        15.9   21.5   26.9   30.3   26.1   36.7   28.2   43.2   27.8   62.3
+
+
+H.2   S1 Token Cost by Module Category
+
+Table 35 reports per-model average tokens per module by BaseJump STL module category in S1.
+
+
+                                                     48
+      Table 35: S1 average total tokens per module (K), stratified by BaseJump STL category.
+
+              Model                async cache dataflow              link mem misc           noc     tag
+              Claude Opus 4.7       13.9      47.0          30.1    28.6     24.0    15.4    43.1   26.0
+              DeepSeek V4 Pro       28.7      48.0          32.7    35.0     33.1    23.3    44.9   38.2
+              Gemini 3.1 Pro        12.0      32.8          20.4    20.4     17.0    12.1    30.8   16.0
+              GLM 5.1               33.6      47.7          39.0    37.9     38.5    23.6    54.9   50.4
+              GPT-5.5               13.7      32.7          22.8    22.5     19.9    13.1    31.6   21.1
+              Kimi K2.6             27.1      52.8          38.7    35.4     39.8    22.6    47.1   42.1
+              MiniMax M2.7           8.1      28.4          18.0    18.4     13.6     9.6    28.8   13.6
+              Qwen 3.6 Max          16.4      37.7          26.3    25.4     22.4    16.4    35.9   24.6
+              Claude Haiku 4.5      23.3      46.2          33.7    33.0     29.2    22.5    34.0   30.1
+              DeepSeek V4 Flash     20.9      33.0          25.5    22.1     20.6    16.3    34.5   26.2
+              GPT-5-mini            12.3      29.4          20.2    20.4     16.3    12.0    29.7   17.0
+              Qwen 3.6 Plus         17.1      35.9          25.2    35.2     22.7    16.4    33.9   19.7
+
+
+H.3   S3 Token Cost by Hierarchy Depth
+
+Table 36 reports per-model average tokens per module at each hierarchy depth in S3 (S3), where each
+entry is the cumulative cost across all iterations the loop ran on the module (up to 7). S3 evaluates the
+five selected models (Claude Opus 4.7, DeepSeek V4 Pro, Gemini 3.1 Pro, GPT-5.5, GPT-5-mini) on
+a fixed 40-module subset.
+Table 36: S3 average total tokens per module (K), summed across iterations and stratified by hierarchy
+depth.
+
+        Model                L0     L1        L2       L3          L4       L5       L6       L7      L8 L9
+        Claude Opus 4.7    97.6   196.8    313.7     468.4    314.9       243.1   494.8     487.7 113.6     –
+        DeepSeek V4 Pro    98.2   109.1    324.3     307.7    256.2       234.5   359.1     596.9 146.2     –
+        Gemini 3.1 Pro     80.7   144.4    305.1     184.3    181.7       211.6   349.3     286.7 81.9      –
+        GPT-5.5            77.6   140.1    196.3     275.2    253.1       180.1   445.9     303.1 99.6      –
+        GPT-5-mini         89.0   151.0    251.9     229.3    199.5       142.5   242.7     181.1 114.8     –
+
+
+H.4   S3 Token Cost by Module Category
+
+Table 37 reports per-model average tokens per module by BaseJump STL category in S3, with totals
+summed across iterations as in Table 36.
+Table 37: S3 average total tokens per module (K), summed across iterations and stratified by
+BaseJump STL category.
+
+            Model               async cache dataflow               link    mem      misc      noc     tag
+            Claude Opus 4.7     329.7     777.6      195.4    206.6       314.8     193.7   313.4   112.1
+            DeepSeek V4 Pro     180.4     663.4      141.2    229.2       300.0     191.2   222.4   232.1
+            Gemini 3.1 Pro      176.4     374.6      114.6    120.9       355.5     192.5   134.7    86.5
+            GPT-5.5             210.0     472.1      121.9    138.1       299.4     125.6   242.6   172.1
+            GPT-5-mini          228.0     266.0      130.2    140.6       171.9     158.5   183.3   157.6
+
+
+H.5   Compute Accounting
+
+LLM compute. Every LLM in our evaluation is queried through a unified OpenRouter gateway.
+We do not host the models locally.
+
+Formal verification compute. VC Formal runs were executed on a shared CPU cluster scheduled
+alongside other workloads. The shared environment introduces uncontrolled variance in wall-clock
+measurements across runs of the same module, and the commercial tool’s licensing terms restrict
+detailed disclosure of per-run runtime. We therefore do not report wall-clock times.
+
+
+                                                       49
+

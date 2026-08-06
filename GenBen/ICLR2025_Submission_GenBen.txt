@@ -1,0 +1,1781 @@
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+000
+001
+      G EN B EN :A G ENARATIVE B ENCHMARK                                             FOR       LLM-
+002   A IDED D ESIGN
+003
+004
+005    Anonymous authors
+006    Paper under double-blind review
+007
+008
+009                                              A BSTRACT
+010
+011
+               This paper introduces GenBen, a generative benchmark designed to evaluate the
+012            capabilities of large language models (LLMs) in hardware design. With the rapid
+013            advancement of LLM-aided design (LAD), it has become crucial to assess the ef-
+014            fectiveness of these models in automating hardware design processes. Existing
+015            benchmarks primarily focus on hardware code generation and often neglect crit-
+016            ical aspects such as Quality-of-Result (QoR) metrics, design diversity, modality,
+017            and test set contamination. GenBen is the first open-source, generative benchmark
+018            tailored for LAD that encompasses a range of tasks, from high-level architec-
+019            ture to low-level circuit optimization, and includes diverse, silicon-proven hard-
+020
+               ware designs. We have also designed a difficulty tiering mechanism to provide
+               fine-grained insights into enhancements of LLM-aided designs. Through exten-
+021
+               sive evaluations of several state-of-the-art LLMs using GenBen, we reveal their
+022
+               strengths and weaknesses in hardware design automation. Our findings are based
+023            on 10,920 experiments and 2,160 hours of evaluation, underscoring the potential
+024            of this work to significantly advance the LAD research community. In addition,
+025            both GenBen employs an end-to-end testing infrastructure to ensure consistent
+026            and reproducible results across different LLMs. The benchmark is available at
+027            https://anonymous.4open.science/r/GENBEN-2812.
+028
+029
+030
+      1   I NTRODUCTION
+031
+032
+033
+      Modern circuit design is a complex, multidisciplinary endeavor that demands expertise in numer-
+      ous areas, including architecture design, performance modeling design space exploration, register-
+034
+      transfer level (RTL) implementations, design verification, physical layout, etc. (Rabaey et al., 2002;
+035
+      Hennessy & Patterson, 2017; Bergeron, 2012). As hardware complexity increases, so too does the
+036   overhead associated with design and verification processes, subsequently lengthening the design
+037   iteration cycles (Calhoun et al., 2008). Traditional methodologies, which rely heavily on manual
+038   implementations in Verilog, are being improved by Chisel (Thomas et al., 1989; Bachrach et al.,
+039   2012) and High-Level Synthesis (HLS) (Coussy & Morawiec, 2010; Gajski et al., 2012) that aim
+040   to automate RTL code generation by introducing additional abstraction layers. However, even with
+041   these advancements, the verification overhead remains labor-intensive. Consequently, there is a
+042   growing need for advanced agile hardware design approaches to accelerate hardware development
+043   iterations.
+044   With the rise of transformer-based large language models (LLMs) (Zhao et al., 2023; Winata et al.,
+045   2021; Chakrabarty et al., 2023), has opened new avenues for hardware design automation. Models
+046   like GPT-4(OpenAI, 2023), Claude (Team, 2023), and LLaMA (Touvron et al., 2023a;c; Dubey
+047   et al., 2024) have demonstrated promising results not only in natural language processing but also
+048   in programming. Within this new paradigm of LLM-Aided Design (LAD) (ICCAD-Committee,
+049   2023; ACM-SIGDA, 2024; Huang et al., 2024), models such as WizardCoder (Luo et al., 2023) and
+050
+      Code-LLaMA (Roziere et al., 2023) have demonstrated significant capabilities.
+051   Building on these advanced models, techniques like fine-tuning (Wei et al., 2021) and retrieval-
+052   augmented generation (RAG) (Lewis et al., 2020; Gao et al., 2023) have led to the development
+053   of domain-specific models and operational architectures such as GPT4AIGChip (Fu et al., 2023),
+      AutoChip (Thakur et al., 2023c), ChatChisel (Liu et al., 2024b), and ChatCPU (Wang et al., 2024).
+
+
+                                                        1
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+054
+      These efforts have demonstrated automated hardware design capability using LLMs. This paradigm
+055   shift heralds a new wave of innovation in hardware design automation.
+056
+057   To accurately assess the efficacy of hardware code generations, several benchmarks have been intro-
+058
+      duced, such as RTLLM (Lu et al., 2024), Verigen (Thakur et al., 2023a), and VerilogEval (Liu et al.,
+      2023). As these benchmarks are open-source on GitHub and typically consist of static tests, they
+059
+      can inadvertently be incorporated into training datasets, leading to misleading test results. Moreover,
+060
+      there is a pressing need for improvements in verification coverage, evaluation metrics, and data di-
+061   versity. For instance, the tests in these benchmarks are relatively simple and unimodal, focusing
+062   primarily on syntax and functional pass rates. This focus neglects critical metrics such as synthesiz-
+063   ability, debugging capabilities, and performance, power, and area (PPA)(Marakkalage et al., 2024)
+064   statistics, which are essential for a comprehensive evaluation.
+065
+      To address these limitations, we introduce GenBen, an innovative benchmark for systematic eval-
+066
+      uation of generative AI capabilities in hardware design. GenBen distinguishes itself from existing
+067   works with the following key innovative enhancements:
+068
+069          • Enhanced Verification Coverage: We rigorously employ a standard, end-to-end verifi-
+070            cation flow to maximize the functional coverage of the developed testbench, that maps the
+071            generated stimuli to each function point of the RTL design.
+072          • Diverse and Difficulty Tiering Dataset: GenBen showcases a multi-source, multimodal,
+073            and difficulty-tiered evaluation framework consisting of 300 tests derived from silicon-
+074            proven designs, textbooks, StackOverflow, and other sources. Each test is categorized into
+075            one of three distinct difficulty levels (L1 to L3), allowing for the fine-grained and targeted
+076            enhancement of LLM capabilities in hardware designs.
+077          • Generative Benchmark Against Data Contamination: GenBen is a generative bench-
+078            mark that incorporates both static and dynamic perturbations to distinguish each test from
+079            its source dataset. Additionally, we utilize a script-based generation approach to impede
+080            automated RTL code extraction by GitHub crawlers, effectively minimizing the risk of test
+081            set data leakage.
+082          • Enhanced Evaluation Metrics: GenBen incorporates diverse metrics to comprehensively
+083            evaluate the generated designs, including the basic syntactical/functional correctness, and
+084            Quality-of-Results(QoR)(Yu et al., 2018) metrics like synthesizability, power consumption,
+085            area utilization, timing performance, etc.
+086          • End-to-End Open-Source Workflow: GenBen integrates tools like Icarus Ver-
+087            ilog(Williams, 2023), OpenLane EDA flow(Ghazy & Shalan, 2020), and Open-
+088            PDK(Edwards, 2023) to simplify the reproducibility.
+089
+      The remainder of this paper is organized as follows: Section 2 presents the motivation behind Gen-
+090
+      Ben and reviews related work. Section 3 introduces GenBen architecture and workflow. Section 4
+091   evaluates diverse LLMs using GenBen, and Section 5 concludes this paper.
+092
+093
+094   2     R ELATED W ORKS
+095
+096   To further elucidate the necessity and impact of GenBen in advancing hardware design automation,
+097
+      it is imperative to examine the current state of LLM-aided design (LAD) and the benchmarks used to
+      evaluate such systems. The following sections delve into the integration of LLMs in hardware design
+098
+      and critically analyze the benchmarks for evaluating LAD, thereby establishing the foundational
+099
+      context for our contributions.
+100
+101
+      2.1   LLM-A IDED D ESIGN
+102
+103   The integration of LLMs based on transformer architectures into hardware design is transforming the
+104   field, leveraging their proven capabilities in natural language processing to manage complex design
+105   tasks efficiently (Vaswani, 2017; Achiam et al., 2023; Touvron et al., 2023b). These models excel
+106   across various tasks by understanding and generating human-like text, which has allowed them to ex-
+107   tend their utility to hardware design (Zheng et al., 2024; Nijkamp et al., 2022; Lozhkov et al., 2024;
+      Lu et al., 2023). In the domain of hardware design, significant efforts focus on employing LLMs
+
+
+                                                        2
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+108   Name                              Conference   Tests          Perturbation   Worst Coverage Score (%)   MultiModal   Difficulty tiering                Metrics
+      VeriGen (Thakur et al., 2023b)    DATE 23      16 modules         ✗                      –                  ✗               ✗                          Coding
+109   RTLLM (Lu et al., 2024)           ASPDAC 23    30 designs       Partial               52.40%                ✗               ✗                        Coding, PPA
+      RTLLM2.0 (Liu et al., 2024a)      ICCAD24      50 designs       Partial               52.40%                ✗               ✗                        Coding, PPA
+110   VerilogEval (Liu et al., 2023)    ICCAD 23     HDLBit           Partial               44.64%                ✗               ✗                          Coding
+      MLLM Bench (Chang et al., 2024)   ICCAD 24     Multimodal         ✗                      –                  ✓               ✗                          Coding
+111   GenBen                            This work    All criteria       ✓                   95.17%                ✓               ✓             Knowledge, Coding, Debugging, QoR
+
+112
+113                                        Table 1: Comparison of Existing Work with Our Work
+114
+115
+116
+117
+118
+119
+120
+                                                         Figure 1: VerilogEval Test Coverage
+121
+122
+123   to improve the generation processes and functionality of Hardware Description Languages (HDLs).
+124   Some notable projects include ChatEDA, which develops an LLM-based EDA interface that uses
+125   natural language inputs to generate task-specific code (Wu et al., 2024). The GPT4AIGChip project
+126   showcases the potential of LLM-driven design automation by modularizing various hardware func-
+127   tions designed specifically for AI accelerators (Fu et al., 2023). AutoChip combines LLMs with Ver-
+128   ilog compilers to iteratively generate Verilog modules (Thakur et al., 2023c), while Chip-chat inte-
+129
+      grates conversational LLM technology to design a new 8-bit microprocessor architecture (Blocklove
+      et al., 2023). Furthermore, ChatCPU explores a comprehensive LLM-Aided Design (LAD) chip de-
+130
+      sign and introduces a novel verification methodology (Wang et al., 2024), and ChatChisel employs a
+131
+      specialized HDL to create a complex processor (Liu et al., 2024b). The integration of LLMs in these
+132   methods, leveraging data-based optimization techniques such as Supervised Fine-Tuning (SFT) (Hu
+133   et al., 2021; Liu et al., b; Houlsby et al., 2019; Zhang et al.; Wei et al., 2021), alongside Retrieval-
+134   Augmented Generation (RAG) (Lewis et al., 2020; Gao et al., 2023) and prompt engineering (Cao
+135   et al.; Bulat & Tzimiropoulos; Chen et al.; Deng et al.) It is important to develop comprehensive
+136   benchmarks to mitigate the impact of pre-training and fully assess model performance in this do-
+137   main.
+138
+139   2.2      B ENCHMARKS FOR E VALUATING LAD
+140
+141   In this context, establishing benchmarks to assess the capabilities of LLMs under these adjustments
+142
+      is crucial (Zhong & Wang, 2023; Liu et al., a). However, existing benchmarks are static and open-
+      source, making them susceptible to unintentional inclusion in pre-training datasets, and there is room
+143
+      for improvement in testbench coverage, benchmark data diversity, and the scalability of evaluation
+144
+      metrics. For instance, although Verigen (Thakur et al., 2023a) evaluated 17 designs after fine-tuning
+145   CodeGen (Nijkamp et al., 2022), the assessments mainly targeted simple and small-scale circuit
+146   designs, and these benchmarks are not open source. RTLLM (Lu et al., 2024) and RTLLM2.0 (Liu
+147   et al., 2024a) provided 30-50 testbenches for testing LLMs. These testbenches were evaluated using
+148   VCS to determine verification coverage, with the worst coverage score being approximately 52.40%,
+149   as shown in Table 1. Additionally, the testbenches featured relatively simple and uniform question
+150   types, and some of the mentioned evaluation tools are not open-source. VerilogEval (Liu et al.,
+151   2023) introduced a comprehensive dataset of 156 problems from HDLBits for automated functional
+152   correctness testing of LLM-generated Verilog code. However, these benchmarks are relatively easy,
+153
+      and models that perform best have high verification pass rates, which do not allow for further stress
+      testing as models continue to evolve. In addition, the worst verification coverage of VerilogEval is
+154
+      relatively low at 44.63%. In order to investigate the test coverage limitation, we further analyze the
+155
+      VerilogEval benchmark. As shown in Figure 1. RTL-Repo (Allam & Shalan, 2024), while assessing
+156   the RTL Repo project, can evaluate LLM accuracy through exact matching (EM) and edit similarity
+157   (ES), yet such metrics do not guarantee that the LLM-generated designs are verifiable or optimally
+158   synthesizable. PyHDL-Eval (Batten et al., 2024) and VHDLEval (Vijayaraghavan et al., 2024) are
+159   domain-specific benchmarks whose data diversity and evaluation metrics could be further enriched.
+160   HDLEval (Zakharov & Renau) initiated a multifunctional benchmark that uses rapid engineering
+161   techniques to overcome syntactical differences across HDLs and adopts formal verification methods
+      to assess code generated across multiple HDLs. However, there is still room to enhance testbench
+
+
+                                                                                        3
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+162
+      coverage and the richness of question types. ChipGPTV (Chang et al., 2024) proposed using visual
+163   representations to clarify design intentions and introduced a tiered benchmark to assess MLLM
+164   performance in Verilog generation, but there is still further scope to expand the diversity of code
+165   generation and hardware design knowledge testing metrics. A detailed comparison of existing work
+166   with our work can be found in Table 1.
+167
+168   2.3   P ROBLEM F ORMULATION
+169
+170          • 1. Verification Coverage Gaps: Existing benchmarks reveal a gap in design complexity
+171            and verification coverage. The developed testbenches often fail to adequately represent
+172            the essential function points of the included RTL designs, a situation that worsens as de-
+173
+               sign complexity increases. Consequently, the limited verification coverage of generated
+               hardware can undermine the authenticity of evaluation results.
+174
+175          • 2. Deficient Data Diversity: Current benchmark problems demonstrate insufficient diver-
+176            sity and richness in data sources and modalities. Many benchmarks sourced from educa-
+177            tional materials are overly simplistic and lack silicon validation. Furthermore, these text-
+178
+               based, unimodal benchmarks often fail to reflect real-world design specifications, which
+               frequently incorporate visual schematics and timing diagrams.
+179
+180          • 3. Benchmark Test Set Contamination: Since these benchmarks are statically open-
+181            source on GitHub, associated RTL designs and specifications can be automatically captured
+182
+               by crawlers as part of the RTL language datasets. Evolving LLMs like GPT-4, Claude,
+               and Llama 3 may inadvertently incorporate this data during pre-training, resulting in data
+183
+               leakage and contamination of the test set.
+184
+185          • 4. Limited Evaluation Metrics: Existing benchmarks focus primarily on syntax and func-
+186
+               tional pass rates, neglecting critical QoR metrics such as PPA statistics and synthesizability.
+               This oversight can lead to an incomplete evaluation of the generated designs.
+187
+188
+189   3     D ESIGN & P HILOSOPHY
+190
+191   In this section, we introduce the detailed GenBen design including workflow, dataset collection, task
+192   construction, data perturbation, quality enhancement, and question generation.
+193
+194   3.1   D ESIGN S TRATEGIES OF G EN B EN
+195
+196   Targeting the challenges in Section 2.3, the GenBen design incorporates the following strategies:
+197
+             • Improved Dataset Diversity: Curated from sources like GitHub, silicon-proven projects,
+198
+               and StackOverflow, featuring objective (knowledge) and subjective (coding, debugging,
+199
+               design optimization) tests, categorized into three difficulty levels (Table 2).
+200
+201
+             • Coverage-Enhanced TestBench: The quaility of testbench are enhanced in line, toggle,
+               and functional coverage by our experts to ensure fine-grained verification.
+202
+203          • Perturbed Generative Benchmark: Employs perturbation strategies during test genera-
+204            tion and evaluation to defend against memorization.
+205          • Multi-Dimensional Evaluation: Design five dimensions and 12 sub-items featuring QoR
+206            aware mechanism as shown in (Table 5), enabling flexible, custom benchmarks.
+207
+208   3.2   G EN B EN F RAMEWORK & W ORKFLOW
+209
+210   The GenBen framework has below key components: a pre-processed test set, a task generator, a dy-
+211   namic perturbator, a response collector, an evaluation suite, a report analyzer, and a scoring module.
+212   Evaluation begins with the user providing the API of the model and modality information as shown
+213   in Figure 2.B. GenBen then generates test tests from the test dataset D using scripts, denoted as T
+214   which remain consistent for each evaluation tests. Subsequently, the dynamic perturbation compo-
+215   nent applies surface-level perturbations to T , resulting in a transformed set T ′ . These perturbations
+      introduce slight variations for dynamic evaluation. GenBen collects responses from the model for
+
+
+                                                         4
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+216
+217
+218
+219
+220
+221
+222
+223
+224
+225
+226
+227
+228
+229
+230                                                Figure 2: GenBen Pipeline
+231
+232                                                Table 2: Difficulty Tiering
+233
+234    Categories          Description
+235    L1 (Simple)         Suitable for initial evaluation, focusing on fundamental concepts and straightforward tests..
+236    L2 (Intermediate)   Involving more complex tests and requiring robust problem-solving skills.
+237    L3 (Tough)          Tackling real-world design challenges and requiring advanced reasoning & implementation capabilities.
+238
+239
+240   both T and T ′ using a unified prompt template. These responses are then fed into the evaluation
+241   suite, which performs checks and executions to validate the outputs. GenBen simulates the gen-
+242   erated answers and corresponding testbenches using Icarus Verilog (Iverilog) to obtain reports on
+243   syntax and functional correctness. Designs that pass the functional tests undergo further physical
+244   implementation using the open-source SkyWater 130nm Process Design Kit (PDK)(sky, 2020) and
+245   the OpenLane flow. Within OpenLane, the Yosys(Wolf et al., 2013) component extracts data on
+246   synthesizability, area, and power, while OpenSTA(Cherry, 2023) handles timing-related data extrac-
+247
+      tion. The report analyzer then extracts metric-related information from the evaluation results. This
+      information is passed to the scoring module, which evaluates the performance of the model based
+248
+      on predefined metrics and generates the final results.
+249
+250
+251   3.3   B ENCHMARK DATASET C ONSTRUCTION
+252
+253   Our dataset construction process is illustrated in Fig-
+254   ure 2.A. We collected hardware-related content from
+255
+      across the web, which was then meticulously cu-
+      rated by a team of 10 domain experts. These experts
+256
+      screened the data for correctness, completeness, and
+257
+      diversity, with a particular focus on sampling from
+258   silicon-proven projects. For selected code tests, we en-
+259   hanced their testbenches to ensure robust evaluation as
+260   shown in Section 3.3.1; for debug test, we refined them
+261   as shown in Seciton 3.3.2.
+262
+      The collected and refined content was then filtered
+263
+      and categorized into three types of tests: knowledge,
+264   design, and debugging. To mitigate the interference
+265   of publicly available pre-training data on the evalu-
+266   ation, we introduced static perturbations. Using a
+267   multi-agent system combined with human feedback as
+268   shown in Figure 2.C, we applied perturbations to the
+269   tests, transforming them into new content at the token
+      sequence level.
+                                                                                       Figure 3: Dataset of GenBen
+
+                                                                    5
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+270                                      Table 3: Test Categories in GenBen
+271
+272    Test                 Amount   Description
+273    Knowledge Master     75       Focus on evaluating the grasp of the LLM on fundamental hardware concepts and principles.
+274    Knowledge Transfer   69       Apply concepts to new and complex scenarios for generalization.
+275    Design               99       Divide the difficulty based on the number of lines of code, type,and design time.
+276    Debug                57       Distinguish the difficulty of correcting syntax/function/combination errors.
+       Multimodal           60       Incorporate both textual and visual inputs.
+277
+278
+279
+280   The updated tests were then tiered according to diffi-
+281   culty, as shown in Table 2, and mapped to different cat-
+282   egories of tests: objective tests (assessing basic knowl-
+283   edge understanding and transfer), design tests, debugging tests, and multimodal tests. This mapping
+284   ensures comprehensive end-to-end evaluation of the knowledge and capabilities of the LLM.
+285   Ultimately,the GenBen tests are shown in Table 3 with distribution across difficulty levels.
+286
+287
+288   3.3.1     T ESTBENCH C OVERAGE E NHANCEMENT
+289
+290   Following the preparation of the GenBen datasets, we proceed to build testbenches for each RTL
+291
+      design to enhance the verification coverage of generative designs. We rigorously employ a standard,
+      end-to-end verification flow that ensures a point-to-point mapping between the generated stimuli
+292
+      and the functional coverage checklist. By employing constraint randomization and coverage-driven
+293
+      testbench generation methodologies, we significantly improve the verification coverage for each
+294   generated RTL design, thereby maximizing the efficacy of benchmarking LAD capabilities.
+295
+296
+297   3.3.2     D EBUG T EST D ESIGN
+298
+299   Moreover, the debugging process is a critical step in the integrated circuit design flow and should
+300   not be omitted from benchmarking: real-world hardware design often involves identifying and cor-
+301
+      recting errors. Therefore, we introduce debugging tests in GenBen. We categorize them into three
+      types: syntax errors, functional errors, and a hybrid of both. By injecting errors into correct designs,
+302
+      we create debugging datasets that require LLMs to locate and fix the erroneous code.
+303
+304
+305   3.4     DATA P ERTURBATION
+306
+307   Building upon insights from existing DS-1000 works (Lai et al., 2023), we introduced
+308   a perturbation strategy to mitigate potential memorization biases in AI models.                            We
+309   implemented two types of perturbations: surface and semantic as shown in Table 4.
+310                                                                 Surface-level perturbations alter the phrasing
+311              Table 4: Perturbation Categories                   of a question without changing its core mean-
+312                                                                 ing. For instance, the prompt “Design a 128x32
+313
+        Perturbation Description                                    RAM module” might be rephrased as “Con-
+        Surface      Paraphrase: don’t change reference solution    struct a memory module with 128 addresses
+314     Semantic     Generalization: will change reference solution
+                                                                    and 32-bit data width”. As illustrated in Fig-
+315
+                                                                    ure 2.C, surface perturbations require a equiva-
+316
+      lence check to ensure that the meaning of the task remains unchanged.
+317
+318   Semantic perturbations increase the difficulty of a task by altering its underlying meaning. For
+319   example, changing a prompt from “Design a 16-bit adder” to “Design an adder that can handle
+320
+      arithmetic of two complements for 16-bit inputs” requires the model to exhibit stronger reasoning
+      abilities. It is necessary to align the updated tasks with their corresponding solutions to maintain
+321
+      consistency as shown in Figure 2.C.
+322
+323   We implemented perturbations in two stages: during the construction of GenBen, as shown in Fig-
+      ure 2.A, and throughout the GenBen workflow, as depicted in Figure 2.B.
+
+
+                                                                 6
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+324
+      3.4.1    S TATIC P ERTURBATION
+325
+326
+327
+      Static perturbations are applied during the test construction phase, leveraging the multi-agent pro-
+      cess illustrated in Figure 2.C. This process involves adding surface and semantic perturbations to
+328
+      candidate tests, which are then reviewed by human experts to finalize the test design. Key aspects of
+329
+      this stage include: 1).Abstracting concepts, definitions, and computational problems into objective
+330   questions; 2).Injecting bugs into correct code to create debugging tests; and 3).Adjusting and deriv-
+331   ing new coding tests. These perturbations are applied at the data source level and remain unchanged
+332   once the test set is finalized.
+333
+334
+335
+336   3.4.2    DYNAMIC P ERTURBATION
+337
+338   To further reduce the interference of pre-training data, we introduce dynamic perturbations during
+339   the evaluation process using surface-level perturbations. This stage involves generating slightly
+340   varied versions of the tests as described in Section 3.2. This provides researchers with additional
+341   insights and references for analyzing the robustness and adaptability of the LLMs.
+342
+343
+344
+      3.5     M ULTIMODAL F EATURE S UPPORT
+345
+346
+347   The GenBen framework offers both unimodal and multimodal task evaluations, addressing the grow-
+348   ing need for comprehensive assessment methodologies in hardware design. This feature is partic-
+349   ularly important because real-world design processes often require the integration of various forms
+350
+      of data, such as textual specifications, diagrams, and architectural schematics. Understanding and
+      synthesizing information from multiple modalities is crucial for effective hardware design.
+351
+352   In GenBen, multimodal data types include basic circuit diagrams, design architecture schematics,
+353   waveform diagrams, and tables. These data types are utilized across various test categories: knowl-
+354   edge questions assess the understanding of fundamental concepts and their applications; code gen-
+355   eration tests require interpreting and translating visual schematics into HDL code; and debugging
+356
+      tests involve identifying and correcting errors in designs that are presented through a combination
+      of text and visual data.
+357
+358
+359
+360   3.6     E VALUATION M ETRIC D ESIGN
+361
+362
+363
+      We developed a comprehensive evaluation metric system, as detailed in Table 5, which includes
+      both basic correctness metrics and QoR metrics. The QoR metrics—encompassing synthesizability,
+364
+      power, area, and timing performance for evaluating the feasibility of generated designs for silicon
+365
+      implementation. To quantify the design optimization capability of LLMs, we normalize these QoR
+366   results against a reference design for result-aware.
+367
+368   This comprehensive approach, which
+369
+      includes knowledge master & trans-                            Table 5: Metrics of GenBen
+      fer, design generation, debugging, mul-
+370
+      timodal content and design optimiza-         Metric               Description
+371
+      tion derived from post-synthesis, en-        Knowledge Master     Basic concept without need of deduction
+372   ables GenBen to systematically evaluate      Knowledge Transfer Generalization skills that need CoT or deduction
+373   LLM performance throughout the entire        Debug Ability        Skills in issue-solving and perseverance
+374   hardware design process. Especially,         Code Correctness     Syntax & Function: Skills in programming
+375   the improvement-aware metrics derived        Quality of Result    Synthesizability, Power, Area & Timing
+376   from power, area, and timing analyses
+377   offer a clear and intuitive representation
+      of the capability of the model to produce high-quality, manufacturable hardware designs.
+
+
+                                                             7
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+378
+379
+380
+381
+382
+383
+384
+385                                           Figure 4: GPT-4o Tests
+386
+387
+388
+389
+390
+391
+392
+393
+394                                         Figure 5: Claude3.5 Tests
+395
+396
+397   4     E XPERIMENTAL R ESULTS
+398
+399   4.1   EXPERIMENTAL SETUP
+400
+401   Model Selection: Our study evaluated nine models, comprising six multimodal and three lan-
+402   guage models. The selected models are GPT-4-turbo, GPT-4o, GPT-3.5-turbo, Claude3.5, Llama3,
+403   QWEN-vl-max, QWEN-vl-plus, GLM-4V-plus, and GLM-4.
+404   Prompt Template: We developed a standardized prompt structure consisting of two key compo-
+405   nents: (1) a role-playing prompt and (2) a problem description prompt as shown in Figure 2.E.
+406
+      Test Iteration: We employed a pass@5 evaluation strategy throughout our experiments.
+407
+408   Pass Rate: Finallys, we used Pass Rate (PR) to quantify the overall ability. For an problem θi and
+409   its LLM-generated
+                1 1  answer            θi∗ , we had a corresponding set of correct answer in GenBen database
+410     xi , yi , xi , yi , . . . ,(xi , yi ). For the correct solution, θi∗ , it should produce
+         0 0                         m m
+                                                                                           the correct output
+411   yij when applied to the input data xji from the test cases. That is, aθi∗ xji = yij , the test case
+412             
+413     xji , yij can be regarded as passing. Whether the answer is successfully passed can be described as
+414   Vm h             
+                         j     j
+                                 i
+         j=0     aθ ∗
+                    i
+                       x i = y i , an aggregate result of all test cases. The PR are defined as:
+415
+416
+                                                 Vm h                i
+417                                        n
+                                           X      j=0   aθi∗ xji = yij
+418                                PR =                                    × 100%                          (1)
+                                           i=0
+                                                              n
+419
+420
+      Evaluation Criteria:
+421
+422
+             • Knowledge& debugging tests. Pass/fail criterion, comparing with reference.
+423
+424          • Code generation. Syntax: failed attempts receive a score of 0%. Successful attempts
+425
+               with warnings incur a 5% penalty per warning, with a minimum score of 60%. Function:
+               calculated ranging from 0% to 100%. Besides, to assess QoR optimization capabilities, we
+426
+               conduct a normalized comparison against a reference design.
+427
+428
+429   4.2   RESULTS ANALYSIS
+430
+431   Stable Benchmark Performance: Results shown in Figure 4-12 highlight that the best model
+      achieved a overall PR slightly above 40% but below 50%, aligning with expectations.
+
+
+                                                          8
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+432
+433
+434
+435
+436
+437
+438
+439                                      Figure 6: GPT-4-turbo Tests
+440
+441
+442
+443
+444
+445
+446
+447
+448
+                                        Figure 7: QWEN-vl-max Tests
+449
+450
+451
+452
+453
+454
+455
+456
+457
+458                                     Figure 8: QWEN-vl-plus Tests
+459
+460
+461
+462
+463
+464
+465
+466
+467                                      Figure 9: GLM-4V-plus Tests
+468
+469
+470
+471
+472
+473
+474
+475
+476
+         Figure 10: GLM-4 Tests        Figure 11: GPT-3.5-turbo Tests       Figure 12: Llama3 Tests
+477
+478
+479
+480   Effective Difficulty Tiering: Difficulty levels and PRs have a correlation. Using GPT-4o (shown
+481   in Figure 4, detailed value in Section A, Table 10) as a example, the consistent 5-10% difference in
+482
+      PRs across these levels.
+483   Correlation Between Tests: The data indicates a correlation between Knowledge Mastery and
+484   coding abilities. Models that performed well in Knowledge Mastery, such as GPT-4o and Claude
+485   3.5, also showed high scores in Debugging and Functional Correctness. This suggests that a solid
+      understanding of fundamental concepts positively influences practical coding skills.
+
+
+                                                       9
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+486
+487
+488
+489
+490
+491
+492
+493
+          Figure 13: PR of All Tests     Figure 14: PR of Text Tests        Figure 15: Example of QoR
+494
+495
+496
+      Synthesizability vs. Syntax Discrepancy: Synthesizability and syntax correctness has a high in-
+497   consistency (91.76%), as Figure 13 and 14 shown. This discrepancy arises from the inherent dif-
+498   ferences in requirements between simulation and synthesis tools, exacerbated by the presence of
+499   non-IEEE-compliant code in pre-training datasets. This issue highlights an area for future model
+500   improvement.
+501
+      Debugging Capabilities: Models generally exhibit stronger debugging capabilities compared to
+502
+      code generation, which may be attributed to the additional context provided in debugging tests.
+503   QoR Analysis for Top Models The QoR result for
+504   GPT-4o and Claude 3.5 is presented in Figure 15.
+505   GPT-4o shows stable performance across area and tim-
+506   ing metrics with improvement need in low-power de-
+507   sign. On the other hand, Claude3.5 demonstrates ag-
+508   gressive optimization in power and area but at the cost
+509   of timing violations. These insights shows the differ-
+510   ent trade-offs by different models.
+511   Ablation Experiment of Dynamic Perturbation Fig-            Figure 16: Example of DP Influence
+512   ure 16 takes Llama3 as an example to illustrate the im-
+513   pact of dynamic perturbations from GPT-3.5 and GPT-
+514   4. The results demonstrate that the performance fluctuated across different test sets, with an overall
+515   performance decline of approximately 9%.
+516
+517   5     C ONCLUSION
+518
+519   In this paper, we introduce GenBen, a comprehensive benchmark designed to evaluate the capabili-
+520   ties of LLMs in the domain of hardware design. Unlike existing benchmarks that primarily focus on
+521   code generation, GenBen offers a more holistic evaluation by encompassing debugging, optimiza-
+522   tion, and the chip hardening flow. By introducing perturbations and hierarchical task classification,
+523   GenBen provides a diverse range of end-to-end, open-source evaluation modalities. Our goal is
+524   to establish GenBen as a catalyst for advancements in LAD, providing a reliable benchmark for
+525   generative hardware designs tailored to meet real-world silicon manufacturing requirements.
+526
+527
+528
+529
+530
+531
+532
+533
+534
+535
+536
+537
+538
+539
+
+
+
+                                                       10
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+540
+      R EFERENCES
+541
+542   Skywater sky130 pdk, 2020.        URL https://skywater-pdk.readthedocs.io/en/
+543     main/. [Online].
+544   Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Ale-
+545     man, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al. Gpt-4 technical
+546     report. arXiv preprint arXiv:2303.08774, 2023.
+547
+548   ACM-SIGDA. Home, 2024. URL https://www.islad.org.
+549   Ahmed Allam and Mohamed Shalan. Rtl-repo: A benchmark for evaluating llms on large-scale rtl
+550     design projects. arXiv preprint arXiv:2405.17378, 2024.
+551
+552   Jonathan Bachrach, Huy Vo, Brian Richards, Yunsup Lee, Andrew Waterman, Rimas Avižienis,
+553
+        John Wawrzynek, and Krste Asanović. Chisel: constructing hardware in a scala embedded lan-
+        guage. In Proceedings of the 49th Annual Design Automation Conference, pp. 1216–1225, 2012.
+554
+555   Christopher Batten, Nathaniel Pinckney, Mingjie Liu, Haoxing Ren, and Bruce Khailany. Pyhdl-
+556     eval: An llm evaluation framework for hardware design using python-embedded dsls. In
+557     ACM/IEEE International Symposium on Machine Learning for CAD (MLCAD), Sep 2024.
+558
+      Janick Bergeron. Writing testbenches: functional verification of HDL models. Springer Science &
+559
+        Business Media, 2012.
+560
+561   Jason Blocklove, Siddharth Garg, Ramesh Karri, and Hammond Pearce. Chip-chat: Challenges and
+562     opportunities in conversational hardware design. In 2023 ACM/IEEE 5th Workshop on Machine
+563     Learning for CAD (MLCAD), pp. 1–6. IEEE, 2023.
+564   Adrian Bulat and Georgios Tzimiropoulos. LASP: Text-to-Text Optimization for Language-Aware
+565     Soft Prompting of Vision & Language Models.
+566
+567   Benton H Calhoun, Yu Cao, Xin Li, Ken Mai, Lawrence T Pileggi, Rob A Rutenbar, and Ken-
+568
+        neth L Shepard. Digital circuit design challenges and opportunities in the era of nanoscale cmos.
+        Proceedings of the IEEE, 96(2):343–365, 2008.
+569
+570   Jialun Cao, Meiziniu Li, Ming Wen, and Shing-chi Cheung. A study on Prompt Design, Advantages
+571      and Limitations of ChatGPT for Deep Learning Program Repair. URL http://arxiv.org/
+572      abs/2304.08191.
+573
+      Tuhin Chakrabarty, Vishakh Padmakumar, He He, and Nanyun Peng. Creative natural language
+574
+        generation. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language
+575     Processing: Tutorial Abstracts, pp. 34–40, 2023.
+576
+577   Kaiyan Chang, Zhirong Chen, Yunhao Zhou, Wenlong Zhu, Haobo Xu, Cangyuan Li, Mengdi Wang,
+578     Shengwen Liang, Huawei Li, Yinhe Han, et al. Natural language is not enough: Benchmarking
+579     multi-modal generative ai for verilog generation. arXiv preprint arXiv:2407.08473, 2024.
+580   Xiang Chen, Ningyu Zhang, Xin Xie, Shumin Deng, Yunzhi Yao, Chuanqi Tan, Fei Huang, Luo Si,
+581     and Huajun Chen. KnowPrompt: Knowledge-aware Prompt-tuning with Synergistic Optimization
+582     for Relation Extraction. In Proceedings of the ACM Web Conference 2022, pp. 2778–2788. doi:
+583     10.1145/3485447.3511998. URL http://arxiv.org/abs/2104.07650.
+584
+      James Cherry. Parallax static timing analyzer, 2023.            URL https://github.com/
+585
+        parallaxsw/OpenSTA. [Online].
+586
+587   Philippe Coussy and Adam Morawiec. High-level synthesis, volume 1. Springer, 2010.
+588
+      Mingkai Deng, Jianyu Wang, Cheng-Ping Hsieh, Yihan Wang, Han Guo, Tianmin Shu, Meng Song,
+589
+       Eric P. Xing, and Zhiting Hu. RLPrompt: Optimizing Discrete Text Prompts with Reinforcement
+590
+       Learning. URL http://arxiv.org/abs/2205.12548.
+591
+592   Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha
+593     Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, et al. The llama 3 herd of models.
+        arXiv preprint arXiv:2407.21783, 2024.
+
+
+                                                      11
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+594
+      R. Timothy Edwards. Open pdks pdk installer for open-source tools, 2023. URL http://www.
+595     opencircuitdesign.com/open_pdks/index.html. [Online].
+596
+597   Yonggan Fu, Yongan Zhang, Zhongzhi Yu, Sixu Li, Zhifan Ye, Chaojian Li, Cheng Wan, and
+598     Yingyan Celine Lin. Gpt4aigchip: Towards next-generation ai accelerator design automation
+599     via large language models. In 2023 IEEE/ACM International Conference on Computer Aided
+600     Design (ICCAD), pp. 1–9. IEEE, 2023.
+601
+      Daniel D Gajski, Nikil D Dutt, Allen CH Wu, and Steve YL Lin. High—Level Synthesis: Introduc-
+602
+        tion to Chip and System Design. Springer Science & Business Media, 2012.
+603
+604   Yunfan Gao, Yun Xiong, Xinyu Gao, Kangxiang Jia, Jinliu Pan, Yuxi Bi, Yi Dai, Jiawei Sun, and
+605     Haofen Wang. Retrieval-augmented generation for large language models: A survey. arXiv
+606     preprint arXiv:2312.10997, 2023.
+607
+608   Ahmed Ghazy and Mohamed Shalan. Openlane: The open-source digital asic implementation flow.
+609
+        In Proc. Workshop on Open-Source EDA Technol.(WOSET), 2020.
+610
+      John L Hennessy and David A Patterson. Computer architecture: a quantitative approach. Morgan
+611     kaufmann, 2017.
+612
+613   Neil Houlsby, Andrei Giurgiu, Stanislaw Jastrzebski, Bruna Morrone, Quentin De Laroussilhe, An-
+614     drea Gesmundo, Mona Attariyan, and Sylvain Gelly. Parameter-efficient transfer learning for nlp.
+615     In International Conference on Machine Learning, pp. 2790–2799. PMLR, 2019.
+616
+      Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang,
+617
+        and Weizhu Chen. Lora: Low-rank adaptation of large language models. arXiv preprint
+618
+        arXiv:2106.09685, 2021.
+619
+620   Yingbing Huang, Lily Jiaxin Wan, Hanchen Ye, Manvi Jha, Jinghua Wang, Yuhong Li, Xiaofan
+621     Zhang, and Deming Chen. New solutions on llm acceleration, optimization, and application,
+622     2024. URL https://arxiv.org/abs/2406.10903.
+623
+624
+      ICCAD-Committee. LLM-Aided Design Panel, 2023. URL https://2023.iccad.com/
+        llm-aided-design-panel.
+625
+626   Yuhang Lai, Chengxi Li, Yiming Wang, Tianyi Zhang, Ruiqi Zhong, Luke Zettlemoyer, Wen-tau
+627     Yih, Daniel Fried, Sida Wang, and Tao Yu. Ds-1000: a natural and reliable benchmark for data
+628     science code generation. In Proceedings of the 40th International Conference on Machine Learn-
+629     ing, ICML’23. JMLR.org, 2023.
+630
+631   Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal,
+632     Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, et al. Retrieval-augmented genera-
+633
+        tion for knowledge-intensive nlp tasks. Advances in Neural Information Processing Systems, 33:
+        9459–9474, 2020.
+634
+635   Mingjie Liu, Nathaniel Pinckney, Brucek Khailany, and Haoxing Ren. Verilogeval: Evaluating large
+636    language models for verilog code generation. In 2023 IEEE/ACM International Conference on
+637    Computer Aided Design (ICCAD), pp. 1–8. IEEE, 2023.
+638
+639   Peng Liu, Lemei Zhang, and Jon Atle Gulla. Pre-train, Prompt and Recommendation: A Compre-
+640     hensive Survey of Language Modelling Paradigm Adaptations in Recommender Systems, a. URL
+641
+        http://arxiv.org/abs/2302.03735.
+642
+      Shang Liu, Yao Lu, Wenji Fang, Mengming Li, and Zhiyao Xie. Openllm-rtl: Open dataset and
+643     benchmark for llm-aided design rtl generation. 2024a.
+644
+645   Tianyang Liu, Qi Tian, Jianmin Ye, LikTung Fu, Shengchu Su, Junyan Li, Gwok-Waa Wan, Lay-
+646     ton Zhang, Sam-Zaak Wong, Xi Wang, et al. Chatchisel: Enabling agile hardware design with
+647     large language models. In 2024 2nd International Symposium of Electronics Design Automation
+        (ISEDA), pp. 710–716. IEEE, 2024b.
+
+
+                                                     12
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+648
+      Xiao Liu, Kaixuan Ji, Yicheng Fu, Weng Tam, Zhengxiao Du, Zhilin Yang, and Jie Tang. P-Tuning:
+649     Prompt Tuning Can Be Comparable to Fine-tuning Across Scales and Tasks. In Proceedings of the
+650     60th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers),
+651     pp. 61–68. Association for Computational Linguistics, b. doi: 10.18653/v1/2022.acl-short.8.
+652     URL https://aclanthology.org/2022.acl-short.8.
+653
+654
+      Anton Lozhkov, Raymond Li, Loubna Ben Allal, Federico Cassano, Joel Lamy-Poirier, Nouamane
+        Tazi, Ao Tang, Dmytro Pykhtar, Jiawei Liu, Yuxiang Wei, et al. Starcoder 2 and the stack v2: The
+655
+        next generation. arXiv preprint arXiv:2402.19173, 2024.
+656
+657   Pan Lu, Hritik Bansal, Tony Xia, Jiacheng Liu, Chunyuan Li, Hannaneh Hajishirzi, Hao Cheng, Kai-
+658     Wei Chang, Michel Galley, and Jianfeng Gao. Mathvista: Evaluating mathematical reasoning of
+659     foundation models in visual contexts. arXiv preprint arXiv:2310.02255, 2023.
+660
+      Yao Lu, Shang Liu, Qijun Zhang, and Zhiyao Xie. Rtllm: An open-source benchmark for design rtl
+661
+        generation with large language model. In 2024 29th Asia and South Pacific Design Automation
+662
+        Conference (ASP-DAC), pp. 722–727. IEEE, 2024.
+663
+664   Ziyang Luo, Can Xu, Pu Zhao, Qingfeng Sun, Xiubo Geng, Wenxiang Hu, Chongyang Tao, Jing
+665     Ma, Qingwei Lin, and Daxin Jiang. Wizardcoder: Empowering code large language models with
+666     evol-instruct. arXiv preprint arXiv:2306.08568, 2023.
+667
+      Dewmini Sudara Marakkalage, Eleonora Testa, Walter Lau Neto, Alan Mishchenko, Giovanni
+668     De Micheli, and Luca Amarù. Scalable sequential optimization under observability don’t cares.
+669     In 2024 Design, Automation & Test in Europe Conference & Exhibition (DATE), pp. 1–6. IEEE,
+670     2024.
+671
+672   Erik Nijkamp, Bo Pang, Hiroaki Hayashi, Lifu Tu, Huan Wang, Yingbo Zhou, Silvio Savarese,
+673     and Caiming Xiong. Codegen: An open large language model for code with multi-turn program
+674
+        synthesis. arXiv preprint arXiv:2203.13474, 2022.
+675   OpenAI. Gpt-4 technical report. Technical report, OpenAI, 2023.
+676
+677   Jan M Rabaey, Anantha Chandrakasan, and Borivoje Nikolic. Digital integrated circuits, volume 2.
+678     Prentice hall Englewood Cliffs, 2002.
+679   Baptiste Roziere, Jonas Gehring, Fabian Gloeckle, Sten Sootla, Itai Gat, Xiaoqing Ellen Tan, Yossi
+680     Adi, Jingyu Liu, Romain Sauvestre, Tal Remez, et al. Code llama: Open foundation models for
+681     code. arXiv preprint arXiv:2308.12950, 2023.
+682
+683   Anthropic Team. Claude2. https://www.anthropic.com/index/claude-2, 2023.
+684
+      Shailja Thakur, Baleegh Ahmad, Zhenxing Fan, Hammond Pearce, Benjamin Tan, Ramesh Karri,
+685     Brendan Dolan-Gavitt, and Siddharth Garg. Benchmarking large language models for automated
+686     verilog rtl code generation. In 2023 Design, Automation & Test in Europe Conference & Exhibi-
+687     tion (DATE), pp. 1–6. IEEE, 2023a.
+688
+689   Shailja Thakur, Baleegh Ahmad, Hammond Pearce, Benjamin Tan, Brendan Dolan-Gavitt, Ramesh
+690
+        Karri, and Siddharth Garg. Verigen: A large language model for verilog code generation. arXiv
+        preprint arXiv:2308.00708, 2023b.
+691
+692   Shailja Thakur, Jason Blocklove, Hammond Pearce, Benjamin Tan, Siddharth Garg, and
+693     Ramesh Karri. Autochip: Automating hdl generation using llm feedback. arXiv preprint
+694     arXiv:2311.04887, 2023c.
+695
+      Donald E Thomas, Elizabeth D Lagnese, Robert A Walker, Jayanth V Rajan, Robert L Blackburn,
+696
+        and John A Nestor. Algorithmic and Register-Transfer Level Synthesis: The System Architect’s
+697
+        Workbench: The System Architect’s Workbench, volume 85. Springer Science & Business Media,
+698     1989.
+699
+700   Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timothée
+701     Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, et al. Llama: Open and
+        efficient foundation language models. arXiv preprint arXiv:2302.13971, 2023a.
+
+
+                                                     13
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+702
+      Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timothée
+703     Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, et al. Llama: Open and
+704     efficient foundation language models. arXiv preprint arXiv:2302.13971, 2023b.
+705
+706   Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Niko-
+707     lay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al. Llama 2: Open founda-
+708
+        tion and fine-tuned chat models. arXiv preprint arXiv:2307.09288, 2023c.
+709   Ashish Vaswani. Attention is all you need. arXiv preprint arXiv:1706.03762, 2017.
+710
+711   Prashanth Vijayaraghavan, Luyao Shi, Stefano Ambrogio, Charles Mackin, Apoorva Nitsure, David
+712     Beymer, and Ehsan Degan. Vhdl-eval: A framework for evaluating large language models in vhdl
+713
+        code generation. arXiv preprint arXiv:2406.04379, 2024.
+714   Xi Wang, Gwok-Waa Wan, Sam-Zaak Wong, Layton Zhang, Tianyang Liu, Qi Tian, and Jianmin
+715     Ye. Chatcpu: An agile cpu design & verification platform with llm. In 61st ACM/IEEE Design
+716     Automation Conference (DAC’24), pp. 6, 2024.
+717
+718
+      Jason Wei, Maarten Bosma, Vincent Y Zhao, Kelvin Guu, Adams Wei Yu, Brian Lester, Nan Du,
+        Andrew M Dai, and Quoc V Le. Finetuned language models are zero-shot learners. arXiv preprint
+719
+        arXiv:2109.01652, 2021.
+720
+721   S. Williams. The icarus verilog compilation system, 2023. URL https://github.com/
+722     steveicarus/iverilog. [Online].
+723
+      Genta Indra Winata, Andrea Madotto, Zhaojiang Lin, Rosanne Liu, Jason Yosinski, and Pascale
+724
+        Fung. Language models are few-shot multilingual learners. arXiv preprint arXiv:2109.07684,
+725
+        2021.
+726
+727   Clifford Wolf, Johann Glaser, and Johannes Kepler. Yosys-a free verilog synthesis suite. In Pro-
+728     ceedings of the 21st Austrian Workshop on Microelectronics (Austrochip), volume 97, 2013.
+729
+      Haoyuan Wu, Zhuolun He, Xinyun Zhang, Xufeng Yao, Su Zheng, Haisheng Zheng, and Bei Yu.
+730
+        Chateda: A large language model powered autonomous agent for eda. IEEE Transactions on
+731     Computer-Aided Design of Integrated Circuits and Systems, 2024.
+732
+733   Cunxi Yu, Houping Xiao, and Giovanni De Micheli. Developing synthesis flows without human
+734     knowledge. In Proceedings of the 55th Annual Design Automation Conference, pp. 1–6, 2018.
+735
+      Farzaneh Rabiei Kashanaki Mark Zakharov and Jose Renau. Hdleval benchmarking llms for multi-
+736     ple hdls.
+737
+738   Yuanhan Zhang, Kaiyang Zhou, and Ziwei Liu. Neural Prompt Search. URL http://arxiv.
+739     org/abs/2206.04673.
+740
+      Wayne Xin Zhao, Kun Zhou, Junyi Li, Tianyi Tang, Xiaolei Wang, Yupeng Hou, Yingqian Min,
+741    Beichen Zhang, Junjie Zhang, Zican Dong, et al. A survey of large language models. arXiv
+742    preprint arXiv:2303.18223, 2023.
+743
+744   Tianyu Zheng, Ge Zhang, Tianhao Shen, Xueling Liu, Bill Yuchen Lin, Jie Fu, Wenhu Chen, and
+745     Xiang Yue. Opencodeinterpreter: Integrating code generation with execution and refinement.
+746
+        arXiv preprint arXiv:2402.14658, 2024.
+747   Li Zhong and Zilong Wang. A study on robustness and reliability of large language model code
+748     generation, 2023.
+749
+750
+751
+752
+753
+754
+755
+
+
+
+                                                    14
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+756
+      A     A PPENDIX
+757
+758
+759       Appendices Table of Contents
+760
+              A.1 Concept of LLM-Aided Design . . . . . . . . . . . . . . . . . . . . . . . .            15
+761
+              A.2 Quality of Results in Hardware Design . . . . . . . . . . . . . . . . . . . .          15
+762
+                  A.2.1 Synthesizability . . . . . . . . . . . . . . . . . . . . . . . . . . . .         15
+763               A.2.2 Power, Performance, and Area (PPA) . . . . . . . . . . . . . . . .               15
+764               A.2.3 Total Negative Slack (TNS) and Worst Negative Slack (WNS) . . .                  16
+765               A.2.4 Setup and Hold Times . . . . . . . . . . . . . . . . . . . . . . . .             16
+766           A.3 The Role of Open-Source EDA Tools in Enhancing Scientific Reproducibility              16
+767               A.3.1 Implementation of Open-Source EDA Tools in GenBen . . . . . . .                  17
+768               A.3.2 Choice of PDK for QoR Evaluation . . . . . . . . . . . . . . . . .               17
+769           A.4 Sources of Our Dataset . . . . . . . . . . . . . . . . . . . . . . . . . . . .         17
+770           A.5 Generative Benchmark Concept and Principles . . . . . . . . . . . . . . .              18
+771
+                  A.5.1 Test Generation Algorithm . . . . . . . . . . . . . . . . . . . . . .            19
+              A.6 Experimental Results . . . . . . . . . . . . . . . . . . . . . . . . . . . . .         20
+772
+              A.7 Tutorial: Evaluating LLM Performance with GenBen . . . . . . . . . . . .               23
+773
+                  A.7.1 Step-by-Step Instructions . . . . . . . . . . . . . . . . . . . . . . .          23
+774               A.7.2 Refer to the README for Detailed Instructions . . . . . . . . . . .              23
+775           A.8 Open Source Declaration . . . . . . . . . . . . . . . . . . . . . . . . . . .          23
+776
+777
+778   A.1     C ONCEPT OF LLM-A IDED D ESIGN
+779
+780   LLM-Aided Design (LAD) is defined as the use of Large Language Models (LLMs) as a methodol-
+781   ogy to assist in designing circuits, software, and computing systems with improved quality, produc-
+782   tivity, robustness, and cost-effectiveness. It focuses on discussing results that leverage the significant
+783   advancements and innovations captured by generative AI and LLM technology to offer new methods
+784   and solutions for design automation targeting various applications. This concept was first introduced
+785   by IEEE ICCAD 2023.
+786
+787   A.2     Q UALITY OF R ESULTS IN H ARDWARE D ESIGN
+788
+789   In hardware design, Quality of Results (QoR) metrics are crucial for evaluating the effectiveness
+790   and efficiency of a design. These metrics encompass various aspects that determine the practicality
+791   and performance of the generated hardware. Below, we provide detailed explanations of key QoR
+792
+      metrics and their significance:
+793
+794   A.2.1    S YNTHESIZABILITY
+795
+      Synthesizability refers to the ability of a hardware design to be translated from a high-level descrip-
+796
+      tion into a gate-level netlist that can be fabricated. This process, known as synthesis, is fundamental
+797
+      to the hardware design flow. A design that is not synthesizable cannot be implemented in silicon,
+798   rendering it impractical for real-world applications. Ensuring synthesizability is the first step in
+799   verifying that a design can transition from concept to physical implementation. It is important to
+800   note that a design passing simulation does not guarantee it will pass synthesis, often due to syntax
+801   or structural issues that, while acceptable in simulation, do not meet the stringent requirements of
+802   synthesis tools.
+803
+804   A.2.2    P OWER , P ERFORMANCE , AND A REA (PPA)
+805
+806   Power, Performance, and Area (PPA) is a comprehensive set of metrics used to evaluate the effi-
+807   ciency of a hardware design:
+808
+809           • Power: Measures the amount of electrical power consumed by the hardware design. Lower
+                power consumption is critical for battery-operated devices and energy-efficient systems.
+
+
+                                                         15
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+810
+              • Performance: Often evaluated in terms of maximum operating frequency or throughput,
+811             performance metrics indicate how fast the hardware can operate. Higher performance is
+812             essential for applications requiring rapid data processing and high-speed computations.
+813
+              • Area: Refers to the silicon area occupied by the hardware design. Minimizing area is im-
+814
+                portant for reducing manufacturing costs and enabling the integration of more functionality
+815
+                within a given chip size.
+816
+817   Balancing these three aspects—power, performance, and area—is a key challenge in hardware de-
+818   sign, as improvements in one area often lead to trade-offs in the others.
+819
+      In our benchmark design, to ensure consistency and efficiency in runtime and EDA script stan-
+820
+      dardization, we have unified the primary performance metric to frequency. Consequently, perfor-
+821
+      mance feedback is primarily provided through Total Negative Slack (TNS) and Worst Negative Slack
+822   (WNS).
+823
+824   A.2.3    T OTAL N EGATIVE S LACK (TNS) AND W ORST N EGATIVE S LACK (WNS)
+825
+826   Total Negative Slack (TNS) and Worst Negative Slack (WNS) are critical timing metrics used to
+827   evaluate the timing performance of a hardware design:
+828
+829           • Total Negative Slack (TNS): The sum of all negative timing slacks in a design. Nega-
+830
+                tive slack indicates that a timing path does not meet its required timing constraints. TNS
+                provides an aggregate measure of timing violations across the entire design.
+831
+832           • Worst Negative Slack (WNS): Represents the most severe timing violation in the design.
+833             It is the largest single negative slack value and highlights the worst-performing timing path.
+834
+835
+      Both TNS and WNS are essential for identifying and addressing timing issues, ensuring that the
+      design meets its performance requirements without violations.
+836
+837
+      A.2.4    S ETUP AND H OLD T IMES
+838
+839   Setup and hold times are critical parameters for ensuring reliable operation of sequential circuits:
+840
+841           • Setup Time: The minimum time before the clock edge by which data must be stable to
+842             be correctly latched. Violations in setup time can lead to incorrect data being captured,
+843             affecting the functionality of the design.
+844           • Hold Time: The minimum time after the clock edge during which data must remain sta-
+845             ble to be correctly latched. Violations in hold time can cause data corruption, leading to
+846             unpredictable circuit behavior.
+847
+848   Ensuring that setup and hold times are met is crucial for the stability and reliability of the hardware
+849   design.
+850   In summary, these QoR metrics provide a comprehensive framework for evaluating the practical
+851   viability and performance of hardware designs. They are essential for ensuring that a design not only
+852   meets its functional requirements but also operates efficiently and reliably in real-world applications.
+853   Moreover, addressing the syntactical and structural requirements for synthesis ensures that designs
+854   are theoretically sound and practically implementable in silicon.
+855
+856   A.3     T HE ROLE OF O PEN -S OURCE EDA T OOLS IN E NHANCING S CIENTIFIC
+857           R EPRODUCIBILITY
+858
+859   Open-source Electronic Design Automation (EDA) tools are key enablers of scientific reproducibil-
+860
+      ity, providing accessible alternatives to benchmarks that have traditionally relied on commercial
+      EDA tools such as Design Compiler and Synopsys VCS.
+861
+862   One of the primary advantages of open-source EDA tools is their facilitation of effortless collabora-
+863   tion among researchers and designers. They eliminate the need for complex legal agreements such
+      as Non-Disclosure Agreements (NDAs), allowing for straightforward sharing of designs, ideas, and
+
+
+                                                         16
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+864
+865
+866
+867
+868
+869
+870
+871
+872
+873
+874
+875
+876
+877
+878
+879
+880
+881
+882
+883                                         Figure 17: OpenLane Flow
+884
+885
+886   materials. This ease of collaboration is particularly beneficial for integrating experts from fields like
+887   computer science, where open-source development is prevalent.
+888
+      Moreover, open-source EDA tools are invaluable for educational and research purposes. They enable
+889
+      educators to provide students with practical insights into the design automation process. Students
+890
+      and researchers can modify the code, test their hypotheses, and gain a comprehensive understanding
+891   of the chip design process.
+892
+893
+      A.3.1    I MPLEMENTATION OF O PEN -S OURCE EDA T OOLS IN G EN B EN
+894
+895   In our GenBen design process, we exclusively use open-source EDA tools. During the task construc-
+896   tion phase, we rely on Verilator to perform coverage analysis, enhancement, and refinement of the
+897   testbenches. For agile execution during model testing, we use Icarus Verilog due to its faster com-
+898   pilation times, although it lacks comprehensive coverage analysis. Therefore, we employ different
+899   tools at various stages to balance efficiency and thoroughness.
+900
+      Additionally, to obtain physical implementation information, we use OpenLane, an open-source
+901   RTL-to-GDSII EDA flow, as illustrated in Figure 17. OpenLane enables us to extract critical data
+902   on synthesizability, area, power, and timing, ensuring that our benchmarks are both practical and
+903   reproducible using widely accessible tools.
+904
+905
+      A.3.2    C HOICE OF PDK FOR Q O R E VALUATION
+906
+907   The Quality of Results (QoR) of a design can vary significantly across different Process Design
+908   Kits (PDKs). To ensure consistency in our evaluations, we have chosen the open-source SkyWater
+909   130nm PDK for QoR testing. This choice provides a standardized reference point for assessing
+910   the practical viability of hardware designs, allowing for fair and comparable results across different
+911   design implementations.
+912
+913   A.4     S OURCES OF O UR DATASET
+914
+915   The dataset for our GenBen benchmark is meticulously curated from a diverse array of sources to
+916   ensure comprehensive coverage of various aspects of hardware design. These sources are catego-
+917   rized into three levels—Level 1 (L1), Level 2 (L2), and Level 3 (L3)—based on the complexity and
+      depth of the tasks they contribute.
+
+
+                                                         17
+      Under review as a conference paper at ICLR 2025
+
+
+
+
+918
+      Level 1 (L1) sources provide fundamental tasks aimed at assessing basic knowledge and skills in
+919   hardware design. These include materials such as university textbooks, which supply essential the-
+920   oretical and practical questions for understanding core concepts. Basic code examples offer simple
+921   coding tasks to test foundational programming skills, while basic quizzes include multiple-choice
+922   and short-answer questions to evaluate basic knowledge. Additionally, HDLBits provides elemen-
+923   tary hardware description language (HDL) exercises suitable for beginners.
+924
+      Level 2 (L2) sources present intermediate-level tasks that require a deeper understanding and appli-
+925   cation of hardware design principles. These sources incorporate GitHub projects that provide real-
+926   world coding examples and projects necessitating practical implementation skills. Graduate projects
+927   contribute tasks from advanced coursework, focusing on more complex design and problem-solving
+928   abilities. Question and answer forums such as Stack Overflow and GitHub Q&A include practical
+929   debugging and problem-solving questions commonly encountered by developers, addressing real-
+930   world issues faced by practitioners.
+931   Level 3 (L3) sources deliver advanced tasks that challenge the highest level of expertise in hardware
+932   design. These include silicon-proven repositories, contributing tasks from projects successfully im-
+933   plemented in silicon, ensuring high reliability and complexity. Research textbooks provide advanced
+934   theoretical and practical problems stemming from cutting-edge research in hardware design. Peer-
+935   reviewed publications from ACM and IEEE include tasks based on recent advancements in the field.
+936   Student contests offer challenging problems from hardware design competitions, while studies in
+937   advanced microarchitecture supply tasks involving sophisticated architectural design and optimiza-
+938   tion. Innovative projects introduce problems that push the boundaries of current technology, and
+939
+      industrial projects provide tasks derived from real-world industrial applications, emphasizing prac-
+      tical implementation and optimization.
+940
+941   The tasks from these varied sources are further categorized to cover a wide range of skills and
+942   knowledge areas. Tasks focused on knowledge transfer assess the ability to apply learned concepts
+943   to new scenarios, enhancing adaptability in design approaches. Those involving code debugging
+944   require identifying and correcting errors in code, which is critical for developing robust hardware
+945
+      systems. Knowledge mastery tasks evaluate the depth of understanding of fundamental concepts,
+      ensuring a solid theoretical foundation. Code generation tasks necessitate the creation of new code
+946
+      based on given specifications, testing the ability to innovate and implement design requirements
+947
+      effectively.
+948
+949   These tasks are organized into two main categories for the GenBen benchmark: text-based tasks
+950   and multimodal tasks. Text-based tasks are purely textual, focusing on theoretical and conceptual
+951
+      understanding, including problem-solving and analytical reasoning. Multimodal tasks involve mul-
+      tiple forms of data, such as text and diagrams, to simulate real-world design challenges and provide
+952
+      a more comprehensive assessment of practical skills.
+953
+954   Figure 20 illustrates the relationship between the data sources and the final dataset. Notably, a signif-
+955   icant portion of silicon-proven designs comes from resources such as Google FOSS and OpenCores,
+956   as shown in Figures 18 and 19.
+957
+958
+959
+960
+961
+962
+963
+964
+965
+966
+        Figure 18: FOSS Projects of OpenMPW                                Figure 19: OpenCores
+967
+968   A.5   G ENERATIVE B ENCHMARK C ONCEPT AND P RINCIPLES
+969
+970   The concept of a generative benchmark involves creating evaluation tasks that are not directly stored
+971   in plaintext on platforms like GitHub but are instead implicitly distributed across various datasets.
+      This approach requires the use of scripts to dynamically extract tasks, arrange options, and ran-
+
+
+                                                         18
+       Under review as a conference paper at ICLR 2025
+
+
+
+
+972
+973
+974
+975
+976
+977
+978
+979
+980
+981
+982
+983
+984
+985
+986
+987
+988
+989                              Figure 20: Data Sources of the GenBen Dataset
+990
+991
+992
+993    domize the order of questions each time they are generated. Such a methodology helps mitigate
+994
+       the interference caused by a model’s pre-training memory, ensuring that assessments are based on
+       competency rather than memorization.
+995
+996    The principle behind this generative approach is to ensure that each generated task remains con-
+997    sistent for every evaluation, thereby maintaining the objectivity and fairness of the assessments.
+998    Additionally, a control group with only surface-level perturbations is introduced, allowing for si-
+999    multaneous evaluation of both groups and providing insights into the model’s sensitivity to such
+1000
+       variations.
+1001   Moreover, GenBen supports researchers in replacing or modifying the evaluation methods and tasks,
+1002   as the tests, evaluation framework, and generative scripts are decoupled. This flexibility allows for
+1003   the adaptation of the benchmark to different research needs and the incorporation of new evaluation
+1004   strategies. Below are the test generation algorithm 1 and the evaluation flow 2, which detail the
+1005   processes involved in generating and assessing the benchmark tasks.
+1006
+1007
+1008   A.5.1    T EST G ENERATION A LGORITHM
+1009
+1010
+1011   Algorithm 1 Test Generation Algorithm
+1012
+       Require: Test dataset D
+1013
+       Ensure: Generated test set T and perturbed test set T ′
+1014
+        1: Initialize test set T ← ∅
+1015    2: Initialize perturbed test set T ′ ← ∅
+1016    3: Load test dataset D
+1017    4: for each test d ∈ D do
+1018    5:    Generate task t from d using script
+1019    6:    Add task t to T
+1020    7: end for
+1021    8: for each task t ∈ T do
+1022    9:    Apply surface-level perturbation to t to generate t′
+1023
+       10:    Add perturbed task t′ to T ′
+       11: end for
+1024
+       12:
+1025
+       13: return T and T ′
+
+
+                                                         19
+       Under review as a conference paper at ICLR 2025
+
+
+
+
+1026                           Table 6: Results of Tested Multimodal Models on GenBen-all
+1027
+                      model           Knowledge Master   Knowledge Transfer    Debugging   Function Correctness   Synatx Correctness   Synthesizbility
+1028    GENBEN-all    gpt-4-turbo     57.00%             56.00%                40.00%      21.20%                 100.00%              93.70%
+1029    GENBEN-all    gpt-4o          69.00%             65.00%                52.20%      34.80%                 100.00%              96.90%
+        GENBEN-all    claude3.5       59.00%             55.00%                55.40%      35.40%                 98.60%               90.00%
+1030    GENBEN-all    qwen-vl-plus    45.00%             39.00%                32.00%      16.30%                 78.40%               66.40%
+        GENBEN-all    qwen-vl-max     59.00%             49.00%                36.50%      26.50%                 88.60%               78.90%
+1031    GENBEN-all    GLM-4V-plus     51.00%             55.00%                39.60%      12.50%                 71.70%               51.10%
+1032
+1033                                  Table 7: Results of All Tested Models on GenBen-Text
+1034
+1035                  model           Knowledge Master   Knowledge Transfer    Debugging   Function Correctness   Synatx Correctness   Synthesizbility
+        GENBEN-text   gpt-4-turbo     65.00%             62.00%                35.60%      21.30%                 100.00%              89.80%
+1036    GENBEN-text   gpt-4o          75.00%             70.00%                40.00%      32.00%                 97.50%               96.00%
+        GENBEN-text   gpt-3.5-turbo   63.00%             60.00%                37.80%      26.70%                 98.10%               93.30%
+1037    GENBEN-text   claude3.5       62.00%             58.00%                46.00%      22.10%                 98.10%               89.10%
+        GENBEN-text   qwen-vl-max     60.00%             50.00%                43.40%      20.20%                 84.80%               76.90%
+1038    GENBEN-text   qwen-vl-plus    52.00%             47.00%                43.00%      20.20%                 84.90%               76.90%
+1039    GENBEN-text   GLM-4V-plus     57.00%             51.00%                42.20%      7.50%                  65.60%               45.30%
+        GENBEN-text   llama3          68.00%             60.00%                40.00%      6.90%                  85.90%               57.30%
+1040    GENBEN-text   GLM-4V-plus     57.00%             48.00%                39.20%      7.50%                  65.60%               45.30%
+1041
+1042
+1043   Algorithm 2 Total Evaluation Flow
+1044   Require: Test set T , Perturbed test set T ′ , Model’s API A, Modality information M
+1045   Ensure: Evaluation results and final scores
+1046    1: Initialize response set R ← ∅
+1047    2: Initialize perturbed response set R′ ← ∅
+1048    3: Initialize evaluation results E ← ∅
+1049    4: Initialize final scores S ← ∅
+1050    5: for each task t ∈ T do
+1051
+        6:    Collect response r from model using A
+        7:    Add response r to R
+1052
+        8: end for
+1053
+        9: for each perturbed task t′ ∈ T ′ do
+1054   10:    Collect response r′ from model using A
+1055   11:    Add response r′ to R′
+1056   12: end for
+1057   13: for each response r ∈ R and r ′ ∈ R′ do
+1058   14:    Validate r and r′ using evaluation suite
+1059   15:    Simulate r and r′ with Iverilog
+1060   16:    Generate syntax and functional correctness reports
+1061   17:    if r and r′ pass functional tests then
+1062
+       18:       Perform physical implementation using SkyWater 130nm PDK and OpenLane
+       19:       Extract synthesizability, area, and power data with Yosys
+1063
+       20:       Extract timing-related data with OpenSTA
+1064
+       21:    end if
+1065   22:    Add evaluation results to E
+1066   23: end for
+1067   24: Analyze evaluation results in E using report analyzer
+1068   25: Generate final scores S based on predefined metrics
+1069   26:
+1070   27: return S
+1071
+1072
+1073   A.6    E XPERIMENTAL R ESULTS
+1074
+1075   We categorized the tasks into three groups: GenBen-all, GenBen-mm, and GenBen-text, corre-
+1076
+       sponding to all tasks, multimodal tasks, and text-based tasks, respectively. Additionally, the latter
+       two categories are further classified into levels L1 to L3.
+1077
+1078   Table 6 shows the results of tested multimodal models on all tests and Table 7 shows the results of
+1079   all models on unimodal tests. Table 8 and 9 respectively present the PPA data of the Claude 3.5 and
+       GPT-4 models for QoR analysis.
+
+
+                                                                          20
+       Under review as a conference paper at ICLR 2025
+
+
+
+
+1080
+1081
+1082                               Table 8: PPA Info of Claude3.5 on Part of Generated Design
+1083
+                     Function                     Area                       Power                  Hold WNS                  Setup TNS
+1084    Modal
+                     Correctness     Generated       Reference   Generated      Reference   Generated     Reference   Generated      Reference
+1085                 0.4             6.256           3.7536      6.33E-07       5.92E-07    3.8839        3.8395      5.5943         5.6193
+                     0.4             7.5072          5.0048      7.01E-07       6.85E-07    3.9746        3.9153      5.504          5.5586
+1086                 0.2             6.256           6.256       6.93E-07       6.93E-07    3.9485        3.9485      5.3708         5.3708
+1087                 1               22.5216         22.5216     1.63E-06       1.63E-06    3.8877        3.8877      5.317          5.317
+                     0.8             22.5216         22.5216     1.63E-06       1.63E-06    3.8877        3.8877      5.317          5.317
+1088                 0.2             73.8208         73.8208     1.35E-05       1.35E-05    0.1141        0.1141      6.9101         6.9101
+                     0.8             5.0048          5.0048      6.85E-07       6.85E-07    3.9153        3.9153      5.5586         5.5586
+1089                 0.8             40.0384         40.0384     5.48E-06       5.48E-06    3.9153        3.9153      5.5586         5.5586
+1090                 1               51.2992         38.7872     3.60E-06       3.60E-06    3.9409        3.89        5.2009         5.2115
+                     0.8             12.512          12.512      1.39E-06       1.39E-06    3.9485        3.9485      5.3675         5.3675
+1091                 0.4             185.1776        187.68      1.62E-05       2.21E-05    0.335         0.4291      7.2083         7.2307
+                     1               32.5312         32.5312     2.08E-06       2.08E-06    3.9378        3.9378      5.2313         5.2313
+1092    Text
+                     1               815.7824        815.7824    8.83E-05       8.83E-05    1.469         1.469       5.3261         5.3261
+1093                 1               73.8208         40.0384     1.35E-05       5.48E-06    0.1141        3.9153      9.3203         5.5586
+                     0.4             43.792          58.8064     2.67E-06       3.70E-06    3.9446        3.9487      5.2209         5.2227
+1094                 0.8             240.2304        30.0288     2.07E-06       2.68E-07    3.9395        3.8045      4.6738         3.8393
+1095                 0.4             78.8256         90.0864     1.35E-05       1.38E-05    0.1315        0.1315      7.2451         7.2451
+                     0.4             3209.328        1555.2416   2.71E-04       1.47E-04    0.2087        2.29E-01    6.2969         7.0092
+1096                 0.8             28.7776         28.7776     1.32E-06       1.32E-06    4.0661        4.0661      5.1155         5.1155
+                     1               36.2848         73.8208     2.71E-06       1.35E-05    3.9378        0.1141      5.2313         6.9997
+1097                 1               15.0144         22.5216     1.11E-06       1.35E-05    4.051         4.0503      5.2854         5.1241
+1098                 1               96.3424         113.8592    1.44E-05       1.59E-05    0.2616        0.3507      7.2457         7.2395
+                     1               1051.008        1051.008    3.78E-05       3.78E-05    4.1483        4.1483      3.2117         3.2117
+1099                 0.8             40.0384         40.0384     3.88E-05       3.88E-05    3.9153        3.9153      5.5586         5.5586
+1100                 0.4             5.0048          5.0048      6.85E-07       6.85E-07    3.9153        3.9153      5.5586         5.5586
+                     1               20.0192         20.0192     2.74E-06       2.74E-06    3.9153        3.9153      5.5492         5.5492
+1101                 0.4             1886.8096       1886.8096   1.41E-04       1.41E-04    0.2326        0.2326      6.7635         6.7635
+                     0.6             6.256           6.256       6.35E-07       6.35E-07    3.8426        3.8426      5.4372         5.4372
+1102                 0.6             6.256           8.7584      6.93E-07       7.38E-07    3.9485        3.9895      5.3708         5.452
+        Multimodal
+1103                 1               36.2848         36.2848     7.16E-06       7.16E-06    0.3785        0.3785      7.2871         7.2871
+                     1               26.2752         26.2752     4.85E-06       4.85E-06    1.4197        1.4197      7.2451         7.2451
+1104                 1               60.0576         85.0816     9.36E-06       2.02E-05    0.1315        0.2648      7.2451         7.2284
+                     1               120.1152        120.1152    5.19E-06       5.19E-06    3.9058        3.9058      4.7301         4.7301
+1105                 1               63.8112         121.3664    9.47E-06       1.59E-05    0.2152        0.2224      7.0874         7.2451
+1106
+1107
+1108
+1109
+1110
+1111                                 Table 9: PPA Info of GPT4 on Part of Generated Design
+1112                                              Area                       Power                  Hold WNS                  Setup TNS
+                     Function
+        Modal
+1113                 Correctness     Generated       Reference   Generated      Reference   Generated     Reference   Generated      Reference
+                     0.6             6.256           3.7536      6.33E-07       5.92E-07    3.8839        3.8395      5.5943         5.6193
+1114                 1               7.5072          5.0048      7.01E-07       6.85E-07    3.9746        3.9153      5.504          5.5586
+1115                 0.2             6.256           6.256       6.93E-07       6.93E-07    3.9485        3.9485      5.3708         5.3708
+                     0.8             22.5216         22.5216     1.63E-06       1.63E-06    3.8877        3.8877      5.317          5.317
+1116                 0.2             22.5216         22.5216     1.63E-06       1.63E-06    3.8877        3.8877      5.317          5.317
+                     0.8             5.0048          5.0048      6.85E-07       6.85E-07    3.9153        3.9153      5.5586         5.5586
+1117                 0.6             40.0384         40.0384     5.48E-06       5.48E-06    3.9153        3.9153      5.5586         5.5586
+1118                 1               51.2992         38.7872     3.60E-06       3.60E-06    3.9409        3.89        5.2009         5.2115
+                     0.8             12.512          12.512      1.39E-06       1.39E-06    3.9485        3.9485      5.3675         5.3675
+1119                 0.4             171.4144        187.68      1.62E-05       2.21E-05    0.4056        0.4291      7.2206         7.2307
+1120                 1               32.5312         32.5312     2.08E-06       2.08E-06    3.9378        3.9378      5.2313         5.2313
+        Text         1               815.7824        815.7824    8.83E-05       8.83E-05    1.469         1.469       5.3261         5.3261
+1121                 1               40.0384         40.0384     5.48E-06       5.48E-06    3.9153        3.9153      5.5586         5.5586
+                     0.4             53.8016         58.8064     3.68E-06       3.70E-06    3.9412        3.9487      5.2008         5.2227
+1122                 0.8             30.0288         30.0288     2.68E-07       2.68E-07    3.8045        3.8045      3.8393         3.8393
+1123                 0.4             21550.6688      22096.192   3.79E-03       4.61E-03    0.2104        0.2104      3.8231         3.7868
+                     0.8             1068.5248       1555.2416   1.34E-04       1.47E-04    0.2395        0.229       6.9484         7.0092
+1124                 0.6             17.5168         22.5216     1.32E-06       1.32E-06    3.8788        4.0503      5.3341         5.1241
+                     1               122.6176        122.6176    1.30E-05       1.30E-05    1.4344        1.4344      7.2451         7.2451
+1125                 1               96.3424         113.8592    1.44E-05       1.59E-05    0.2616        0.3507      7.2451         7.2395
+1126                 0.8             11.2608         11.2608     1.03E-06       1.03E-06    4.051         4.051       5.2878         5.2878
+                     1               1051.008        1051.008    3.78E-05       3.78E-05    4.1483        4.1483      3.2117         3.2117
+1127                 0.8             210.2016        40.0384     3.88E-05       3.88E-05    1.469         3.9153      7.2451         5.5586
+1128                 1               5.0048          5.0048      6.85E-07       6.85E-07    3.9153        3.9153      5.5586         5.5586
+                     1               20.0192         20.0192     2.74E-06       2.74E-06    3.9153        3.9153      5.5492         5.5492
+1129                 1               36.2848         36.2848     7.16E-06       7.16E-06    0.3785        0.3785      7.2871         7.2871
+        Multimodal   1               26.2752         26.2752     4.85E-06       4.85E-06    1.4197        1.4197      7.2451         7.2451
+1130                 1               60.0576         85.0816     9.36E-06       2.02E-05    0.1315        0.2648      7.2451         7.2284
+1131                 1               91.3376         120.1152    5.29E-06       5.19E-06    3.8815        3.9058      4.5263         4.7301
+                     0.6             85.0816         121.3664    1.38E-05       1.59E-05    0.2737        0.2224      7.0185         7.2451
+1132
+1133
+
+
+
+                                                                             21
+       Under review as a conference paper at ICLR 2025
+
+
+
+
+1134                                           Table 10: Results of Tested Models.
+1135
+1136                         model           Knowledge Mastery   Knowledge Transfer   Debugging   Function   Synatx    Synthesizbility
+        GenBen-all           gpt-4-turbo     57.00%              62.00%               40.00%      21.20%     100.00%   93.70%
+1137    GenBen-allmodal-L1   gpt-4-turbo     64.00%              70.00%               37.70%      30.90%     100.00%   90.70%
+        GenBen-allmodal-L2   gpt-4-turbo     56.00%              65.00%               33.30%      24.20%     99.40%    96.40%
+1138    GenBen-allmodal-L3   gpt-4-turbo     52.00%              52.00%               21.10%      9.10%      98.90%    92.40%
+1139    GenBen-mm            gpt-4-turbo     27.00%              67.00%               63.30%      16.70%     100.00%   96.50%
+        GenBen-mm-L1         gpt-4-turbo     0.00%               67.00%               55.00%      24.30%     100.00%   95.00%
+1140    GenBen-mm-L2         gpt-4-turbo     40.00%              100.00%              50.00%      20.10%     99.40%    97.50%
+1141    GenBen-mm-L3         gpt-4-turbo     40.00%              33.00%               10.00%      8.20%      99.40%    97.50%
+        GenBen-text          gpt-4-turbo     65.00%              62.00%               35.60%      21.30%     100.00%   89.80%
+1142    GenBen-text-L1       gpt-4-turbo     80.00%              70.00%               33.30%      20.90%     100.00%   83.20%
+        GenBen-text-L2       gpt-4-turbo     60.00%              60.00%               30.00%      23.90%     100.00%   95.60%
+1143
+        GenBen-text-L3       gpt-4-turbo     55.00%              55.00%               26.60%      16.50%     100.00%   82.80%
+1144    GenBen-all           gpt-4o          69.00%              71.00%               52.20%      34.80%     100.00%   96.90%
+        GenBen-allmodal-L1   gpt-4o          72.00%              83.00%               43.20%      38.60%     100.00%   94.60%
+1145    GenBen-allmodal-L2   gpt-4o          64.00%              74.00%               38.40%      32.60%     100.00%   98.80%
+1146    GenBen-allmodal-L3   gpt-4o          72.00%              57.00%               34.20%      29.50%     100.00%   99.40%
+        GenBen-mm            gpt-4o          47.00%              78.00%               71.70%      37.50%     100.00%   100.00%
+1147    GenBen-mm-L1         gpt-4o          40.00%              67.00%               80.00%      37.50%     100.00%   95.00%
+1148    GenBen-mm-L2         gpt-4o          60.00%              100.00%              70.00%      32.50%     100.00%   97.50%
+        GenBen-mm-L3         gpt-4o          40.00%              67.00%               35.00%      28.50%     100.00%   97.50%
+1149    GenBen-text          gpt-4o          75.00%              70.00%               40.00%      32.00%     97.50%    96.00%
+        GenBen-text-L1       gpt-4o          80.00%              85.00%               33.30%      34.70%     95.00%    95.00%
+1150    GenBen-text-L2       gpt-4o          65.00%              70.00%               30.00%      30.50%     97.50%    97.50%
+1151    GenBen-text-L3       gpt-4o          80.00%              55.00%               36.70%      27.50%     100.00%   97.50%
+        GenBen-text          gpt-3.5-turbo   63.00%              60.00%               37.80%      26.70%     98.10%    93.30%
+1152    GenBen-text-L1       gpt-3.5-turbo   65.00%              50.00%               46.70%      29.00%     92.00%    72.00%
+1153    GenBen-text-L2       gpt-3.5-turbo   65.00%              60.00%               26.70%      24.00%     100.00%   96.80%
+        GenBen-text-L3       gpt-3.5-turbo   60.00%              70.00%               24.70%      19.00%     99.20%    87.20%
+1154    GenBen-all           claude3.5       59.00%              61.00%               55.40%      35.40%     98.60%    90.00%
+1155    GenBen-allmodal-L1   claude3.5       64.00%              70.00%               53.70%      43.30%     97.00%    86.70%
+        GenBen-allmodal-L2   claude3.5       56.00%              65.00%               48.90%      37.10%     100.00%   100.00%
+1156    GenBen-allmodal-L3   claude3.5       56.00%              48.00%               33.70%      28.50%     98.80%    87.30%
+        GenBen-mm            claude3.5       47.00%              44.00%               55.00%      39.20%     100.00%   92.50%
+1157    GenBen-mm-L1         claude3.5       20.00%              67.00%               55.00%      45.00%     100.00%   90.00%
+1158    GenBen-mm-L2         claude3.5       60.00%              67.00%               45.00%      35.00%     100.00%   100.00%
+        GenBen-mm-L3         claude3.5       60.00%              0.00%                35.00%      37.50%     100.00%   87.50%
+1159    GenBen-text          claude3.5       62.00%              63.00%               55.60%      22.10%     98.10%    89.10%
+1160    GenBen-text-L1       claude3.5       75.00%              70.00%               53.30%      21.60%     96.00%    80.80%
+        GenBen-text-L2       claude3.5       55.00%              65.00%               50.00%      19.20%     100.00%   99.20%
+1161    GenBen-text-L3       claude3.5       55.00%              55.00%               33.30%      25.60%     98.40%    87.20%
+        GenBen-text          llama3          68.00%              70.00%               40.00%      6.90%      85.90%    57.30%
+1162    GenBen-text-L1       llama3          75.00%              75.00%               53.30%      6.10%      78.40%    56.00%
+1163    GenBen-text-L2       llama3          70.00%              70.00%               43.30%      6.40%      89.60%    58.40%
+        GenBen-text-L3       llama3          60.00%              65.00%               6.67%       7.20%      89.60%    57.40%
+1164    GenBen-all           qwen-vl-max     59.00%              55.00%               36.50%      26.50%     88.60%    78.90%
+1165    GenBen-allmodal-L1   qwen-vl-max     72.00%              74.00%               43.20%      29.90%     84.20%    78.20%
+        GenBen-allmodal-L2   qwen-vl-max     52.00%              57.00%               40.70%      26.50%     95.20%    87.30%
+1166    GenBen-allmodal-L3   qwen-vl-max     52.00%              35.00%               23.20%      22.20%     86.20%    71.30%
+1167    GenBen-mm            qwen-vl-max     53.00%              89.00%               55.00%      49.30%     100.00%   91.70%
+        GenBen-mm-L1         qwen-vl-max     60.00%              100.00%              55.00%      62.50%     100.00%   100.00%
+1168    GenBen-mm-L2         qwen-vl-max     40.00%              100.00%              45.00%      51.20%     100.00%   100.00%
+        GenBen-mm-L3         qwen-vl-max     60.00%              67.00%               35.00%      25.00%     100.00%   87.50%
+1169    GenBen-text          qwen-vl-max     60.00%              50.00%               44.40%      20.20%     84.80%    76.90%
+1170    GenBen-text-L1       qwen-vl-max     75.00%              70.00%               40.00%      22.80%     79.20%    75.20%
+        GenBen-text-L2       qwen-vl-max     55.00%              50.00%               43.00%      22.40%     93.60%    86.40%
+1171    GenBen-text-L3       qwen-vl-max     50.00%              30.00%               20.00%      21.30%     81.90%    69.30%
+1172    GenBen-all           qwen-vl-plus    45.00%              46.00%               32.60%      16.30%     78.40%    66.40%
+        GenBen-allmodal-L1   qwen-vl-plus    52.00%              52.00%               32.60%      20.00%     78.80%    65.50%
+1173    GenBen-allmodal-L2   qwen-vl-plus    40.00%              43.00%               27.90%      16.00%     85.50%    74.50%
+        GenBen-allmodal-L3   qwen-vl-plus    44.00%              43.00%               7.40%       12.00%     71.30%    59.30%
+1174    GenBen-mm            qwen-vl-plus    20.00%              44.00%               8.30%       4.20%      58.30%    33.30%
+1175    GenBen-mm-L1         qwen-vl-plus    0.00%               67.00%               5.00%       0.00%      77.50%    35.00%
+        GenBen-mm-L2         qwen-vl-plus    40.00%              33.00%               0.00%       12.50%     60.00%    37.50%
+1176    GenBen-mm-L3         qwen-vl-plus    20.00%              33.00%               0.00%       0.00%      37.50%    27.50%
+1177    GenBen-text          qwen-vl-plus    52.00%              47.00%               44.40%      20.20%     84.90%    76.90%
+        GenBen-text-L1       qwen-vl-plus    65.00%              50.00%               40.00%      22.80%     79.20%    75.20%
+1178    GenBen-text-L2       qwen-vl-plus    40.00%              45.00%               43.30%      17.40%     93.60%    86.40%
+        GenBen-text-L3       qwen-vl-plus    50.00%              45.00%               20.00%      16.30%     81.90%    69.30%
+1179
+        GenBen-all           GLM-4V-plus     51.00%              62.00%               39.60%      12.50%     71.70%    51.10%
+1180    GenBen-allmodal-L1   GLM-4V-plus     60.00%              65.00%               43.20%      15.50%     67.30%    40.00%
+        GenBen-allmodal-L2   GLM-4V-plus     44.00%              74.00%               17.40%      13.20%     65.10%    42.80%
+1181    GenBen-allmodal-L3   GLM-4V-plus     48.00%              48.00%               28.40%      8.00%      83.10%    70.40%
+1182    GenBen-mm            GLM-4V-plus     27.00%              89.00%               30.00%      28.30%     90.80%    69.20%
+        GenBen-mm-L1         GLM-4V-plus     20.00%              100.00%              30.00%      17.50%     77.50%    47.50%
+1183    GenBen-mm-L2         GLM-4V-plus     20.00%              100.00%              25.00%      36.50%     95.10%    61.00%
+1184    GenBen-mm-L3         GLM-4V-plus     40.00%              67.00%               35.00%      30.00%     100.00%   97.50%
+        GenBen-text          GLM-4V-plus     57.00%              58.00%               42.20%      7.50%      65.60%    45.30%
+1185    GenBen-text-L1       GLM-4V-plus     70.00%              60.00%               46.70%      11.00%     64.00%    37.60%
+        GenBen-text-L2       GLM-4V-plus     50.00%              70.00%               23.30%      5.60%      55.20%    36.80%
+1186    GenBen-text-L3       GLM-4V-plus     50.00%              45.00%               26.70%      5.00%      77.80%    61.90%
+1187    GenBen-text          GLM-4           57.00%              58.00%               42.20%      17.50%     65.60%    45.30%
+        GenBen-text-L1       GLM-4           50.00%              25.00%               33.30%      24.80%     84.00%    76.00%
+        GenBen-text-L2       GLM-4           45.00%              45.00%               43.30%      19.00%     95.20%    94.40%
+        GenBen-text-L3       GLM-4           50.00%              20.00%               6.70%       13.00%     96.00%    72.80%
+
+                                                                    22
+           Under review as a conference paper at ICLR 2025
+
+
+
+
+1188
+           The result is shown in Table 10. This provides a statistical analysis of the tested models, cover-
+1189       ing knowledge master, knowledge transfer, debugging, functional correctness, syntax correctness,
+1190       and synthesizability. For further QoR analysis, data from the best-performing models, GPT-4o and
+1191       Claude 3.5, are included in the main text.
+1192
+           The data in the table demonstrate the effectiveness of task categorization, the necessity of synthe-
+1193
+           sizability metrics, and the correlation between knowledge points and coding abilities, aligning with
+1194
+           the benchmark’s design expectations.
+1195
+1196
+           A.7     T UTORIAL : E VALUATING LLM P ERFORMANCE WITH G EN B EN
+1197
+1198       You can access the complete GenBen code via the following link: GenBen Repository. This guide
+1199       will walk you through evaluating the performance of Large Language Models (LLMs) in hardware
+1200       design and obtaining detailed results using the command line.
+1201
+1202       A.7.1    S TEP - BY-S TEP I NSTRUCTIONS
+1203
+1204
+           Clone the GenBen Repository
+1205       First, clone the GenBen repository to your local machine:
+1206   1   git clone https://anonymous.4open.science/r/GENBEN-2812
+1207   2   cd GENBEN-2812
+1208
+1209       Run the Evaluation Script
+1210
+           Using the command line, you can evaluate the performance of LLMs with the following command:
+1211
+1212   1   python genben.py --mode all --model gpt4
+1213
+1214       This command runs the evaluation with the specified parameters.
+1215       Understanding the Command Parameters
+1216
+1217               • --mode: This parameter controls the type of tasks input into the LLMs. There are three
+1218                 available options:
+1219                   – all: Enables the input of all task types.
+1220                   – mm: Allows for multi-modal tasks.
+1221                   – text: Restricts the input to text-based tasks only.
+1222
+                   • --model: This parameter specifies the model of the LLMs. Adjust this parameter accord-
+1223
+                     ing to the specific API of the LLMs you are using.
+1224
+1225       Example:
+1226
+       1   python genben.py --mode text --model gpt4
+1227
+1228
+           This command evaluates the gpt4 model using only text-based tasks.
+1229
+1230
+           A.7.2    R EFER TO THE README FOR D ETAILED I NSTRUCTIONS
+1231
+1232       For more detailed usage instructions, please refer to the README file included in the GenBen
+1233       project. The README file contains comprehensive information
+1234
+1235       A.8     O PEN S OURCE D ECLARATION
+1236
+1237       To foster transparency, collaboration, and innovation, the GenBen benchmark will be released under
+1238
+           the MIT open-source license. This ensures that researchers, educators, and practitioners can freely
+           access, use, modify, and distribute the benchmark without any restrictions.
+1239
+1240       Upon the completion of the peer-review process, the full dataset, along with all associated scripts and
+1241       documentation, will be made publicly available. We hope to support the global research community
+           in advancing the field of hardware design and AI-driven EDA.
+
+
+                                                             23
+

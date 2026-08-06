@@ -1,0 +1,735 @@
+                                                 RealBench: Benchmarking Verilog Generation
+                                                     Models with Real-World IP Designs
+                                                   Pengwei Jin†1 , Di Huang1 , Chongxiao Li1,2,5 , Shuyao Cheng1 , Yang Zhao1,2,5 , Xinyao Zheng1,2,5 ,
+                                                  Jiaguo Zhu1,3,5 , Shuyi Xing1,3,5 , Bohan Dou1,3,5 , Rui Zhang1 , Zidong Du1,4 , Qi Guo1 , Xing Hu*1,4
+                                                                1 State Key Lab of Processors, Institute of Computing Technology, CAS, Beijing, China
+                                                                              2 University of Chinese Academy of Sciences, Beijing, China
+                                                                             3 University of Science and Technology of China, Hefei, China
+                                                                       4 Shanghai Innovation Center for Processor Technologies, Shanghai, China
+                                                                                                 5 Cambricon Technologies
+
+
+                                                                                             https://github.com/IPRC-DIP/RealBench
+arXiv:2507.16200v1 [cs.LG] 22 Jul 2025
+
+
+
+
+                                            Abstract—The automatic generation of Verilog code using             instantiations, more lines of code, a larger number of cells,
+                                         Large Language Models (LLMs) has garnered significant interest         and hierarchical system structures. For example, designs in
+                                         in hardware design automation. However, existing benchmarks            OpenCores [31], a set of open-source IPs, contain an aver-
+                                         for evaluating LLMs in Verilog generation fall short in replicating
+                                         real-world design workflows due to their designs’ simplicity,          age of ∼ 180 lines of Verilog per module while existing
+                                         inadequate design specifications, and less rigorous verification       benchmarks only contain ∼ 50 lines of code. Additionally,
+                                         environments. To address these limitations, we present Real-           design implementations in the real world often contain more
+                                         Bench, the first benchmark aiming at real-world IP-level Verilog       submodule instantiations. We will show in our experiments
+                                         generation tasks. RealBench features complex, structured, real-        that LLMs perform poorly on Verilog generation tasks that
+                                         world open-source IP designs, multi-modal and formatted design
+                                         specifications, and rigorous verification environments, including      are closer to real-world designs, where even the current best
+                                         100% line coverage testbenches and a formal checker. It supports       model, o1-preview, achieves only a 13.3% pass@1 on module-
+                                         both module-level and system-level tasks, enabling comprehensive       level tasks and fails to generate any system-level design.
+                                         assessments of LLM capabilities. Evaluations on various LLMs              The input format of existing benchmarks largely differs
+                                         and agents reveal that even one of the best-performing LLMs,           from real-world design specifications and cannot accu-
+                                         o1-preview, achieves only a 13.3% pass@1 on module-level tasks
+                                         and 0% on system-level tasks, highlighting the need for stronger       rately represent the functionality, especially when it comes
+                                         Verilog generation models in the future.                               to complex problems. Design specifications in real-world
+                                            Index Terms—Benchmark, Large Language Models (LLMs),                scenarios typically include detailed functional descriptions,
+                                         Verilog Generation                                                     diagrams (e.g., data flows), and other essential implementation
+                                                                                                                details like interfaces and constraints. In contrast, current
+                                                                  I. I NTRODUCTION                              benchmarks often rely on simple natural language instructions
+                                                “For better or worse, benchmarks shape a field.”                to describe functions and input/output signals, as well as tables
+                                                                             — David Patterson [1]              and state transitions in text format (e.g., “a -> b”), which are
+                                            Recently, the application of Large Language Models                  insufficient for accurately representing the functionality of the
+                                         (LLMs) like GPT [2] to automatically generate Verilog code             target design. For example, the real-world design specification
+                                         has gained significant attention in the field of hardware design       of SDC_MMC controller [32] contains ∼ 800 lines of
+                                         automation [3]–[22]. Based on their powerful code generation           text, diagrams, and tables, within 32 pages, while in existing
+                                         capability, LLMs can transform specifications that include nat-        benchmarks, the average number of lines in LLMs’ inputs is
+                                         ural language descriptions, diagrams, and tables into Verilog          only 1.8 ∼ 22.3 and most of them are text-only.
+                                         code, facilitating the automation of hardware design.                     The verification environments are not rigorous and
+                                            Despite the growing potential of LLMs to assist real-world          cannot meet the requirements of practical usage. Cur-
+                                         workflows, existing benchmarks [23]–[30] often fail to accu-           rent benchmarks utilize predefined testbenches to verify the
+                                         rately capture their true complexity due to three limitations.         correctness of the generated Verilog code. However, this
+                                            Existing benchmarks oversimplify task design, while                 approach lacks rigor and can lead to an overestimation of
+                                         practical projects exhibit complex and hierarchical struc-             LLMs’ accuracy. For example, we find that testbenches in most
+                                         tures. Specifically, existing benchmarks are designed for flat,        existing benchmarks cannot achieve 100% line coverage and
+                                         isolated tasks, whereas real-world projects involve multi-level        44.2% of the Verilog code generated by GPT-4-Turbo, which
+                                         dependencies and dynamic constraints with more module                  passes the testbenches in RTLLMV2 [23], fails in formal
+                                                                                                                verification.
+                                           † Email: jinpengwei20z@ict.ac.cn                                        Motivated by such limitations, in this work, we aim to
+                                           * Corresponding author. Email: huxing@ict.ac.cn                      benchmark LLMs’ Verilog generation capability in real-world
+                                                             TABLE I
+                            C OMPARISON WITH PREVIOUS BENCHMARKS , WITH THE AVERAGES SHOWN IN THE TABLE .
+
+                                                   Design Quality                Specification Quality         Verification Quality
+       Benchmarks           Designs
+                                      Code Lines   Circuit Cells  SubModules   Doc. Lines    Multi-modal    Line Coverage     Formal
+        Thakur et al.          17        16.6            7.9           0          1.8             ✗             100.0%            ✗
+        RTLLMV1.1              29        56.1           48.1          0.3         22.3            ✗              98.5%            ✗
+         RTLLMV2               50        46.1           33.7          0.2         20.8            ✗              96.0%            ✗
+     VerilogEval-human        156        15.8           31.4           0          5.7             ✗              99.7%            ✗
+    VerilogEval-machine       143        13.9            6.4           0          3.2             ✗              99.7%            ✗
+       VerilogEvalV2          156        16.1           31.4           0          16.5            ✗              99.7%            ✗
+         ChipGPTV              33        51.2           18.0          0.6         12.5            ✓              96.9%            ✗
+  RealBench-module (ours)      60        241.2         0.52K          1.6        197.3            ✓             100.0%           ✓
+  RealBench-system (ours)      4        3537.3         1.1M          14.5         2.9k            ✓             100.0%           ✓
+
+design workflows by simulating Verilog coding scenarios that       level tasks. (2) The rigorous verification environment is nec-
+are as close to real-world workflows as possible. Specifically,    essary to assess LLMs’ performance reliably. (3) Reasoning
+we present RealBench, a Verilog generation benchmark that          models (e.g., DeepSeek-R1-671B) show reduced advantages
+consists of real-world open-source IP designs with complex         over the corresponding general models (e.g., DeepSeek-V3-
+and structured design implementations, multi-modal and for-        671B) in complex tasks. (4) The multi-modal LLM, GPT-
+matted design specifications, and rigorous verification environ-   4o-V, shows a small advantage over the text-only GPT-4o,
+ments.                                                             implying that a stronger multi-modal model is needed to
+   The main features of RealBench include:                         handle design diagrams efficiently. (5) A simple debugging
+   • More complex and structured designs. Based on four            agent can improve the correctness of the generated code.
+     open-source real-world IP cores, including AES en-               Although current results show that LLMs still strug-
+     coder/decoder cores, an SD card controller, and a CPU         gle in real-world design workflows, experience from the
+     core (Hummingbirdv2 E203 [33]), RealBench contains            software-engineering domain suggests that the develop-
+     designs with a large number of code lines and a complex,      ment of LLMs is surprisingly fast and that these short-
+     structured design hierarchy, which places higher demands      comings will likely be overcome within years: In just
+     on LLMs’ Verilog generation capability. Table I shows         15 months, the best performance on SWE-bench [34], a
+     that compared with previous benchmarks, designs in            software-engineering benchmark, have rocketed from 9.39%
+     RealBench contain ∼ 4.3× code lines, ∼ 10.8× circuit          to 23% (open-source) [35] and 55% (closed-source). Thus,
+     cells, and ∼ 2.7× submodule instantiations.                   constructing a benchmark that reflects real-world scenarios
+   • Multi-modal, detailed, and formatted design specifica-        has been indispensable for this development, and we hope
+     tions. The specifications encompass detailed functional       RealBench will accelerate the rapid progress in hardware
+     descriptions, diagrams (i.e. block overview, data flows,      design automation.
+     and state transition), submodules’ information (including        The contributions of this paper are as follows:
+     descriptions and I/O port definitions), and other essential      • We have identified shortcomings in existing benchmarks
+     details including interfaces, registers, corner cases, and         with respect to design complexity, input format, and
+     constraints. We ensure that the design specifications are          validation rigor, preventing them from effectively bench-
+     accurate and formatted by writing them manually. Table I           marking real-world Verilog generation. Specifically, we
+     shows that design specifications in RealBench contain              find that existing benchmarks lack rigorous verification
+     ∼ 8.8× longer texts with various multi-modal diagrams.             processes, with line coverage of only 59.1% in the worst
+   • Rigorous verification process. We develop testbenches              case, and relatively 44.2% of the code passing testbenches
+     manually to ensure 100% line coverage for the reference            fails in formal verification (Fig. 4). This may result in an
+     Verilog. Additionally, we provide a formal verification            overestimation of the LLMs’ performance.
+     workflow to verify the equivalence between the LLM-              • We propose RealBench, the first IP-level Verilog genera-
+     generated code and the reference Verilog.                          tion benchmark that closely resembles real-world design
+   • Two-level tasks. RealBench offers tasks at two distinct            workflows to facilitate the advancement of hardware de-
+     levels: module-level and system-level. Module-level tasks          sign automation. This benchmark includes complex open-
+     assess the capability to generate Verilog modules and              source implementations, detailed and formatted design
+     instantiate specified submodules. System-level tasks mea-          specifications, and rigorous verification environments.
+     sure the ability to implement the entire system from             • We conduct comprehensive evaluations of various LLMs
+     scratch, given detailed hierarchical design specifications.        and agents on RealBench. Results show that while these
+   We conduct extensive evaluations on RealBench with vari-             LLMs and the agent perform well on existing bench-
+ous LLMs of different sizes and types, and two coding agents            marks, there remains a significant gap between their
+that can debug their code based on verification feedback. The           capabilities and their application to real-world workflows.
+results indicate that: (1) Even o1-preview can only achieve           • Our results highlight potential directions in this field:
+13.3% formal@1 on module-level tasks and 0% on system-                  formal verification of LLM-generated code, less halluci-
+                                                                                                                              always @(posedge CLK or posedge     Line Coverage<100%
+           Other Benchmarks                                               RealBench (ours)                                    RST)                                                                                    ✔Pass
+                                                                                                                                                                      Testbench.v                 Yes
+                                                                                                                                 begin
+                                                                                                                                 if (RST) begin
+                                                                    1 module aes_cipher_top(clk, rst, ld, done, key,
+   1 module systolic1x4(                                                                                                             CRC = 0;
+   2 input clk,
+                                                                text_in, text_out );                                             end                                                               No
+   ……
+                                                                ......                                                           else begin
+                                                                                                                                     if (Enable==1) begin
+                                                                                                                                                                       Simulator                                      ❌ Fail
+                                                                  40 always @(posedge clk) if(ld) text_in_r <= #1
+   13 );                                                                                                                                 CRC[6] = CRC[5];
+                                                                                                                                                                                                               Other Benchmarks
+                                                                text_in;                                                                 CRC[5] = CRC[4];
+   14 reg [15:0] b1, b2, b3;
+                                                                ......                                                                   CRC[4] = CRC[3];
+   15 PE pe0(.clk(clk), .rst(rst), .a(a0), .b(b0), .c(c0));                                                                              CRC[3] = CRC[2] ^ inv;                                                Yes
+   16 PE pe1(.clk(clk), .rst(rst), .a(a1), .b(b1), .c(c1));
+                                                                115 function [31:0] mix_col;                                                                                         Yes         Formal
+                                                                ......
+                                                                                                                                         CRC[2] = CRC[1];
+                                                                                                                                                                       Simulator                                     ✔Pass
+   17 PE pe2(.clk(clk), .rst(rst), .a(a2), .b(b2), .c(c2));                                                                              CRC[1] = CRC[0];                                       Verification
+                                                                124 endfunction                                                          CRC[0] = inv;
+   18 PE pe3(.clk(clk), .rst(rst), .a(a3), .b(b3), .c(c3));                                                                          end
+                                                                125 function [7:0] xtime;
+   19 always@(posedge clk or posedge rst) begin
+                                                                126 input [7:0] b; xtime={b[6:0],1'b0}^(8'h1b&{8{b[7]}});
+                                                                                                                                 end
+                                                                                                                                                                      Testbench.v          No                  No
+   20 if (rst) begin                                                                                                           end                                                                                    ❌ Fail
+                                                                127 endfunction
+   21 b1 <= 0;
+                                                                128 aes_key_expand_128 u0(                                         Generated Verilog              Line Coverage=100%                            RealBench (ours)
+   22 b2 <= 0;
+                                                                129 .clk( clk ),
+   23 b3 <= 0;
+                                                                ......
+   24 end
+                                                                136 aes_sbox us00( .a( sa00 ), .b( sa00_sub ));
+   ……
+                                                                137 aes_sbox us01( .a( sa01 ), .b( sa01_sub ));             Fig. 3. Compared with verification processes in other benchmarks, our
+   30 end
+                                                                138 aes_sbox us02( .a( sa02 ), .b( sa02_sub ));
+   31 endmodule
+                                                                ......                                                      verification process has 100% coverage testbenches and a formal verification
+                                                                152 endmodule
+                                                                                                                            process, making results more reliable.
+
+Fig. 1. Compared with designs in other benchmarks, ours have more complex                                                                                                                   Syntax Fail
+module instantiation and are more realistic in reusing functions.                                                                                                                           Testbench Fail
+                                                                                                                                                                  30.8% 51.3%
+                                                                                                                                                                                            Testbench Pass
+          Other Benchmarks                                             RealBench (ours)                                                                             17.9%                   Formal Pass
+                                                              aes_cipher_top Design Specification                                                                                   28.6%
+   You are now acting as a professional verilog
+   programmer. You will receive two kinds of input.           1. Introduction
+   One is the image input, which is used to                   2. Block Diagram
+   describe the connectivity among modules or the             3. Interface                                                  Fig. 4. GPT-4-Turbo results on RTLLMV2. Some code passes the original
+   state diagram of control module.                           4. Registers
+   ……                                                         5. Operation Principle                                        testbench but fails in our formal verification.
+                                                                 5.1 Basic Principle
+   Implement a FSM detection circuit that detects a              5.2 Mathematical Principle
+   single bit input IN with verilog. Let the number of        6. Implementation Details
+   1's in input be x, and the number of 0's in input             6.1 Data Flow Diagram
+                                                                 6.2 State Transition Diagram   Block Diagram
+                                                                                                                            B. Design Specifications
+   be y.
+   ……                                                            6.3 Data Loading Operation
+                                                              ……
+                                                              7. Submodules
+                                                                                                                               Existing open-source design specifications, although well-
+   module verified_fsm3 (
+                                                                 7.1 aes_key_expand_128
+      input IN, CLK, RST,
+      output reg MATCH                                           7.2 aes_sbox
+                                                                                                                            organized in format, are incomplete in details and thus cannot
+   );                                                         8. Corner Cases
+                                                              9. Constraints                                                be used directly to implement their functionality. Therefore,
+                                State Transition Diagram                                    State Transition Diagram
+                                                                                                                            we rewrite design specifications manually according to the
+                                                                                                                            following rules. The comparison between our design speci-
+Fig. 2. Compared with design specifications in other benchmarks, our design
+specifications are more detailed and formatted, which aligns with real-world                                                fications and other benchmarks’ is shown in Fig. 2.
+workflows.                                                                                                                     Principle. The main principle of handwriting design spec-
+                                                                                                                            ifications is to ensure that another engineer can correctly
+       nated reasoning models for complex tasks, and stronger                                                               implement the corresponding Verilog code solely based on the
+       models that can handle diagram inputs and submodule                                                                  given design specifications. Specifically, the design specifica-
+       instantiations effectively.                                                                                          tion should (1) contain all necessary information for the design
+                                                                                                                            and have a consistent format to maintain clarity, (2) ensure that
+II. R EAL B ENCH : TOWARDS R EAL V ERILOG G ENERATION                                                                       the function description is straightforward and unambiguous,
+                                                                                                                            and (3) use intuitive diagrams and tables to illustrate key
+  We will introduce RealBench in the order of designs, design                                                               concepts like interfaces.
+specifications, verification environments, two difficulty levels                                                               Hierarchical structure. We structure design specifications
+of tasks, and our standardized decontamination process.                                                                     in a hierarchical structure which keeps the same structure as
+                                                                                                                            the code implementation. That is, (1) each module of the
+A. Designs                                                                                                                  design has its own distinct design specification, in which we
+   The comparison between our designs and other benchmarks’                                                                 detail the interface and functional information of all submod-
+is shown in Fig. 1. To ensure the representativeness and cor-                                                               ules. (2) Cross-level information is not permitted in design
+rectness of designs in RealBench, we build RealBench based                                                                  specifications. For example, diagrams of a module should not
+on a CPU core (Hummingbirdv2 E203 [33]) and three IPs from                                                                  contain unnecessary details of its submodules.
+the OpenCores [31] stable stage that are commonly used in                                                                      Co-design with the testbench verification. We use speci-
+SoC design: an SD card controller and AES encoder/decoder                                                                   fication and testbench verification co-design to better describe
+cores. The SD card controller is primarily responsible for                                                                  the function details. Specifically, while developing testbenches
+complex state and memory management, while the AES                                                                          by manually analyzing code and inserting key functional
+encoder/decoder core is mainly focused on computation. In                                                                   points, we reflect these functional points in the design spec-
+contrast, the CPU core integrates both complex control logic                                                                ification to ensure the specification describes key functions
+and multiple computational units, making it a particularly                                                                  clearly.
+challenging benchmark. The hierarchy of these four designs                                                                     Format and content. We keep the format and content of
+is shown in Fig. 6.                                                                                                         design specifications similar to that of open-source industry
+   Table II represents details of all modules in four IPs.                                                                  standards [32] to assess LLMs’ Verilog generation ability
+We synthesize each module with an open-source EDA tool                                                                      when working in real-world design workflows.
+Yosys [36] and Nangate45 [37] and report the number of cells.                                                                  • Module introduction. We briefly describe the overall
+     function and provide an overview diagram.                                                           LLM
+                                                                            Design Specification                           Generated RTL
+  •  I/O interface. This is a table containing information such
+     as port name, direction, width, and description, which                                                  Feedbacks
+     describes the format of the module’s inputs and outputs.
+  • Clock and reset. This includes descriptions of the mod-                                           Functional             Syntax
+                                                                         ✔Pass       ❌ Fail
+                                                                                                        Errors               Errors
+     ule’s clock signal and reset signal, such as whether the                        No                No                    No
+     reset signal is asynchronous.                                       Yes      Formal        Yes   Testbench      Yes     Syntax
+  • Submodule information. If the current module instanti-                      Verification          Verification           Checker
+     ates other submodules, the information of submodules
+     (e.g., description, I/O interface, etc.) is provided in the    Fig. 5. Self-reflection agent overview. The agent generates Verilog code,
+     submodule information.                                         receives feedback from the syntax checker, testbench verification and formal
+  • Detailed function description. This includes state tran-
+                                                                    verification, and then modifies the code based on the feedback.
+     sitions and executed operations. State transitions are
+                                                                    them. This aligns with real-world workflows, as module-level
+     provided through diagrams and accompanying textual
+                                                                    implementation and verification do not need to consider the
+     descriptions, while executed operations are explained
+                                                                    correctness of other modules.
+     through key execution processes.
+                                                                       System-level tasks. System-level tasks evaluate LLMs’
+  • Additional information. Additional information includes
+                                                                    ability to generate a complete design from scratch. The input
+     registers (a table containing register names, width, and
+                                                                    for each system-level task consists of the design specifications
+     description), corner cases, constraints, etc.
+                                                                    for the entire system, which include specifications at each
+  Additionally, we ensure the accuracy, consistency, and stan-      level of the design hierarchy. No additional information is
+dardization of design specifications through multiple rounds of     provided beyond these design specifications. Therefore, if a
+review and revisions by different writers.                          module requires instantiating other submodules, the LLM must
+C. Verification Environments                                        implement those submodules. During verification, we focus on
+                                                                    validating the system-level testbench, without delving into the
+   RealBench verification workflow is shown in Fig. 3.
+                                                                    implementation details of individual modules, as variations in
+   Testbench verification. The design of our testbench was
+                                                                    module details may not affect the overall system correctness.
+inspired by VerilogEval [25], where the main component of
+the testbench is an input generator. Through a more detailed        E. Standardized Decontamination Process
+manual analysis of the design’s code implementation and the            The existing benchmarks do not provide a standardized de-
+insertion of functional points, we increased the testbench’s line   contamination process, which makes comparisons between dif-
+coverage of all designs to 100%. This makes our verification        ferent methods potentially unfair. For example, RTLCoder [4]
+results more reliable compared with existing benchmarks.            and CodeV [7] decontaminate their training data with RougeL,
+   Formal verification. A testbench achieving 100% line cov-        while many others do not explicitly mention their decon-
+erage of the reference code provides more rigorous verification     tamination process. To ensure a fair evaluation, we provide
+than current benchmarks, but still cannot guarantee that the        a standardized decontamination process for LLM fine-tuning
+LLM-generated code is completely correct. Therefore, we             methods to remove training data similar to RealBench. Fol-
+provide a formal verification workflow. First, we use an open-      lowing RTLCoder and CodeV, we use RougeL [39], a widely
+source EDA tool Yosys [36] to synthesize both the reference         used similarity metric, to measure the similarity between data
+and generated Verilog code into netlists, then perform for-         and suggest setting β = 1.0 and removing training data whose
+mal equivalence checking on the two netlists using Cadence          RougeL is greater than 0.5.
+JasperGold [38].
+                                                                                               III. E VALUATIONS
+D. Module-Level and System-Level Tasks
+                                                                       In this section, we evaluate the performance of LLMs and
+   RealBench provides two levels of task difficulty: module-        LLM-based agents on RealBench and existing benchmarks,
+level and system-level. Each level includes different design        investigate whether LLMs can accomplish real-world design
+specifications as LLMs’ input and verification environments         tasks, and provide possible future directions for hardware
+for validating results.                                             design automation through a detailed analysis of the results.
+   Module-level tasks. Module-level tasks evaluate the ability
+of LLMs to generate individual modules. For each module-            A. Evaluation Setup
+level task, the input provided to the LLM includes the de-            Other benchmarks. We compare our benchmark with the
+sign specification corresponding to that module. If the target      most recent benchmarks, including RTLLMV2 [23], Verilo-
+module needs to instantiate other submodules (i.e. it is not        gEvalV2 [28], and ChipGPTV [27].
+a leaf node in the design hierarchy), the input will also             Models. We comprehensively tested the performance of
+provide submodules’ information. During verification, we use        most advanced models, including the GPT series [2], LLama-
+golden submodule implementations to ensure the submodules’          3.1 [40], DeepSeek-V3 [41], DeepSeek-R1 [42], the best
+correctness so that LLMs are not required to implement              model of RTLCoder [4], and the best model of CodeV [7].
+                                                                 TABLE II
+                                              M ODULE DETAILS OF THE FOUR IP S IN R EAL B ENCH .
+
+                                                                                                                           Code Doc. Circuit
+Design             Module Name            Description
+                                                                                                                           Lines Lines Cells
+                   sd bd                Managing the buffer descriptors used for data transmission and reception between   141    51   1739
+                                        the system memory and the SD card.
+                   sd clock divider     A converter between the system clock and the clock required by the SD              35    32    50
+                                        card-related modules.
+                   sd crc 16            Computing a 16-bit CRC value based on the input data bits.                          34   31     55
+                   sd crc 7             Designed to compute a 7-bit CRC value for serial data inputs.                       26   43     24
+                   sd controller wb     The wishbone slave interface, which manages the reading and writing to the         307   279   923
+sdc controller
+                                        configuration registers.
+                   sd data master       Managing data transfer between the SD card and the host system.                    404   256   589
+                   sd cmd master        Synchronizing the communication from the host interface with the physical          245   353   545
+                                        interface.
+                   sd rx fifo           Buffering incoming data from the SD card before it’s read by the host system.      106   73    1143
+                   sd tx fifo           A dual-clock domain FIFO designed to transfer data between two potentially          51   99    1017
+                                        asynchronous clock domains.
+                   sd fifo rx filler    Managing the reception of data from the SD card and transfers it to the system     82    107   241
+                                        memory via a Wishbone bus interface.
+                   sd fifo tx filler    Managing the transmission FIFO buffer for the data stream.                          92   98    241
+                   sd data serial host  The interface towards physical SD card device data port.                           374   252   1031
+                   sd cmd serial host   An interface to the external SD /MMC card.                                         468   358   1525
+                   sdc controller       The top module of sdc controller.                                                  388   362   238
+                   aes inv sbox         Performing the inverse non-linear byte substitution operation.                     264   178   453
+aes inv cipher top
+                   aes inv cipher top   The core control module of the AES decryption system.                              210   267   7322
+aes cipher top     aes cipher top       The core control module of the entire AES encryption system.                       152   182   1445
+                   aes key expand 128 This module expands a 128-bit initial key into round keys.                            24   121   569
+aes cipher top,
+                   aes sbox             Performing non-linear byte substitution operations.                                264   65    458
+aes inv cipher top
+                   aes rcon             Generating constant values used in the AES key expansion process.                   31   82     44
+                   e203 biu             Managing bus requests between the processor’s internal units and the external      757   317    84
+                                        memory system.
+                   e203 clk ctrl        Managing clock gating for the processor’s core and memory modules.                  97   102    18
+                   e203 clkgate         Managing clock propagation through enable signals.                                  30   54     3
+                   e203 core            The core of the E203 processor.                                                    704   560    4
+                   e203 cpu             The top-level module of a RISC-V processor.                                        643   593    7
+                   e203 cpu top         The top-level module in the E203 series.                                           418   249    2
+                   e203 dtcm ctrl       The DTCM controller in the E203 processor.                                         255   279    3
+                   e203 dtcm ram        The DTCM RAM module for the E203 processor.                                         48   82     1
+                   e203 extend csr      A stub module that provides interface definitions without actual functionality.     28   27     0
+                   e203 exu             The execution unit of the processor core.                                          724   705    15
+                   e203 exu alu         A core component of the E203 processor’s execution unit.                           682   456   935
+                   e203 exu alu bjp     Conditional branch and jump instructions.                                           77   86    104
+                   e203 exu alu csrctrl Controlling CSR read/write operations.                                              88   89    153
+                   e203 exu alu dpath The datapath implementation of the ALU in the E203 processor.                        378   87    1465
+                   e203 exu alu lsuagu Implementing the AGU for load/store and atomic memory operation instructions.       461   176   544
+                   e203 exu alu muldiv Implementing a 17-cycle multiplier and a 33-cycle divider.                           45   136   1203
+                   e203 exu alu rglr    Implementing regular ALU instructions.                                              72   75     73
+                   e203 exu branchslv Implementing branch resolution in the RISC-V processor.                               79   75    595
+                   e203 exu commit      Implementing the commit stage of the core pipeline.                                247   210   116
+e203 cpu
+                   e203 exu csr         Implementing the core’s CSR interface.                                             428   255   1083
+                   e203 exu decode      This module decodes 32-bit and 16-bit instructions.                                907   384   587
+                   e203 exu disp        Dispatching instructions to functional units like the ALU and OITF.                140   139   149
+                   e203 exu excp        Handling exceptions and interrupts in the RISC-V processor.                        301   221   351
+                   e203 exu longpwbck Implementing the Write-Back (WB) logic.                                              135   83    126
+                   e203 exu nice        The bridge between the execution unit and custom hardware accelerators.             75   108    12
+                   e203 exu oitf        Managing the lifecycle of long-pipeline instructions.                              118   65    168
+                   e203 exu regfile     Implementing the integer general-purpose register file.                             63   59    1780
+                   e203 exu wbck        Arbitrating write-back requests.                                                    59   41     44
+                   e203 ifu             The top-level module of the E203 processor’s instruction fetch unit.               168   271    2
+                   e203 ifu ifetch      The core of the E203 processor’s instruction fetch unit.                           321   589   522
+                   e203 ifu ift2icb     A core component of the E203 processor’s instruction fetch unit.                   414   340   459
+                   e203 ifu litebpu     The branch prediction unit of the E203 processor.                                   57   179   166
+                   e203 ifu minidec     A mini decoder in the E203 processor’s IFU.                                         75   118    1
+                   e203 irq sync        An interrupt synchronization module in the E203 processor,.                         83   107    4
+                   e203 itcm ctrl       A multi-port memory access controller that manages and arbitrates access           419   325   305
+                                        requests to the ITCM from the IFU, LSU, and external interfaces.
+                   e203 itcm ram        The ITCM RAM module for the E203 processor.                                         50   91     1
+                   e203 lsu             The memory access unit of the E203 processor.                                      254   252    2
+                   e203 lsu ctrl        The LSU control module in the E203 processor.                                      733   423   476
+                   e203 reset ctrl      Managing reset signals for critical system modules.                                 65   49     3
+                   e203 srams           The memory management module of the E203 processor.                                 77   94     2
+These models encompass different sizes, open-source and                All models perform poorly when faced with real-world
+closed-source, and single-modal and multi-modal types. We           design requirements, especially for modules that require
+list the model abbreviations and their corresponding full names     instantiating submodules. None of the models succeeded in
+as follows:                                                         completing any system-level tasks. Even the best-performing
+  •   DS-V3-671B: The 671B DeepSeek-V3 model [41].                  model, o1-preview, only achieved 13.3% formal@1 accu-
+  •   DS-R1-671B: The 671B DeepSeek-R3 model [42].                  racy in module-level tasks. A more detailed analysis of o1-
+  •   RTLCoder-DS-6.7B: RTLCoder [4] trained on 6.7B                preview’s correctness on the design is shown in Fig. 6,
+      DeepSeek-Coder [43], which is one of its best models.         which reveals that leaf nodes in the design hierarchy tend to
+  •   CodeV-QW-7B: CodeV [7] trained on 7B Code-                    have higher generation accuracy, whereas modules requiring
+      Qwen [44], which is one of its best models.                   submodule instantiations are generally generated incorrectly.
+  •   GPT-4o: OpenAI GPT-4o w/o vision input (text-only).              When facing complex Verilog generation tasks, the
+  •   GPT-4o-V: OpenAI GPT-4o w/ vision input.                      advantage of reasoning models (e.g., DS-R1-671B) over
+                                                                    general models (e.g., DS-V3-671B) diminishes. Specifically,
+                                                                    on RTLLMV2, VerilogEvalV2, and ChipGPTV, DS-R1-671B
+   Agents. We evaluate the effectiveness of LLM single and
+                                                                    improves by 5.3%, 18.9%, 14.0%, and 8.3% relative to DS-V3-
+multi-agent frameworks on our RealBench. For the single-
+                                                                    671B, but there is a 3.0% decrease on RealBench formal@1.
+agent framework, we develop a self-reflection agent that
+                                                                    A detailed analysis shows that this is due to DS-R1-671B
+can generate Verilog based on design specifications, receive
+                                                                    exhibiting more severe hallucination behaviors when facing
+feedback from the syntax, testbench, and formal verification,
+                                                                    complex tasks, resulting in simple mistakes, such as generating
+and modify the generated code according to the feedback
+                                                                    fictitious module headers. This provides an empirical reference
+(Fig. 5). For the multi-agent framework, we use the SOTA
+                                                                    for the development and evaluation of future reasoning models.
+framework VerilogCoder [45], which firstly generates a plan,
+                                                                       Existing multi-modal models struggle to effectively han-
+executes the plan to generate code, and then debugs the code
+                                                                    dle multimodal information in real-world design specifica-
+based on feedback, with each process utilizing different agents.
+                                                                    tions. On the ChipGPTV benchmark, we find that the multi-
+It provides fine-grained feedback to agents through tools
+                                                                    modal model outperforms text-only models, where GPT-4o-V
+including a syntax checker, a simulator, and an AST-based
+                                                                    demonstrates a 6.0% improvement over GPT-4o relative to
+waveform tracing tool. To fairly compare the performance of
+                                                                    func@1. However, on RealBench, the improvement of the
+two agent frameworks, we use GPT-4o as the base LLM, set
+                                                                    multi-modal model is smaller, with only 2.6% relative to
+a 4-hour timeout limit, and only retain the first 6 Verilog
+                                                                    func@1 and 2.9% relative to formal@1. The reason may be
+code generations to evaluate their generation efficiency. For
+                                                                    that each task in ChipGPTV involves only a single diagram,
+VerilogCoder, all additional settings remain the same as their
+                                                                    while tasks in RealBench often include multiple diagrams,
+original ones.
+                                                                    such as block overviews, data flows, and state transitions, mak-
+   Evaluation metrics. Our evaluations mainly focus on three
+                                                                    ing the processing of vision information harder. Furthermore,
+aspects: syntax correctness, function correctness (i.e. test-
+                                                                    more complex tasks with longer design specifications and code
+bench), and formal correctness. These metrics are measured
+                                                                    can also lead to a decrease of improvement.
+using metric@1 and metric@5, which assess the correctness
+of the generated Verilog in one attempt and five attempts,          C. Results on Agents
+respectively.                                                          Simple debugging on RealBench can also improve the
+                                                                    pass rate. As shown in Fig. 7 (a), although the system-level
+B. Results on Single LLMs
+                                                                    pass rate remains at 0, the pass rate at the module level
+   The main results are shown in Table III, where we set            continues to improve as the iterations progress.
+temperatures to 0.2 and sample 20 times to estimate metric@1           A complex framework may require more adaptation
+and metric@5 except for o1-preview, which we sample only            costs to fit difficult tasks. As shown in Fig. 7, although
+once due to its high cost. We can conclude that:                    VerilogCoder continues to improve on VerilogEvalV2, its
+   Formal verification is necessary. Although RealBench’s           performance on RealBench is not stable and may require
+testbenches have achieved 100% line coverage, there remains         more adjustments. Specifically, syntax correctness decreases as
+a gap of 0% to 100% relatively between func@1 and for-              iterations progress. Analysis reveals that this may be because
+mal@1, highlighting that only formal verification can ensure        VerilogCoder gradually generates various subcomponents, so
+the reliability of the results. This is also indicated by Fig. 4,   that in the beginning, the generated code is simpler and easier
+where we test GPT-4-Turbo on RTLLMV2 with both the                  to ensure syntax correctness, and as the iterations progress, the
+original testbenches and our formal verification, and find that     code becomes increasingly complex, making it more difficult
+relatively 44.2% of the code passing testbenches fails in formal    to guarantee syntax correctness.
+verification. However, formal verification is slow for large
+designs. Therefore, exploring more efficient methods to apply       D. Failure Case Analysis
+formal verification to long and unstable code generated by             In this section, we further analyze the factors that lead to
+LLMs might be important for future research.                        failure, including submodules, input-output length, and circuit
+                                                                                                  TABLE III
+                                                                     T HE MAIN RESULTS OF VARIOUS MODELS ACROSS DIFFERENT BENCHMARKS .
+
+                                                                                                                                                                                                             CodeV-
+                                                                GPT-4-         o1-         Llama-            Llama-                      DS-V3-              DS-R1-              RTLCoder-                                       GPT-               GPT-
+     Benchmarks                      Metrics                                                                                                                                                                  QW-
+                                                                Turbo        preview       3.1-8B           3.1-405B                      671B                671B                DS-6.7B                                         4o                4o-V
+                                                                                                                                                                                                               7B
+                    syntax@1                                     82.1             94.0      92.4                75.7       89.9      90.3        79.8                                                         86.6                92.4                -
+                    syntax@5                                     88.9              -        95.9                84.2       94.4      95.6        87.2                                                         94.2                95.9                -
+     RTLLMV2
+                    func@1                                       51.3             64.0      62.8                45.0       60.1      65.4        45.7                                                         43.6                62.8                -
+                    func@5                                       62.4              -        71.9                53.3       68.0      75.6        51.0                                                         58.1                71.9                -
+                    syntax@1                                     98.5             98.7      89.8                98.0       99.9      99.5        97.5                                                         84.0               100.0                -
+     VerilogEvalV2- syntax@5                                     99.6              -        98.7                98.7      100.0     100.0        99.7                                                         97.3               100.0                -
+     spec2rtl       func@1                                       62.0             70.5      24.4                56.6       56.5      75.4        35.1                                                         39.7                64.6                -
+                    func@5                                       65.6              -        32.1                60.7       63.0      84.1        41.4                                                         56.4                68.2                -
+                    syntax@1                                     98.7            100.0      80.1                98.7       96.9      98.1        97.0                                                         97.4                99.7                -
+     VerilogEvalV2-
+                    syntax@5                                     99.8              -        92.6                99.3       98.8      99.9        99.5                                                         99.9               100.0                -
+     code-
+                    func@1                                       41.1             71.8      6.3                 56.1       62.3      76.3        39.0                                                         50.5                62.6                -
+     complete
+                    func@5                                       49.8              -        11.0                61.8       68.7      83.0        45.7                                                         58.8                66.9                -
+                    syntax@1                                     54.6             57.6      20.8                48.6       53.0      59.7        40.2                                                         19.4                55.9               56.0
+                    syntax@5                                     60.4              -        44.0                58.6       57.0      63.6        51.8                                                         29.1                60.6               60.3
+     ChipGPTV
+                    func@1                                       31.5             39.4      8.6                 22.3       31.1      39.4        17.0                                                          6.8                34.9               40.9
+                    func@5                                       39.9              -        20.1                26.1       36.9      48.0        23.1                                                         13.3                41.5               47.3
+                    syntax@1                                     27.0             28.3      10.3                 6.6       24.9      13.4        10.9                                                          3.6                24.5               29.3
+                    syntax@5                                     36.2              -        21.7                15.7       32.0      30.4        19.0                                                          7.4                29.7               38.1
+     RealBench-
+                    func@1                                        9.4             13.3      2.9                  2.8       12.8      8.0          3.4                                                          0.3                10.9               13.5
+     Module
+                    func@5                                       13.8              -        6.2                  7.6       17.3      16.2         8.5                                                          1.0                14.0               16.2
+     (ours)
+                    formal@1                                      4.4             13.3      2.6                  2.6       10.8      7.8          2.0                                                          0.0                8.8                11.7
+                    formal@5                                      6.8              -        4.7                  6.9       14.2      15.4         3.6                                                          0.0                12.4               13.3
+     RealBench-     syntax@1                                      0.0             25.0      0.0                  0.0       41.3      16.3         0.0                                                          0.0                31.3               38.8
+     System         syntax@5                                      0.0              -        0.0                  0.0       67.6      42.2         0.0                                                          0.0                49.3               70.1
+     (ours)                                                                                    func@1,         func@5, formal@1, formal@5 are all 0.
+                                        Fail                                                                                                                  Fail
+
+                               sdc_controller                                                                                                         e203_cpu_top
+                                                                                                                           Fail
+             Fail
+                                                                                                                       e203_srams                                                                        Fail
+  sd_data_serial_host                                                           Fail                                                                                                                  e203_cpu
+                                                                             sd_bd                Fail
+     Pass
+                                                                                Fail         e203_itcm_ram                                                             Fail
+  sd_crc_16                                                                                                                                                                                                              Fail                       Pass
+                                 Fail                                   sd_controller_wb                                                                             e203_core
+                                                                                                  Fail                                                                                                                                        e203_extend_csr
+                        sd_cmd_serial_host                                                                                                                                                                          e203_clk_ctrl
+                                                                                Fail                                                                                                                                                                 Fail
+                                                                                             e203_dtcm_ram                  Fail                      Fail                     Fail                   Fail
+                                                                        sd_cmd_master                                                                                                                                   Pass
+        Fail                                             Fail                                                            e203_ifu               e203_lsu                  e203_biu                  e203_exu                                    e203_irq_sync
+                              Pass                                                                                                                                                                                 e203_clkgate
+ sd_fifo_rx_filler                               sd_fifo_tx_filler              Fail                                                                                                                                                                 Fail
+                            sd_crc_7
+                                                                        sd_clock_divider            Fail                          Fail                       Fail                                                                              e203_reset_ctrl
+      Fail                                              Fail
+                                                                                Fail          e203_ifu_ifetch           e203_ifu_ift2icb              e203_lsu_ctrl                                                                                  Fail
+   sd_rx_fifo                                     sd_tx_fifo                                                                                                                                                          Fail
+                                                                        sd_data_master              Fail                     Pass                                                                                                              e203_dtcm_ctrl
+                                                                                                                                                                                                                 e203_exu_alu
+                                      (a)                                                    e203_ifu_ litebpu         e203_ifu_minidec                                                      Fail                                                    Fail
+                                                                                                                                                                                 e203_exu_commit                                                e203_itcm_ctrl
+
+                     Fail                               Fail                                                               Fail
+                                                                                                                                                                                                                       Fail                          Fail
+             aes_cipher_top                    aes_inv_cipher_top                                                 e203_exu_decode                                                     Fail                       e203_exu_nice               e203_exu_alu_lsuagu
+                                                                                                                                              Pass                      e203_exu_ branchslv
+                                                                                                                Fail                                                                                                   Fail                          Fail
+                                     Fail                            Pass
+                                                                                                         e203_exu_disp                   e203_exu_regfile                             Fail                      e203_exu_alu_bjp             e203_exu_alu_dpath
+                        aes_key_expand_128                       aes_inv_sbox
+                                                                                                                Fail                           Fail                           e203_exu_excp                            Fail                          Fail
+                                                                                                           e203_exu_oitf                 e203_exu_wbck
+        Pass                                     Fail                                                                                                                                                           e203_exu_alu_rglr            e203_exu_alu_muldiv
+                                                                                                                Fail                           Fail
+     aes_sbox                                  aes_rcon                                                                                                                                                                               Fail
+                                                                                                    e203_exu_longpwbck                    e203_exu_csr
+                                                                                                                                                                                                                              e203_exu_alu_csrctrl
+
+                                       (b)                                                                                                                                       (c)
+
+Fig. 6. Design hierarchy and o1-preview’s formal@1 of (a) SD card controller, (b) AES encoder/decoder core, and (c) Hummingbirdv2 E203 CPU Core.
+“Pass” means o1-preview generates the module correctly while “Fail” means the opposite.
+
+types.                                                                                                                        research direction for achieving real-world designs.
+
+   Submodule instantiation has a significant impact on the                                                                       LLMs struggle with FSMs and complex combinational
+pass rate. We select LLMs with higher performance and com-                                                                    circuits. We categorize the circuits in RealBench into three
+pare their pass rate in the task with and without submodules.                                                                 types: combinational circuits, sequential circuits without finite
+The results in Table IV show that the formal@1 of tasks                                                                       state machines (FSMs), and sequential circuits with FSMs.
+without submodules is 13.0% higher than that of tasks with                                                                    The results in Table IV show that LLMs perform best in
+submodules on average, with DS-V3-671B showing the largest                                                                    sequential circuits without FSMs (Seq w/o FSM), followed by
+difference of 20.9%. It is also shown that LLMs’ performance                                                                  combinational circuits (Comb), and worst in sequential circuits
+on tasks with submodules is similarly low, indicating that the                                                                with FSMs (Seq w FSM). Further analysis reveals that the
+ability to handle submodule relationships is a possible future                                                                underperformance of combinational circuits is due to the fact
+                                                         (a)                                                                                     (b)
+
+                       Fig. 7. Results of two LLM agent frameworks on VerilogEvalV2-spec2rtl and RealBench: (a) Self-reflection agent and (b) VerilogCoder.
+
+                            TABLE IV                                                                              expands RTLLMV1.1 to 50 RTL designs across various de-
+   T HE COMPARISON AMONG TASKS ON SUBMODULES AND CIRCUIT TYPES .                                                  sign types, though still focusing on basic functional blocks
+                                                   GPT-           DS- DS-                                         rather than complex hierarchical systems. Chang et al. [27]
+                                                           o1-             GPT- GPT-
+              Submodule Circuit Type                 4-
+                                                         preview
+                                                                  V3- R1-
+                                                                            4o 4o-V                               introduced a novel multi-modal framework and related bench-
+                                                   Turbo         671B 671B                                        marks, combining natural language with visual block dia-
+                            Comb                    0.8   33.3 29.6 10.4 20.4 24.6
+              w/o        Seq w/o FSM                1.3   50.0 42.5 28.8 42.5 57.5                                grams. RTL-Repo [29] addressed this limitation by providing
+              submodules Seq w FSM                  0.0    0.0    2.9 7.9 2.9 0.0                                 over 4,000 samples for multi-file, large-context scenario as-
+                            Comb                    8.6    6.9    3.6 5.9 3.3 6.0                                 sessment. SpecLLM [30] proposes a benchmark for generation
+              w/         Seq w/o FSM                0.0    0.0    0.0 0.0 0.0 0.0
+              submodules Seq w FSM                  0.0    0.0    0.0 0.7 0.0 0.0                                 and review specifications with LLMs.
+                                o1-preview                          GPT-4o-V
+                                                                                                                     Compared to these benchmarks, RealBench has significant
+                                                                                     1.0
+                                                                                                                  advantages in terms of design complexity and reality, standard-
+             800                                                                                                  ized design specifications, and rigorous verification, which can
+                                                                                      formal@1 (0=red, 1=green)
+
+
+
+
+                                                                                     0.8
+             600                                                                                                  greatly contribute to the development of Verilog generation
+Code Lines
+
+
+
+
+                                                                                     0.6
+                                                                                                                  and hardware automation design community.
+             400
+                                                                                     0.4
+
+             200
+                                                                                                                  B. LLMs for Verilog Generation
+                                                                                     0.2
+                                                                                                                     Various approaches have been proposed to utilize LLMs
+               0
+                   0      200       400      600     0        200      400     600   0.0
+                                                                                                                  for RTL generation, which is constrained by high-quality
+                                                    Doc. Lines                                                    datasets [3]–[7], [9], [10], [24], [46], [47]. Typically, RTL-
+                                                                                                                  Coder [4] leveraged GPT to synthesize instruction-code pairs
+ Fig. 8. The pass rate of o1-preview and GPT-4o-V varies with the number
+ of document lines and code lines. Each point represents a task, with red                                         to create a fine-tuning dataset and fine-tune their LLMs. Bet-
+ indicating a pass rate close to 0 and green indicating a pass rate close to 1.                                   terV [5] augmented its GitHub-sourced Verilog dataset through
+                                                                                                                  Verilog to C translation. MG-Verilog [6] and CodeV [7]
+ that combinational circuits in the CPU mainly involve strict                                                     introduced multi-grained description-code datasets that vary
+ detail requirements, such as CSR control and long pipeline                                                       in complexity and detail. CraftRTL [10] identified challenges
+ write-back, which are difficult for LLMs to process.                                                             in synthetic data generation for non-text representations and
+    LLMs perform better with shorter input and output.                                                            performance variability during benchmark training, and in-
+ We analyze the results of o1-preview and GPT-4o-V. As                                                            troduced a targeted fine-tuning dataset for LLMs, addressing
+ shown in Fig. 8, LLMs can generate the correct modules                                                           issues in Karnaugh maps, state transition diagrams, and wave-
+ for tasks with short design specifications and code, except                                                      form problems in Verilog code.
+ for aes_sbox and aes_inv_sbox, which have long code
+ and design specifications but consist of simple data mapping                                                     C. LLM Frameworks for Verilog Generation
+ between input and output signals.                                                                                   Some research focuses on developing generation frame-
+                                                                                                                  works for Verilog tasks to enhance the performance of general-
+                                          IV. R ELATED W ORK
+                                                                                                                  purpose LLMs [11]–[13], [16], [17], [20], [26], [28], [45].
+ A. Current Verilog Generation Benchmarks                                                                         Among them, Chip-Chat [13] and ChipGPT [12] employ
+    VeriGen [24] pioneered the evaluation of LLM-generated                                                        multi-round EDA and human feedback to aid LLMs in Verilog
+ Verilog code, though limited by its small-scale circuit cov-                                                     generation, but the need for extensive human intervention lim-
+ erage and insufficient testing methodology. VerilogEval [25]                                                     its automation. RTLFixer [20] integrates retrieval-augmented
+ advanced the field with 156 designs and the golden model for                                                     generation (RAG) and ReAct to correct syntax errors in Ver-
+ functionality verification, while RTLLMV1.1 [26] introduced                                                      ilog code. VerilogCoder [45] developed a multi-agent system
+ comprehensive evaluation metrics including syntax, function-                                                     that can write Verilog and utilize tools to correct syntax and
+ ality, and design performance. Further developments include                                                      functional errors.
+ VerilogEvalV2 [28], which incorporated in-context learning                                                          We evaluate typical LLMs and frameworks for Verilog
+ capabilities and systematic failure analysis. RTLLMV2 [23]                                                       generation on RealBench, and the results show that current
+methods are still unable to effectively accomplish complex                       [17] Y. Fu, Y. Zhang, Z. Yu, S. Li, Z. Ye, C. Li, C. Wan, and Y. C. Lin,
+and real-world Verilog generation tasks.                                              “Gpt4aigchip: Towards next-generation ai accelerator design automation
+                                                                                      via large language models,” in 2023 IEEE/ACM International Confer-
+                                                                                      ence on Computer Aided Design (ICCAD). IEEE, 2023, pp. 1–9.
+                           V. C ONCLUSION                                        [18] H. Wu, Z. He, X. Zhang, X. Yao, S. Zheng et al., “Chateda: A large
+                                                                                      language model powered autonomous agent for eda,” IEEE Transactions
+   In this paper, we propose RealBench, a Verilog generation                          on Computer-Aided Design of Integrated Circuits and Systems, 2024.
+                                                                                 [19] R. Kande, H. Pearce, B. Tan, B. Dolan-Gavitt, S. Thakur, R. Karri, and
+benchmark designed for real-world design workflows. Real-                             J. Rajendran, “Llm-assisted generation of hardware assertions,” arXiv
+Bench includes (1) complex designs from open-source IPs, (2)                          preprint arXiv:2306.14027, 2023.
+handwritten detailed and formatted design specifications, and                    [20] Y. Tsai, M. Liu, and H. Ren, “Rtlfixer: Automatically fixing rtl syntax
+                                                                                      errors with large language model,” in Proceedings of the 61st ACM/IEEE
+(3) rigorous verification environments. Evaluations of various                        Design Automation Conference, 2024, pp. 1–6.
+models on RealBench indicate that current models still have                      [21] X. Yao, H. Li, T. H. Chan, W. Xiao, M. Yuan et al., “Hdldebugger:
+limitations in Verilog generation and highlight several poten-                        Streamlining hdl debugging with large language models,” arXiv preprint
+                                                                                      arXiv:2403.11671, 2024.
+tial research directions: formal verification of LLM-generated                   [22] Z. Yan, Y. Qin, X. S. Hu, and Y. Shi, “On the viability of using llms
+code, less hallucinated reasoning models for complex tasks,                           for sw/hw co-design: An example in designing cim dnn accelerators,”
+and stronger models that can handle diagram inputs and                                in 2023 IEEE 36th International System-on-Chip Conference (SOCC).
+                                                                                      IEEE, 2023, pp. 1–6.
+submodule instantiations effectively.                                            [23] S. Liu, Y. Lu, W. Fang, M. Li, and Z. Xie, “Openllm-rtl: Open dataset
+                                                                                      and benchmark for llm-aided design rtl generation,” 2024.
+                              R EFERENCES                                        [24] S. Thakur, B. Ahmad, Z. Fan, H. Pearce, B. Tan, R. Karri, B. Dolan-
+                                                                                      Gavitt, and S. Garg, “Benchmarking large language models for auto-
+                                                                                      mated verilog rtl code generation,” in 2023 Design, Automation & Test
+ [1] D. Patterson, “For better or worse, benchmarks shape a field,” Commu-
+                                                                                      in Europe Conference & Exhibition (DATE). IEEE, 2023, pp. 1–6.
+     nications of the ACM, vol. 55, 2012.
+                                                                                 [25] M. Liu, N. Pinckney, B. Khailany, and H. Ren, “Verilogeval: Evaluating
+ [2] J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman,              large language models for verilog code generation,” in 2023 IEEE/ACM
+     D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat et al., “Gpt-4                International Conference on Computer Aided Design (ICCAD). IEEE,
+     technical report,” arXiv preprint arXiv:2303.08774, 2023.                        2023, pp. 1–8.
+ [3] M. Liu, T.-D. Ene, R. Kirby, C. Cheng, N. Pinckney, R. Liang, J. Alben,     [26] Y. Lu, S. Liu, Q. Zhang, and Z. Xie, “Rtllm: An open-source benchmark
+     H. Anand, S. Banerjee, I. Bayraktaroglu et al., “Chipnemo: Domain-               for design rtl generation with large language model,” in 2024 29th Asia
+     adapted llms for chip design,” arXiv preprint arXiv:2311.00176, 2023.            and South Pacific Design Automation Conference (ASP-DAC). IEEE,
+ [4] S. Liu, W. Fang, Y. Lu, Q. Zhang, H. Zhang et al., “Rtlcoder: Outper-            2024, pp. 722–727.
+     forming gpt-3.5 in design rtl generation with our open-source dataset       [27] K. Chang, Z. Chen, Y. Zhou, W. Zhu, H. Xu et al., “Natural language
+     and lightweight solution,” arXiv preprint arXiv:2312.08617, 2023.                is not enough: Benchmarking multi-modal generative ai for verilog
+ [5] Z. Pei, H.-L. Zhen, M. Yuan, Y. Huang, and B. Yu, “Betterv: Con-                 generation,” arXiv preprint arXiv:2407.08473, 2024.
+     trolled verilog generation with discriminative guidance,” arXiv preprint    [28] N. Pinckney, C. Batten, M. Liu, H. Ren, and B. Khailany, “Revisiting
+     arXiv:2402.03375, 2024.                                                          verilogeval: Newer llms, in-context learning, and specification-to-rtl
+ [6] Y. Zhang, Z. Yu, Y. Fu, C. Wan et al., “Mg-verilog: Multi-grained                tasks,” arXiv preprint arXiv:2408.11053, 2024.
+     dataset towards enhanced llm-assisted verilog generation,” arXiv preprint   [29] A. Allam and M. Shalan, “Rtl-repo: A benchmark for evaluating llms on
+     arXiv:2407.01910, 2024.                                                          large-scale rtl design projects,” arXiv preprint arXiv:2405.17378, 2024.
+ [7] Y. Zhao, D. Huang, C. Li, P. Jin, Z. Nan et al., “Codev: Empowering         [30] M. Li, W. Fang, Q. Zhang, and Z. Xie, “Specllm: Exploring generation
+     llms for verilog generation through multi-level summarization,” arXiv            and review of vlsi design specification with large language model,” arXiv
+     preprint arXiv:2407.10424, 2024.                                                 preprint arXiv:2401.13266, 2024.
+ [8] K. Chang, K. Wang, N. Yang, Y. Wang, D. Jin, W. Zhu, Z. Chen, C. Li,        [31] OpenCores, “Opencores: Open source ip-cores,” https://opencores.org/.
+     H. Yan, Y. Zhou et al., “Data is all you need: Finetuning llms for chip     [32] ——, “Design sdc mmc controller,” https://github.com/freecores/sdcard
+     design via an automated design-data augmentation framework,” arXiv                 mass storage controller.
+     preprint arXiv:2403.11202, 2024.                                            [33] riscv      mcu,      “Hummingbirdv2          e203    core   and      soc,”
+ [9] M. Gao, J. Zhao, Z. Lin, W. Ding, X. Hou, Y. Feng, C. Li, and                    https://github.com/riscv-mcu/e203 hbirdv2/tree/master.
+     M. Guo, “Autovcoder: A systematic framework for automated verilog           [34] C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and
+     code generation using llms,” arXiv preprint arXiv:2407.18333, 2024.              K. R. Narasimhan, “SWE-bench: Can language models resolve real-
+[10] M. Liu, Y.-D. Tsai, W. Zhou, and H. Ren, “Craftrtl: High-quality                 world github issues?” in The Twelfth International Conference
+     synthetic data generation for verilog code models with correct-by-               on Learning Representations, 2024. [Online]. Available: https:
+     construction non-textual representations and targeted code repair,” arXiv        //openreview.net/forum?id=VTF8yNQM66
+     preprint arXiv:2409.12993, 2024.                                            [35] J. Yang, C. Jimenez, A. Wettig, K. Lieret, S. Yao, K. Narasimhan, and
+[11] H. Sami, P.-E. Gaillardon, V. Tenace et al., “Aivril: Ai-driven rtl gen-         O. Press, “Swe-agent: Agent-computer interfaces enable automated soft-
+     eration with verification in-the-loop,” arXiv preprint arXiv:2409.11411,         ware engineering,” Advances in Neural Information Processing Systems,
+     2024.                                                                            vol. 37, pp. 50 528–50 652, 2024.
+[12] K. Chang, Y. Wang, H. Ren, M. Wang, S. Liang et al., “Chipgpt: How          [36] C. Wolf, “Yosys open synthesis suite,” https://yosyshq.net/yosys/.
+     far are we from natural language hardware design,” 2023.                    [37] Silvaco, “Nangate freepdk45 generic open cell library,”
+[13] J. Blocklove, S. Garg, R. Karri, and H. Pearce, “Chip-chat: Chal-                https://si2.org/open-cell-library/.
+     lenges and opportunities in conversational hardware design,” in 2023        [38] Cadence, “Jasper formal verification platform,” https://www.cadence.
+     ACM/IEEE 5th Workshop on Machine Learning for CAD (MLCAD).                       com/en US/home/tools/system-design-and-verification/formal-and-
+     IEEE, sep 2023.                                                                  static-verification/jasper-verification-platform.html.
+[14] X. Yao, Y. Wang, X. Li, Y. Lian, R. Chen, L. Chen, M. Yuan, H. Xu,          [39] C.-Y. Lin, “Rouge: A package for automatic evaluation of summaries,”
+     and B. Yu, “Rtlrewriter: Methodologies for large models aided rtl code           in Text summarization branches out, 2004, pp. 74–81.
+     optimization,” arXiv preprint arXiv:2409.11414, 2024.                       [40] A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle et al., “The
+[15] L. Chen, Y. Chen, Z. Chu, W. Fang, T.-Y. Ho et al., “The dawn of                 llama 3 herd of models,” arXiv preprint arXiv:2407.21783, 2024.
+     ai-native eda: Promises and challenges of large circuit models,” arXiv      [41] A. Liu, B. Feng, B. Xue, B. Wang, B. Wu et al., “Deepseek-v3 technical
+     preprint arXiv:2403.07257, 2024.                                                 report,” arXiv preprint arXiv:2412.19437, 2024.
+[16] Z. Yan, W. Fang, M. Li, M. Li, S. Liu, Z. Xie, and H. Zhang, “Assertllm:    [42] D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang et al., “Deepseek-r1:
+     Generating and evaluating hardware verification assertions from design           Incentivizing reasoning capability in llms via reinforcement learning,”
+     specifications via multi-llms,” arXiv preprint arXiv:2402.00386, 2024.           arXiv preprint arXiv:2501.12948, 2025.
+[43] D. Guo, Q. Zhu, D. Yang, Z. Xie, K. Dong et al., “Deepseek-coder:
+     When the large language model meets programming–the rise of code
+     intelligence,” arXiv preprint arXiv:2401.14196, 2024.
+[44] Q. Team, “Code with codeqwen1.5,” April 2024. [Online]. Available:
+     https://qwenlm.github.io/blog/codeqwen1.5/
+[45] C.-T. Ho, H. Ren, and B. Khailany, “Verilogcoder: Autonomous verilog
+     coding agents with graph-based planning and abstract syntax tree (ast)-
+     based waveform tracing tool,” in Proceedings of the AAAI Conference
+     on Artificial Intelligence, vol. 39, no. 1, 2025, pp. 300–307.
+[46] H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi et al.,
+     “Llama 2: Open foundation and fine-tuned chat models,” arXiv preprint
+     arXiv:2307.09288, 2023.
+[47] F. Cui, C. Yin, K. Zhou, Y. Xiao, G. Sun et al., “Origen: Enhancing
+     rtl code generation with code-to-code augmentation and self-reflection,”
+     in Proceedings of the 43rd IEEE/ACM International Conference on
+     Computer-Aided Design, 2024, pp. 1–9.
+

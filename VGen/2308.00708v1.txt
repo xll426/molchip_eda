@@ -1,0 +1,1130 @@
+                                            ;
+                                         VeriGen: A Large Language Model for Verilog Code Generation∗
+
+                                         SHAILJA THAKUR, New York University, USA
+                                         BALEEGH AHMAD, New York University, USA
+                                         HAMMOND PEARCE, University of New South Wales, Australia
+                                         BENJAMIN TAN, University of Calgary, Canada
+                                         BRENDAN DOLAN-GAVITT, New York University, USA
+                                         RAMESH KARRI, New York University, USA
+arXiv:2308.00708v1 [cs.PL] 28 Jul 2023
+
+
+
+
+                                         SIDDHARTH GARG, New York University, USA
+                                         In this study, we explore the capability of Large Language Models (LLMs) to automate hardware design by generating high-quality
+                                         Verilog code, a common language for designing and modeling digital systems. We fine-tune pre-existing LLMs on Verilog datasets
+                                         compiled from GitHub and Verilog textbooks. We evaluate the functional correctness of the generated Verilog code using a specially
+                                         designed test suite, featuring a custom problem set and testing benches. Here, our fine-tuned open-source CodeGen-16B model
+                                         outperforms the commercial state-of-the-art GPT-3.5-turbo model with a 1.1% overall increase. Upon testing with a more diverse
+                                         and complex problem set, we find that the fine-tuned model shows competitive performance against state-of-the-art gpt-3.5-turbo,
+                                         excelling in certain scenarios. Notably, it demonstrates a 41% improvement in generating syntactically correct Verilog code across
+                                         various problem categories compared to its pre-trained counterpart, highlighting the potential of smaller, in-house LLMs in hardware
+                                         design automation. We release our training/evaluation scripts and LLM checkpoints as open-source contributions.
+
+                                         CCS Concepts: • Hardware → Hardware description languages and compilation; • Computing methodologies → Natural
+                                         language processing.
+
+                                         Additional Key Words and Phrases: Transformers, Verilog, GPT, LLM
+
+                                         ACM Reference Format:
+                                         Shailja Thakur, Baleegh Ahmad, Hammond Pearce, Benjamin Tan, Brendan Dolan-Gavitt, Ramesh Karri, and Siddharth Garg. 2023.
+                                         VeriGen: A Large Language Model for Verilog Code Generation. ACM Trans. Des. Autom. Electron. Syst. 37, 4, Article 111 (August 2023),
+                                         29 pages. https://doi.org/XXXXXXX.XXXXXXX
+
+                                         ∗ This   manuscript extends work presented at the Design, Automation & Test in Europe Conference (DATE 2023) [26]
+
+
+                                         This research work was supported in part by NSF Award 1553419, NSF Award 1646671, NSF Award 2039607, and ARO Award 77191NC. The opinions,
+                                         findings, and conclusions, or recommendations expressed are those of the author(s) and do not necessarily reflect the views of any sponsors.
+                                         Corresponding author: Shailja Thakur st4920@nyu.edu.
+                                         Authors’ addresses: Shailja Thakur, st4920@nyu.edu, New York University, New York, USA; Baleegh Ahmad, ba1283@nyu.edu, New York University,
+                                         New York, USA; Hammond Pearce, hp2265@nyu.edu, University of New South Wales, Sydney, Australia; Benjamin Tan, benjamin.tan1@ucalgary.ca,
+                                         University of Calgary, Calgary, Canada; Brendan Dolan-Gavitt, brendandg@nyu.edu, New York University, New York, USA; Ramesh Karri, New York
+                                         University, New York, USA, rkarri@nyu.edu; Siddharth Garg, New York University, New York, USA, siddharth.garg@nyu.edu.
+
+
+                                         Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee provided that copies are not
+                                         made or distributed for profit or commercial advantage and that copies bear this notice and the full citation on the first page. Copyrights for components
+                                         of this work owned by others than the author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on
+                                         servers or to redistribute to lists, requires prior specific permission and/or a fee. Request permissions from permissions@acm.org.
+                                         © 2023 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+                                         Manuscript submitted to ACM
+
+
+                                         Manuscript submitted to ACM                                                                                                                             1
+2                                                                                                            Thakur et al.
+
+
+1    INTRODUCTION
+Digital hardware design flows involve designers writing code in hardware description languages (HDLs) such as
+Verilog and VHDL to specify hardware architectures and behaviors, a process that is both time-consuming and bug-
+prone [7]. As design complexity grows, there is a need to reduce design costs and developer effort during hardware
+specification. Several attempts have thus sought to improve HDL design time and quality, for instance by using high-level
+synthesis—this allows developers to specify functionality in languages like C but comes at the expense of hardware
+efficiency. Related works also consider modernizing HDLs by adopting features and languages typically used in software
+development, for instance Chisel [3] based on Scala.
+    A promising new approach comes via the proliferation of technically capable code-writing large language models
+(LLMs) [5]. LLMs are deep neural networks, typically based on transformer [27] architectures, that aim to model the
+underlying distribution of a natural or structured language corpus. Given a sequence of words (or “tokens”) LLMs
+predict a distribution over the next word/token. When used in a loop (‘autoregressively’) with some ‘input prompt’ and
+strategies for choosing the best tokens from the distribution, LLMs can thus complete text: If prompted with the first
+sentence of a paragraph of English prose, the model will suggest more text; or, if provided technical specifications or
+coding comments, LLMs can then implement the matching code. The proficiency of these pre-trained models are a
+result of recent advance in scaling transformer architectures as well as the availability of massive text and code corpus
+from open-source repositories such as GitHub and StackOverflow. As such, we wish to investigate the potential for
+developers to use LLMs to automatically generate the HDL code directly from a natural language like English.
+    While considerable effort has been undertaken which explores the training and utilization of language models for
+writing software [1, 5, 14] as well as in their down-stream effects (e.g. security [18, 24]), there is scant examination of
+LLMs for hardware applications. As such, this was the focus of the original work [26] as well as in this extension, where
+we perform the first comprehensive evaluation of the syntactic and functional correctness of synthesizable Verilog code
+generated by both open-source and commercial LLMs.
+    There are several key observations when considering the state of the art in code-writing LLMs for hardware. First, it
+has been observed that existing commercial LLMs, including GitHub Copilot, may generate Verilog code which fails
+syntax, synthesis, and functional checks [18]. Secondly, while fine-tuning a given LLM over a Verilog corpus can aid in
+its authorship of HDL [19], this requires a large dataset of Verilog. Unfortunately, such datasets for Verilog are lacking,
+and so the prior work in this area used a small, synthetic template-generated HDL corpus meaning that the resultant
+model did not generalize to unseen problems. Thirdly, quantifying model performance in this area is difficult: while
+datasets like HumanEval exist for software [5], large-scale test problems and methods to evaluate the syntactical and
+functional correctness of LLM-generated HDL are lacking.
+    Our paper thus makes the following contributions. (1) By consolidating available open-source Verilog code we create
+(to the best of our knowledge) the largest training corpus of Verilog code yet used for training LLMs. (2) Using this
+corpus, we examine fine-tuning five different pre-trained LLMs models with parameter counts ranging from 345M to
+16B, producing five new fine-tuned open-source models specialized for Verilog code generation. (3) To evaluate the
+efficacy of the models and determine the effect of the parameter sizes, we design a set of Verilog coding problems with
+varying difficulty levels and corresponding test benches to test the functional correctness of generated code. (4) We
+comprehensively evaluate our fine-tuned models against state-of-the-art general-purpose LLMs including ChatGPT
+(GPT-3.5-turbo and GPT4) and PALM2 an expanded evaluation with a new set of Verilog design challenges. These LLMs
+are several times larger than our models, black-boxed and incur per-token costs; in contrast, our models are smaller,
+
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                                             3
+
+                          Verilog Source               3                  Test Benches
+                          1                         Pre-Trained                           8
+                                                       Model                                           Accepted
+                        Training Corpus                4                                               Completions
+                          2                          FineTuning
+                                                                             7
+                                                       5
+                          6                         Fine-Tuned                   Code        Rejected
+                              Prompt                  Model                      Completions Completions
+
+                                          Fig. 1. Experimental Evaluation of LLM Verilog Completions
+
+
+open-sourced, free, and provide comparable or improved performance. (5) We augment our training set with a selection
+of Verilog textbooks and provide detailed results on the performance of models tuned on this augmented dataset. To
+aid the community in performing further research in this area, we provide the training/evaluation code1 and LLM
+checkpoints2 .
+    Fig. 1 illustrates our experimental platform for studying the impact of parameters such as temperature, number
+of sequences generated per problem, and number of LLM parameters. Section 3 discusses creating the training data
+from GitHub and PDFs of Verilog textbooks 1 with pre-processing 2 and the five pre-trained LLMs 3 that we
+fine-tune 4 for completing Verilog code 5 . Section 4 explains the evaluation setup, including our hand-designed
+prompts 6 . Section 5 presents our results from generating code suggestions 7 and evaluating with an analysis pipeline
+that compiles the Verilog and checks it against unit tests 8 . Section 7 discusses how our evaluation shows that the
+largest code-based LLMs (i.e., CodeGen-16B) fine-tuned on our Verilog corpus demonstrate competitive performance
+over all other evaluated LLMs. Qualitatively, our best-performing fine-tuned LLMs can generate functioning code for
+challenging problems.
+
+2     BACKGROUND AND RELATED WORK
+2.1    Background
+Transformer-based deep neural networks have been the cornerstone of advances across domains excelling in language-
+related tasks [5, 27]. Development and use of Large Language Models (LLMs) is a substantial evolution in this landscape.
+LLMs process inputs formatted as tokens3 . When an input sequence of tokens known as a prompt is provided, the LLM
+processes it to generate a probability distribution for the next token across the entire vocabulary. The token with the
+highest probability is chosen, appended to the input sequence, and re-introduced into the LLM. This yields a new token,
+and the process iterates until a complete sequence of tokens, known as a completion, is generated.
+    In the domain of coding, LLMs exhibit a unique and innovative approach. In addition to natural-language, LLMs are
+trained on extensive code bases, either in a specific programming language or a mix of languages. The datasets used for
+these training tasks can often reach into hundreds of gigabytes. The prompts used for these code-trained LLMs can
+take various forms, including instructions, comments, code snippets, or a combination of these. Interestingly an LLM
+trained on a corpus of mixed languages often manages to infer the target language from the prompt.
+1 https://github.com/shailja-thakur/VGen
+2 https://huggingface.co/shailja
+3 tokens   are common character sequences that have unique identification through byte pair encoding [10].
+                                                                                                               Manuscript submitted to ACM
+4                                                                                                           Thakur et al.
+
+
+    Despite the remarkable abilities of LLMs, training them from scratch is resource-intensive, requiring massive datasets
+and numerous parameters. However, there is a practical alternative of fine-tuning pre-trained LLMs on specialized
+datasets to cater to specific tasks. Fine-tuning is significantly efficient as it requires a limited number of training
+epochs. Several LLMs pre-trained for natural language and code either make the weights available, like NVIDIA’s
+MegatronLM [25] or Salesforce’s CodeGen models [16], or provide fine-tuning through an API, like AI21studio’s
+Jurassic-1 (J1) models.4 [2]. However, fine-tuning through APIs may come with costs and lacks transparency as the
+models’ weights and parameters are not disclosed.
+    Recently, the LLM landscape has seen remarkable advancements in terms of larger and more complex models such as
+GPT-3.5-turbo [31], GPT-4 [17], PALM2 [6]. These LLMs have not only surpassed their predecessors in their capabilities
+but have achieved remarkable human task alignment. They have been trained on vast datasets, often comprising
+gazillions of tokens, pushing the frontier of language-related tasks like code generation, debugging and interpretation.
+These LLMs have achieved state-of-the-art results, showcasing the potential of machine learning in understanding and
+emulating human-like text generation.
+    However, these advances have brought new challenges. Larger models, unlike their open-source counterparts, come
+with usage fees. Furthermore, these commercial off-the-shelf products LLMs do not guarantee reliability or continuous
+presence in the public domain. For instance, Code-Davinci-002, a commercial LLM, is no longer accessible, highlighting
+risks of dependency on such models. Moreover, interfacing with these LLMs via APIs presents security vulnerabilities,
+such as the risk of injection attacks, where malicious commands could be inserted and executed. Furthermore, API
+usage may introduce additional latency, impacting the performance of applications that rely on these LLMs for real-time
+processing. We refer to these models that are supposedly hundreds of billions of parameters as large LLMs.
+
+
+2.2    Prior Work
+Programming is challenging, given the need for human designers to interpret and transform natural language specifica-
+tions into programming structures. This motivates the use of natural language processing (NLP) to transform language
+to code [15]. Hardware design using Verilog HDL is similar to programming. Prior work explored NLP techniques for
+formal system modeling [9] and generating assertions [12], albeit on a small scale. Pearce et al. trained DAVE, a small
+LLM to produce Verilog snippets from template-based natural language descriptions for a limited set of functions [19].
+GitHub’s Copilot was evaluated for security bugs produced during out-of-the-box Verilog completions [18] and was
+found to be lacking. Our study scales this exploration by assessing LLMs across various design tasks using an automated
+evaluation framework. Despite the lack of open datasets for Verilog-focused LLM training, the promising outcomes
+from applying LLMs in programming, and their further potential shown in multi-language code repositories like
+CodeSearchNet [13], and large-scale LLMs such as GPT-3.5 and GPT-4, emphasize the possibilities for hardware design
+languages. There is no open dataset to train and evaluate LLMs on writing Verilog.
+
+
+3     LLM TRAINING
+We describe our method for training (or fine-tuning) LLM models. We begin by describing our curated Verilog datasets,
+followed by the LLM architectures and fine-tuning method.
+
+
+
+4 https://studio.ai21.com/docs/jurassic1-language-models/#general-purpose-models
+
+
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                                   5
+
+                                   Table 1. Baseline LLM architectures used in our study.
+
+
+                                                                                                               Context
+   Model-Parameters / Pre-Training Data                Layers             Heads             Embed.
+                                                                                                               Length
+
+   MegatronLM-355M [25] / NL [8, 20]                      24                16                64                 1024
+
+   J1-Large-7B1 / NL [4]                                  32                32               128                 4096
+
+   CodeGen-2B [16] / NL [11], Code                        32                32                80                 2048
+   CodeGen-6B / NL [11], Code                             33                16               256                 2048
+   CodeGen-16B / NL [11], Code                            34                24               256                 2048
+
+   code-davinci-002 [5] / NL [4], Code                   NA                NA                NA                  8001
+
+   GPT-3.5-turbo [31] / NL [4], Code                     NA                NA                NA                  4096
+   GPT4 [17] / NL, Code                                  NA                NA                NA                  8000
+
+   PALM2 [6] / NL, Code                                  NA                NA                NA                  8000
+
+
+
+3.1   Verilog Training Corpus
+Our primary Verilog training corpus comes from open-source Verilog code in public GitHub repositories. Additionally,
+we also created a dataset of text from Verilog textbooks to understand whether that further improved LLM performance.
+
+  GitHub Corpus. We use Google BigQuery to gather Verilog repositories from GitHub, where it has a snapshot of
+over 2.8 million repositories. We use a query that looks for keywords such as “Verilog" and files with ‘.v’ extension.
+We de-duplicated files (using MinHash and Jaccard similarity metrics [30]) and filtered files by keeping ‘.v’ files that
+contain at least one pair of module and endmodule statements. This is done to avoid retaining any .v file without any
+Verilog. The resultant number of .v files are about 50k with a size of 1GB. Finally, we filtered large files (number of
+characters ≥ 20K). This helps in narrowing down the window to which to pay attention to, and hence result in better
+generalization capability. The training corpus from GitHub yielded ∼50K files / ∼300 MB.
+
+  Verilog Books Corpus. We downloaded 70 Verilog-based textbooks from an online e-library in PDF format, then
+extracted text using the Python-based tool pymuPDF which uses optical character recognition to extract text. De-
+pending on the quality of the PDF, the text quality varies. We encountered challenges including improper for-
+matting of lines, unrecognized logical operators, and header/footer floating in-between text. We cleaned the text
+by filtering irrelevant passages (e.g., index, preface, and acknowledgments) and used regular expressions such as:
+module(.*\n*\s*\t*)(\()((?!module)(?!endmodule).*\W*)*endmodule    to identify blocks of prose and associated Verilog snip-
+pets. From these blocks, overlapping sliding windows were used to produce training examples. The final Verilog corpus
+of textbook-extracted and GitHub code had a size of 400 MB.
+
+3.2   Baseline LLM Architectures
+Table 1 shows the LLMs we used and summarizes design parameters, including the number of layers, heads, embedding
+size (head dimension), context length, and the data source (natural language (NL) and/or code). As code-davinci-002 is
+derived from GPT-3 [5], it has the same architecture. Since its parameters are not known, so we leave these as NA.
+                                                                                                     Manuscript submitted to ACM
+6                                                                                                           Thakur et al.
+
+
+3.3    LLM fine-tuning
+We fine-tune five LLMs from Table 1 on our Verilog training datasets. Training the CodeGen LLMs was challenging
+due to the large number of parameters. At 16-bit precision, the parameters of CodeGen-16B alone require around
+30 GB of GPU memory. Further, the fine-tuning process requires even more GPU memory to store the intermediate
+computations and optimizer states, totaling around 250GB. This necessitates the use of multiple GPUs for successful
+operation. For instance, in our case, we relied on 3 A100 GPUs to train this model for just one epoch. We use model and
+data parallelism and strategies for sharding the optimizer states across GPUs similar to DeepSpeed5 [22] and ZeRO [23].
+    We set the training hyperparameters to their defaults as recommended for the ZeRO-3 [21] optimizer state imple-
+mentation. The CodeGen LLMs (2B, 6B, 16B) are fine-tuned for 1 epoch on an HPC cluster with two RTX8000s, four
+RTX8000s, and three A100s, and training completes in two, four, and six days, respectively. Megatron-LM is fine-tuned
+for 9 epochs using one RTX8000 for 15 hours using the default configuration [25]. We use the off-the-shelf AI21 studio
+for fine-tuning J1-Large.
+
+4     LLM EVALUATION SETUP
+To gauge the proficiency of Large Language Models (LLMs) in generating high quality Verilog code, we employ two
+distinct evaluation harnesses. The first harness, fully transparent in its operation, includes a hand-designed problem set
+(Set I, in Table 2), a collection of hand-designed test benches, and a comprehensive end-to-end pipeline to determine if
+the Verilog code, corresponding to a given prompt, adheres to the criteria of functional correctness.
+    Our second evaluation harness relies on a broader and more diversified set of problems (Set II, in Table 3) extracted
+from HDLBits, a popular digital logic learning platform [29] that allows users to test their solutions against a built-in
+test bench suite.
+
+4.1    Problem Sets
+Problem Set I is composed of 17 unique Verilog challenges, which have their roots in classroom exercises and examples
+from the HDLBits platform. Each problem has an assigned difficulty level, which is depicted in Table 2. These challenges
+cover a wide range of design concepts, including combinational and sequential logic designs, finite state machines with
+varying requirements, operations such as permutation, shift left, and rotate, and basic components like a multiplexer
+(MUX), Random Access Memory (RAM), Linear Feedback Shift Register (LFSR), adders, and counters. Examples of
+basic, intermediate, and advanced problems are presented in Fig. 4-6 respectively. These have been obtained using
+CodeGen-16B-FT and have been edited for clarity and brevity.
+
+
+Problem Set II significantly expands on this initial set by integrating an extensive range of problems from HDL-
+Bits [29]. This expansion enriches our dataset to encompass a total of 181 problems. The enlarged dataset introduces
+new challenges distributed across four difficulty levels and multiple unique categories, each dedicated to a specific
+facet of hardware design and Verilog syntax. The dataset spans difficulty levels ranging from Getting Started to Verilog
+Language to Circuits and Verify Bugs, shown in Table 3. Within these levels, categories extend from basic principles such
+as gates to more advanced concepts like finite state machines and cellular automata, thus presenting a comprehensive
+view of hardware design and Verilog syntax.
+
+
+5 https://huggingface.co/docs/transformers/main_classes/deepspeed
+
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                                       7
+
+
+
+
+                          Fig. 2. Varying the prompt details: Low, Medium and High. Set I, Problem 15.
+
+
+
+4.2   LLM Inference
+The LLM input is a prompt from the problem set in Section 4.1. We truncated completed code at keywords end and
+endmodule and pass the solution to the appropriate evaluation harness for checking its compilation and functional
+correctness.
+
+4.2.1 Input Parameters. Each query to the LLM includes a prompt, a sampling temperature (𝑡), and a number of
+completions per prompt (𝑛).
+
+
+Prompts: For the hand-designed Problem Set I, each problem is accompanied by three prompts of increasing detail:
+low (L), medium (M), and high (H). Prompt L has an initial comment describing the function of the module and the
+module header with name and inputs/outputs with types. We declare internal signals. M includes L plus comments that
+describe the function using signal names. H replaces and/or appends comments in M with more detail and resembles
+pseudo-code instead of a predominantly natural language specification. Fig. 2 is an example for Problem 15. L has
+no lines highlighted (the prompt is lines 1–4). M includes L and lines highlighted yellow (the prompt is lines 1–8). H
+includes M and lines in gray (the prompt is lines 1–15).
+  For Problem Set II, we formulate the prompts in alignment with the problem descriptions provided on the platform.
+A typical prompt for each problem starts with a set of comments, abstracted from the high-level problem description
+available on the platform. Following this is the module header, tagged as top_module, which includes inputs and
+outputs, each with its defined type. Finally, a comment line prompts the insertion of the problem-solving code.
+  An illustrative example of this format is depicted in Fig. 3, applied to the vibrate&ring problem. This prompt features
+a detailed level of description. The lines 1-13 contain the initial comments, which describe the problem function. This
+section uses signal names and high-level specifications. The following segment (lines 15-20) includes the module
+header skeleton, which comprises the module’s name and input/output data. And line 22 holds a single line comment
+instructing the user to insert their code.
+Sampling temperature (𝑡): A higher value means that the LLM takes more risks and yields more creative completions.
+We use 𝑡 ∈ {0.1, 0.3.0.5, 0.7, 1}.
+                                                                                                         Manuscript submitted to ACM
+8                                                                                                                      Thakur et al.
+
+
+
+
+Fig. 3. Set II, Vibrate & ring problem. Difficulty: Circuits (Combinational), Basic category. We highlight the mistake. motor turns on
+even with ringer set to 0 and vibrate_mode set to 1
+
+
+
+Completions per prompt (𝑛): For each prompt, LLM generates 𝑛 completions where 𝑛 ∈ {1, 10, 25}. For J1-Large and
+PALM2, we skip 𝑛 = 25 because they do not support this value. For GPT4, we only use 𝑛 = 1 due to the high cost of
+usage.
+max_tokens: The maximum number of tokens generated for each completion was set to 300 for all autocomplete
+language models (Megatron-LM, CodeGen, Code-davinci-002), except for J1-Large. J1-Large had a token limit of 256.
+We used the default nucleus sampling probability mass (top_p) setting. For larger models like GPT3.5, PALM2, and
+Claude, which generate responses in a conversational style, we increased the maximum tokens to 900 per completion,
+as these models typically consume more tokens compared to autocomplete ones. However, for GPT4, the web interface
+doesn’t provide an option to adjust the token limit.
+
+4.3   Test benches
+For Problem Set I, we developed a test bench to validate the functional correctness of each solution. The test benches
+exercise the designs for corner cases and are exhaustive for basic and some intermediate cases. For the remaining cases,
+the test benches are analogous to unit tests. This keeps the evaluation time reasonable, e.g., for the RAM module, the
+data width is 8 and the address width is 6 in the prompt; an exhaustive test bench requires 214 test inputs. In some
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                              9
+
+                                                   Table 2. Problem Set I
+
+                                 Prob. # Difficulty     Description
+                                 1        Basic         A simple wire
+                                 2        Basic         A 2-input and gate
+                                 3        Basic         A 3-bit priority encoder
+                                 4        Basic         A 2-input multiplexer
+                                 5        Intermediate A half adder
+                                 6        Intermediate A 1-to-12 counter
+                                 7        Intermediate LFSR with taps at 3 and 5
+                                 8        Intermediate FSM with two states
+                                 9        Intermediate Shift left and rotate
+                                 10       Intermediate Random Access Memory
+                                 11       Intermediate Permutation
+                                 12       Intermediate Truth table
+                                 13       Advanced      Signed 8-bit adder with overflow
+                                 14       Advanced      Counter with enable signal
+                                 15       Advanced      FSM to recognize ‘101’
+                                 16       Advanced      64-bit arithmetic shift register
+                                 17       Advanced      ABRO FSM∗
+                             ∗ from Potop-Butucaru, Edwards, and Berry’s “Compiling Esterel”
+
+
+
+
+cases, specifications in the prompts are ambiguous and thus can yield several correct responses. For example, when one
+does not specify whether a reset should be synchronous or asynchronous. We compile and simulate completed Verilog
+with Icarus Verilog v11.0 [28].
+    For Problem Set II, we turn to the HDLBits online judge system. The online system features an "upload and compile"
+feature that accepts the completed Verilog as a solution, synthesizes the Verilog code using Quartus, and verifies its
+correctness through simulations run by Modelsim. At the end of the execution cycle, the system returns a detailed
+summary of the execution. Only if the completed Verilog passes all the tests within the test-bench for the problem will
+it return a status of "Success!". In other cases, responses include "Compile Error", "Simulation Error", and "Incorrect",
+each indicating different stages of failure in the evaluation process.
+    Despite limited visibility into the specifics of the test benches used for the problems, the feedback from the online
+system allows us to assess the Large Language Models’ proficiency in producing functionally accurate and high-quality
+Verilog code.
+
+
+5     LLM EVALUATION AND RESULTS
+5.1    Research Questions
+We examine the quality of generated Verilog code for scenarios and test benches from Section 4.1. This analysis seeks
+to address the following research questions (RQs):
+
+      • RQ1. How well do ‘base’ LLMs perform on the Verilog generation set?
+      • RQ2. Does fine-tuning LLMs improve that performance?
+      • RQ3. Are larger LLMs with more parameters better?
+      • RQ4. Does variability in problem description impact quality and the number of correct completions?
+                                                                                                Manuscript submitted to ACM
+10                                                                                                                  Thakur et al.
+
+                          Table 3. Problem Set II - Extended set of 164 problems derived from HDLBits [29]
+
+ Difficulty       Category         Count Problem Description
+ Getting          Getting
+                                   2       Getting Started, Output Zero
+ Started          Started
+                  Basics           8       Simple/Four wires, Inverter, AND, NOR, XNOR, Declare wires, 7458 chip
+                  Vectors          9       Vectors, Vectors ( detail), Vector part select, Bitwise operators, Four-input gates,
+ Verilog                                   Vector concatenate, Vector reversal 1, Replicate, More replication
+                  Module Hi-
+                             9             Modules, Connect ports by position, Connect ports by name, Three modules,
+                  erarchy
+                                           Modules and vectors, Adder 1, Adder 2, Carry-select, Adder-subtractor
+                  Procedures       8       Always blocks (combinational), Always blocks (clocked), If statement, If state-
+                                           ment latches, Case statement, Priority encoder, Priority encoder with casez,
+                                           Avoiding latches
+                  More Fea-
+                            7              Conditional ternary, Reduction operators, Reduction: Wider gates, Combina-
+                  tures
+                                           tional for-loop: Vector reversal 2, Combination for-loop: 255-bit count, Generate
+                                           for-loop: 100-bit adder 2, Generate for-loop: 100-digit BCD adder
+                  Basic            17      Wire, GND, NOR, Another, Two gates, More gates, 7420 chip, Truth tables,
+                                           Two-bit equality, Simple circuits A, B, Combine circuits A, B, Ring or vibrate?,
+ Circuits
+                                           Thermostat, 3-bit count, Gates and vectors, longer vectors
+ (Combination) Multiplexers 5              2-to-1 mux, 2-to-1 bus mux, 9-to-1 mux, 256-to-1 mux, 256-to-1 4-bit mux
+               Arithmetic
+                            7              Half adder, Full adder, 3-bit adder, Signed addition overflow, 100-bit binary
+               Circuits
+                                           adder, 4-digit BCD adder
+                  K-Map to
+                                   8       3/4-variable, Minimum SOP and POS, K-map, K-map with a mux
+                  Circuit
+                  Latches and
+                                   18      DFFs, DFF (reset), DFF (reset value), DFF (asynchronous), DFF (byte enable), D
+                  Flip-Flops
+                                           Latch, DFF, DFF+gate, Mux and DFF, DFFs and gates, Circuit from truth table,
+                                           Detect edge/both edges, Edge capture register, Dual-edge triggered FF
+                  Counters         8       Four-bit binary counter, Decade counter, Decade counter again, Slow decade
+ Circuits
+                                           counter, Counter 1-12, Counter 1000, 4-digit decimal counter, 12-hour clock
+                  Shift Regis-
+ (Sequential)                  9           4-bit shift register, Left/right rotator, Left/right arithmetic shift by 1 or 8, 5-bit
+                  ters
+                                           LFSR, 3-bit LFSR, 32-bit LFSR, Shift register, Shift register, 3-input LUT
+                  Cellular Au-
+                               3           Rule 90, Rule 110, Conways Game of Life 16x16
+                  tomata
+                  FSM          33          FSM 1 (asynchronous), FSM 1 (synchronous), FSM 2 (asynchronous), FSM 2
+                                           (synchronous), Simple state transitions 3, Simple one-hot state transition 3, FSM
+                                           3 (asynchronous), FSM 3 (synchronous), Moore FSM, Lemmings 1, Lemmings
+                                           2, Lemmings 3, Lemmings 4, One-hot FSM, PS/2 packet parser, PS/2 packet
+                                           parser and datapath, Serial receiver, Serial receiver and datapath, Serial receiver
+                                           with parity check, Sequence recognition, Q8: Design Mealy FSM, Q5a: Serial
+                                           twos complementer (Moore FSM), Q5b: Serial twos complementer (Mealy FSM),
+                                           Q2a, Q2b, Q3a, Q3b: FSM, Q3c: FSM logic, Q6b: FSM next-state logic, Q6c: FSM
+                                           one-hot next-state logic, Q6: FSM, Q2a: FSM, Q2b: One-hot FSM equations
+                  Larger Cir-
+                              7            Counter with period 1000, 4-bit shift register and down counter, FSM: Sequence
+                  cuits
+                                           1101 recognizer, FSM: Enable shift register, FSM: The complete FSM, The com-
+                                           plete timer, FSM: One-hot logic equations
+                  Read Sim-
+ Verify Bugs      ulations & 5             Mux2, NAND, Mux4, Add/subtract, Case statement
+                  Find bugs
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                                         11
+
+
+
+
+        Fig. 4. Set I, Basic example - Problem 3: A 3-bit priority encoder. We highlight the mistake. Positions are offset by 1.
+
+
+
+
+      Fig. 5. Set I, Intermediate example - Problem 6: A 1 to 12 counter. We highlight the mistake. Counter does not stop at 12.
+
+
+      • RQ5. How does the performance of fine-tuned model stack up against large LLMs such as GPT4, GPT-3.5-turbo,
+        claude and PALM2 in producing Verilog code for problems of different complexities?
+      • RQ6. At what levels of problem difficulty do large LLMs excel, and where might they need enhancement to either
+        meet or surpass the best performing model?
+      • RQ7. Can incorporating diverse sources of training data, like educational resources (such as textbooks), lead to
+        better model performance?
+
+5.2    Evaluation on custom-designed problem set
+In the first study, we measure generated code quality of the fine-tuned models & their pre-trained versions using
+problem Set I described in Section 4. A scenario is a combination of problems across difficulties and description levels.
+We query the models with all prompt × 𝑡 × 𝑛 combinations. For fairness, we present each model’s “best results” by
+focusing on the completions generated with the 𝑡 for each model for which their completions were most successful
+at compiling and passing the functional tests (for each problem difficulty and description level). We present these
+best results for 𝑛 = 10 in Table 4 and Table 5. Table 4 shows the proportion of completions that compile and Table 5
+shows the proportion of completions that pass functional tests, for the completions produced by a given temperature
+setting that resulted in the most successful completions for each scenario. As in prior work [16], we characterize the
+                                                                                                            Manuscript submitted to ACM
+12                                                                                                            Thakur et al.
+
+
+
+
+                              Fig. 6. Set I, We highlight the mistake. Output is not assigned to state SAB.
+
+
+model performance with the Pass@𝑘 metric, where 𝑘 is the number of problems in a scenario times 𝑛, the number of
+suggestions per problem. A higher Pass@𝑘 indicates a relatively ‘better’ result. For compilation (Table 4), the Pass@𝑘
+metric reflects the proportion of completions that compile. For functional tests, this metric is the fraction of the 𝑘 code
+samples that pass.
+     Table 5 reports the inference time for each LLMs query, including communication time with a remote server if
+required. These results are after fine-tuning the model using the training corpus from GitHub only. We discuss the case
+for fine-tuning on GitHub and PDFs combined as an ablation study in the discussion. Fine-tuned CodeGen-16B LLM
+outperforms all LLMs. All fine-tuned LLMs outperform their pre-trained counterparts. [Ans. RQ1 and RQ2].
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                                           13
+
+Table 4. Pass@(scenario*𝑛) at 𝑛=10 for compiled completions (Pass=Compiling), PT = Pre-trained, FT = Fine-Tuned, Problem Set I.
+Bold reflects the (best) highest performance for that difficulty.
+
+
+                          Model                     Model Type        Basic     Intermediate      Advanced
+                                                          PT            0.000       0.000            0.000
+                          MegatronLM-345M
+                                                          FT            0.730       0.391            0.165
+                                                          PT            0.080       0.065            0.176
+                          CodeGen-2B
+                                                          FT            0.902       0.612            0.592
+                                                          PT          0.052         0.152            0.187
+                          CodeGen-6B
+                                                          FT          0.987         0.689            0.599
+                                                          PT            0.182       0.176            0.108
+                          J1-Large-7B
+                                                          FT            0.882       0.635            0.588
+                                                          PT            0.132       0.203            0.240
+                          CodeGen-16B
+                                                          FT            0.942       0.728            0.596
+                          code-davinci-002                PT            0.847       0.452            0.569
+
+
+Table 5. Pass@(scenario*𝑛) at 𝑛 =10 for test bench passing completions (Pass=Passed Functional Tests), PT = Pre-trained, FT =
+Fine-Tuned, Problem Set II. Bolded value in each test column reflects the (best) highest performance for that problem set and difficulty.
+
+
+                                                                  Basic                     Intermediate                   Advanced
+                           Model      Inference
+ Model                                                     L        M           H       L        M           H       L         M            H
+                           Type       Time (s)
+                           PT              3.628        0.000     0.000     0.000     0.000     0.000    0.000     0.000     0.000     0.000
+ MegatronLM-355M
+                           FT              0.175        0.170     0.591     0.245     0.043     0.018    0.025     0.000     0.000     0.000
+                           PT              1.478        0.000     0.000     0.000     0.000     0.000    0.000     0.000     0.016     0.020
+ CodeGen-2B
+                           FT              0.665        0.835     0.350     0.630     0.130     0.092    0.163     0.132     0.048     0.068
+                           PT              2.332        0.000     0.000     0.000     0.000     0.000    0.013     0.000     0.000     0.000
+ CodeGen-6B
+                           FT              0.710        1.000     0.500     0.760     0.135     0.150    0.168     0.284     0.164     0.164
+                           PT              7.146        0.044     0.058     0.067     0.000     0.000    0.021     0.000     0.000     0.000
+ J1-Large-7B
+                           FT              2.029        0.388     0.283     0.342     0.125     0.075    0.200     0.000     0.000     0.000
+                           PT              2.835        0.000     0.085     0.055    0.035     0.003     0.045     0.012     0.000     0.016
+ CodeGen-16B
+                           FT              1.994        0.745     0.720     0.745    0.213     0.270     0.255     0.246     0.290     0.294
+ code-davinci-002          PT              3.885        0.520     0.685     0.775     0.175     0.200    0.150     0.156     0.184    0.344
+
+
+
+Completions vs. Temperature (𝑡). Fig. 7 summarizes the Pass@(scenario*𝑛) metric for our experiments sweeping temper-
+ature. Pass@(scenario*10) has the highest value for 𝑡 = 0.1 and degrades exponentially with temperature. The LLM
+generates accurate solutions at low temperatures and accurate synthesizable codes are expected from fewer candidates.
+
+Completions vs. # Completions/Prompt (𝑛). We study synthesis quality as a function of completions/prompt. The right-
+hand panel in Fig. 7 shows the Pass@(scenario*𝑛) for all LLMs. Pass@(scenario*1) is better than Pass@(scenario*10). This
+improves as the number of completions increases. This is because the number of candidate solutions at low temperatures
+increases, increasing the completions passing the test benches. 𝑛 = 10 is good for all difficulty levels.
+                                                                                                             Manuscript submitted to ACM
+14                                                                                                                      Thakur et al.
+
+
+
+
+Fig. 7. Pass@(scenario*𝑛) at n=10 for scenarios passing test benches across temperature (𝑡 ), completions per prompt (𝑛), prompt
+description, and problem difficulties for Problem Set I ( Table 2). Comparing the various fine-tuned models alongside their pre-trained
+version. Higher is better.
+
+
+
+
+Completions vs. LLM Size. Fig. 7 show that LLMs with more parameters (CodeGen-16B, code-davinci-002) outperform
+LLMs with less parameters such as Megatron-355M and CodeGen-2B. These LLMs yield more completions that pass
+test benches and more correct completions. [Ans. RQ3].
+
+Completions vs. Prompts. Prompt quality impacts the LLM generation quality. We study the effect of variations in the
+prompt description at two levels: How do the difficulty of the prompt? And, how does the description of the prompt
+impact code completions?
+     We use Pass@(scenario*10) as the metric. The right-hand side panel in the the bottom row in the Fig. 7 shows that
+the Pass@(scenario*10) decreases with increasing prompt difficulty. Simple problems such as AND are easy to translate
+to Verilog, as opposed to advanced problems such as LFSR. The left-hand side panel in Fig. 7 shows that the number of
+correct solutions decreases with terse prompts. [Ans. RQ4].
+
+
+5.3     Evaluation on chatGPT and other emerging LLMs
+We also conducted an evaluation of the fine-tuned models with the new large LLMs such as OpenAI’s state-of-the-art
+chatGPT (GPT-3.5-turbo) [31], GPT4 [17], and Google’s PALM2 [6]. GPT4 posed a unique challenge due to its substantial
+costs and limited API access, which is closed-source and currently only accessible through a waitlist. To navigate around
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                                  15
+
+
+
+
+Fig. 8. Pass@(scenario*𝑛) at n=1 for scenarios passing test benches across temperature (𝑡 ), completions per prompt (𝑛), prompt
+description, and problem difficulties for problem Set I ( Table 2). Comparing GPT-3.5-turbo, PALM2, and GPT4 against fine-tuned
+models. Higher score is better.
+
+
+this constraint, we resorted to the web interface of GPT4. To facilitate this, we relied on a specific GitHub library6 ,
+which also allowed us to set the temperature at 0.2. This approach limited us to a single completion (n=1) per problem;
+thus, our evaluation process is framed accordingly. These constraints are represented visually in the subsequent Fig. 8.
+  The evaluation considered the problem Set I described in Table 2 with varying complexity and prompt descriptions.
+We characterize the quality of compelted Verilog by LLMs using Pass@(Scenario*𝑛). That is, the number of solutions
+out of Scenariox𝑛 on which the online system returns a Success. Due to limited access to GPT4, we evaluate the LLMs
+using Pass@(Scenario*𝑛) for 𝑛 = 1 completions per problem.
+
+5.3.1 Impact of variation in system prompt. Before we delve into the comparative results, let’s first examine the
+significant impact of varying prompts on GPT-3.5-turbo. This model, unlike others, requires an additional input: the
+system prompt. This prompt essentially serves as an instruction set for the model and its influence on the resultant
+Verilog code was tested under two different scenarios.
+  In the first scenario, we used an unguided system prompt that merely instructed the model to behave like a program-
+ming assistant, tasked with completing the code based on a user’s description. The second scenario, however, involved
+a guided system prompt. This prompt was far more specific, directing the model to function as a Verilog autocomplete
+6 https://github.com/acheong08/ChatGPT
+
+                                                                                                     Manuscript submitted to ACM
+16                                                                                                          Thakur et al.
+
+
+engine, tasked with completing a partially written Verilog module, formatting the response appropriately, and ensuring
+the completion of the module at all times.
+     Following this adjustment, the GPT-3.5-turbo model was tested with both unguided (GPT-3.5-turbo-v0) and guided
+(GPT-3.5-turbo-v1) system prompts, as shown in Fig. 8.
+     In the Basic problem difficulty, the minimal prompt model surpasses the detailed prompt model by a staggering 53%.
+This trend was consistent across problem difficulties from basic to advanced, and prompt descriptions from low (L)
+to high (H). The detailed prompt version consistently outperformed the minimal prompt version, demonstrating the
+influence of detailed instructions in the system prompt for generating high-quality Verilog code.
+     Looking at the prompt description level, the detailed prompt consistently outperformed the minimal prompt across all
+levels. Notably, at Low (L) description level, GPT-3.5-turbo-v1 performed approximately 41% better than GPT-3.5-turbo-
+v0, and at High (H) description level, GPT-3.5-turbo-v1 again significantly outperformed GPT-3.5-turbo-v0, showing
+an improvement of approximately 34.3%. These numbers clearly highlight that a richer, more detailed prompt greatly
+enhances the model’s capability to generate high-quality Verilog code across various difficulties and description levels.
+
+
+5.3.2 Results of comparison with models under study. From the LLMs evaluated in previous Section 5, the fine-tuned
+CodeGen-16B-FT model, despite having only 16 billion parameters, solves up to 74% of medium complexity problems
+when compared to the state-of-the-art model gpt-3.5-turbo and gpt4 which solves upto 75% (approximate).
+     Despite its smaller size compared to state-of-the-art models like GPT4 and GPT-3.5-turbo, it showed proficiency
+across different problem description levels. The CodeGen-16B-FT model outperformed both GPT4 and GPT-3.5-turbo on
+tasks with medium-description (M) prompts, achieving a score of 0.436 compared to GPT4’s 0.39 and GPT-3.5-turbo’s
+0.40. PALM2, on the other hand, shows a performance drops as the complexity increases, indicating potential areas for
+improvement.
+     When compared to the large LLMs evaluated in Fig. 8, the fine-tuned CodeGen-16B-FT model exhibits commendable
+performance across varying problem complexities. In terms of the average problem-solving score, the large LLMs such
+as GPT4, GPT-3.5-turbo, and PALM2 managed scores of approximately 0.53, 0.41, and 0.30 (approx.) respectively. In
+comparison, the CodeGen-16B-FT model demonstrated a competitive average score of 0.40 (approx.).[Ans. RQ5]
+
+
+     The performance metrics saw a shift with the introduction of larger LLMs like GPT4 and GPT-3.5-turbo, with parameter
+counts in the trillions. GPT4, in particular, showed proficiency in advanced problem-solving tasks, consistently scoring
+0.6 across all levels of prompt detail, with a slight dip in intermediate-level problems, which is lower than the CodeGen-
+16B-FT’s score of 0.54 (approximate). Despite this, an element of uncertainty remains due to their commercial/blackbox
+nature, which could impact their long-term availability.
+     While some large LLMs, such as GPT4, excel in certain areas (like advanced problem-solving), they do not necessarily
+outperform in all contexts. Its performance is equivalent to that of CodeGen-16B-FT in intermediate-level problems,
+where it scored an average score of 0.75 (approximate).This indicates the need for more nuanced and detailed instructions
+to guide these models, especially for complex problems.[Ans. RQ6]
+
+
+     Despite the entry of larger and advanced LLMs, the fine-tuned CodeGen-16B-FT model maintained its reliability
+across all problem difficulties. As we continue to evaluate and compare LLMs, it is evident that each has its strengths
+and areas for improvement. GPT4 excels in advanced problems, while a fine-tuned CodeGen-16B-FT showcases good
+
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                                      17
+
+
+performance across problem complexities; further fine-tuning with a diverse and well represented Verilog problems
+will improve its capability.
+
+5.4   Evaluation on expanded problem set
+
+
+
+
+        Fig. 9. Pass@(scenario*n) at n=5 for scenarios passing test benches across categories on problem Set II ( Table 3).
+
+
+
+Using the extended problem set, we compare the quality of Verilog quality generated using three LLMs for Verilog:
+CodeGen-16B-FT, GPT-3.5-turbo, and PALM2. We use the Pass@(𝑘) metric to evaluate each model, where 𝑘 represents
+the total number of completions resulting from Scenario × 𝑛. Here, the term Scenario refers to the combination of
+problems within a category, while 𝑛 is the number of completions produced per problem. Given the substantial costs
+associated with querying such a broad spectrum of problems across the LLM, such as GPT-3.5-turbo, we confined our
+inquiries to those with a temperature setting of 0.2. We generated five completions per problem across all categories.
+                                                                                                         Manuscript submitted to ACM
+18                                                                                                                  Thakur et al.
+
+
+Each problem was scored on its ability to pass the extensive test benches provided by HDLBits, which include a rigorous
+suite of functional tests to ensure the correctness of the generated Verilog code.
+     Circuits: The results from Figure 9 suggest varying degrees of proficiency across the models and problem categories.
+CodeGen-16B-FT outperforms the others in handling complex Circuits problems, particularly those related to Multi-
+plexers, scoring a Pass@(Scenario*𝑛) Score of 0.653. This is a significant improvement over GPT-3.5-turbo and PALM2,
+which scored 0.54 and 0.483, respectively, on similar problems.
+     Getting Started: However, GPT-3.5-turbo demonstrates remarkable proficiency in Getting Started problems, scoring
+a perfect 1.0 in the Step_one and Zero categories, suggesting a strong grasp of basic Verilog concepts. In comparison,
+CodeGen-16B-FT is not far behind, while PALM2 lags noticeably behind in these foundational tasks.
+     Verification: Reading Simulations & Finding Bugs in Code: This category comprises bug fixing problems poses a
+considerable challenge to all three models. GPT-3.5-turbo achieves a top score of 0.6, but CodeGen-16B-FT had a
+noticeable edge over the others in tasks related to BugMux2. PALM2, on the other hand, trails behind with a score of
+0.42, indicating room for improvement in its ability to interpret and work with Verilog simulations.
+     Verilog Language: In this category, CodeGen-16B-FT showed a strong understanding of Basics and Vectors, closely
+following GPT-3.5-turbo’s scores. Interestingly, it also exceeded the performance of PALM2 in More Verilog Features.
+     We were unable to include GPT-4 due to limited API access. Evaluating GPT-4 using a web interface for such a wide
+array of problems is challenging and future work will include GPT-4, once access limitations are eased.
+
+6     IMPACT OF TRAINING DATA ON VERILOG QUALITY
+
+
+                   CodeGen-2B
+                                                                  0.00025                                Dataset
+                                                                                                        Code Corpus
+               Book Corpora Verilog </>
+                                                                  0.00020                               Book Corpus
+                                                        Density
+
+
+
+
+      CodeGen-2B-FT*          CodeGen-2B-FT
+                                                                  0.00015
+             (a)
+                                  Book Corpus                     0.00010
+                            CodeGen-2B-FT++                       0.00005
+                                      (b)                         0.00000
+                                                                              0           10000      20000
+Fig. 10. Illustration of fine-tuning: a) CodeGen-2B-                                   Character Counts
+FT* is fine-tuned on Book Corpora, b) CodeGen-2B-
+FT fine-tuned on Verilog, followed by fine-tuned on    Fig. 11. Distribution of character count for Verilog code and book corpus
+Book Corpora yielding CodeGen-2B-FT++.
+
+
+
+     In this study, we examined the impact of training corpus content on Verilog code generation quality using the
+CodeGen-2B model. We compared two fine-tuning methodologies: (a) using only textbook Verilog content (CodeGen-
+2B-FT*), and (b) combining GitHub Verilog code and textbook content (CodeGen-2B-FT++). Our aim was to assess the
+effect of textbook-based Verilog content on LLM performance evaluated on problem Set I via the Pass@(scenario*10)
+metric with ten completions per problem.
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                            19
+
+
+  Figure 12 shows the Pass@(Scenario*𝑛) score across problem difficulties and descriptions. CodeGen-2B-FT++, which
+was fine-tuned using Verilog code and textbook content, showed significant improvements in Verilog code generation
+compared to CodeGen-2B-FT and CodeGen-2B-FT*.
+  Figure 12 also shows that CodeGen-2B-FT++, consistently outperformed the other LLMs across problem difficulty and
+description detail. In low (L) description problems, CodeGen-2B-FT++ showed a 10% improvement over CodeGen-2B-FT.
+The improvement is more noticeable when compared to CodeGen-2B-FT*, which scored only 0.083 in the same category.
+This trend continues with medium (M) and high (H) description problems.
+  For basic problem-solving tasks, CodeGen-2B-FT++ achieved a Pass@(Scenario*10) score of 0.548, only slightly
+better than CodeGen-2B-FT, which scored 0.547. However, the performance leap is significant when compared to
+CodeGen-2B-FT*, which scored only 0.077 for basic tasks. This trend continues across intermediate and advanced
+problems and across low (L). CodeGen-2B-FT++ consistently outperforms the other variants of the model across all the
+levels of problem descriptions.
+  This impressive performance of CodeGen-2B-FT++ can be attributed to the textbook content in the training data.
+Textbooks provide an array of examples, detailed explanations, and a broader context for Verilog use. This enriched
+training data allowed the LLM to form a more comprehensive understanding of Verilog, leading to the generation of
+not just correct but idiomatic and well-structured Verilog code.[Ans. RQ7]
+An illustration of a problem to count from 1 to 12 is shown in Figure 13 that points to the superiority of CodeGen-16B-
+FT++ over other variants. The task required a counter in Verilog that incrementally counts from 1 to 12 on the positive
+edge of the clock signal, resetting to 1 after reaching 12.
+  CodeGen-16B-FT*, trained solely on Verilog content from textbooks, failed to generate functionally correct code. It
+erroneously introduced an initial block, which is not meant for sequential logic, resulting in non-synthesizable code.
+Moreover, it ignored the requirement to reset the counter to 1 after reaching 12, thereby lacking proper functionality.
+CodeGen-16B-FT, trained only on Verilog code, produced code with the correct sequential logic structure, using
+an always @(posedge clk) block. However, it failed to meet the task’s requirement, as it did not implement the
+wrap-around from 12 back to 1. The code increments the q value without any check for resetting it back to 1 when
+it reaches 12. By contrast, CodeGen-16B-FT++, which had been fine-tuned using a mix of Verilog code and textbook
+content, successfully generated functionally correct and well-structured Verilog code. This model grasped the task
+requirements, implementing the counter functionality with a wrap-around from 12 to 1. The resulting code uses an
+always @(posedge clk) block for sequential logic and includes conditions for resetting back to 1 on reaching 12.
+  The results of this study highlight the importance of diversifying the training corpus for large language models, with
+evidence showing marked improvement in model performance when a combination of practical code examples and
+educational resources is used.
+
+
+
+
+                                                                                               Manuscript submitted to ACM
+20                                                                                                              Thakur et al.
+
+
+
+
+Fig. 12. Pass@(scenario*10) at 𝑛 = 10 for scenarios passing test-benches on problem Set I across CodeGen-16B-FT* , CodeGen-16B-
+FT++, and CodeGen-16B-FT
+
+
+
+
+ Fig. 13. CodeGen-16B-FT* vs CodeGen-16B-FT++ vs CodeGen-16B-FT at implementing Counter 1-12. We highlight the mistake.
+
+
+
+
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                                    21
+
+
+6.1   Inference Time Evaluation
+
+
+
+
+                              355M
+
+                                     355M
+
+
+
+                                                 2B
+
+
+
+
+                                                                           16B
+
+                                                                                 16B
+
+                                                                                       NA
+                                            2B
+
+
+
+                                                      6B
+
+
+
+                                                                7B
+
+                                                                      7B
+                                                           6B
+
+
+
+
+                                                                                            NA
+
+                                                                                                  NA
+                                                                                                       NA
+                                                            # Params
+
+  Fig. 14. Inference time (s) for different LLMs. The # of parameters for PALM2, GPT-3.5-turbo, and GPT4 are not available (NA).
+
+
+
+Inference time plays a crucial role in the real-world application of language models, particularly when generating
+Verilog code for hardware design, where timeliness is often as important as the quality of the generated code. The
+following evaluation considers the response time in seconds of the models under consideration.
+  Figure 14 shows a scatter plot of the inference time in seconds (s) across the LLMs, where inference time is the total
+time taken from the time a prompt is fed into the model to the time the complete response is generated by the respective
+LLMs. Our locally fine-tuned model, CodeGen-16B-FT, demonstrates an efficient balance between response time and
+code quality. With an inference time of 2.02 seconds, it performs well against larger models like GPT-3.5-turbo, PALM2,
+and GPT4, which have inference times of 6.32, 5.76, and 10.000 seconds respectively. Despite these models showing
+competitive performance in generating high-quality Verilog code, their comparatively longer response times can pose a
+challenge for practical applications where rapid feedback is essential.
+  Smaller LLMs, CodeGen-2B-FT and CodeGen-6B-FT have inference times of 0.92 and 1.14 seconds, respectively.
+While their Verilog code generation capabilities may not match that of CodeGen-16B-FT, fast response times coupled
+with reasonable performance make them valuable assets in the initial stages of hardware design. A hardware designer
+may prefer these LLMs to generate a quick first-pass code, providing a starting point that can then be refined according
+to specific requirements. The CodeGen-2B-PT model demonstrates the lowest inference time of all models, at 0.000
+seconds. While this might imply an attractive level of efficiency, it is critical to consider this in conjunction with its
+problem-solving abilities, which are outperformed by our fine-tuned LLMs. Models such as J1-Large-7B-FT, despite a
+                                                                                                       Manuscript submitted to ACM
+22                                                                                                            Thakur et al.
+
+
+decent inference time of 2.12 seconds, do not quite match the Verilog code generation performance of CodeGen-16B-FT
+model, underscoring the necessity of balancing response times with problem-solving capabilities.
+     The fine-tuned LLMs, particularly CodeGen-16B-FT, exhibit a compelling combination of response time and code
+quality, making them attractive choices for real-world Verilog code generation tasks. However, smaller models like
+CodeGen-2B-FT and CodeGen-6B-FT, with their fast response times, can provide valuable first-pass code generation as
+part of an efficient hardware design workflow. These findings highlight the value of fine-tuning to balance performance
+in inference time and the quality of generated code.
+
+
+7     DISCUSSION AND LIMITATIONS
+7.1     Discussion of Example Scenarios
+Fine-tuned LLMs generate code that compiles better when compared to the pre-trained LLMs (Table 5). Using the best
+Pass@(scenario*10) values, only 11.9% of the completions generated by pre-trained LLMs compiled vs. 64.6% of those
+by fine-tuned LLMs. Thus, a designer may use these LLMs with text/pseudo-code to generate a syntactically-correct
+design “skeleton”, and tweak it to meet functional requirements.
+     We used test benches to assess the generated Verilog. These test-benches are comprehensive for the Basic problems,
+but as the problems become more complex, the test-benches cover only those behaviors fully specified in the problem
+comments. As LLMs tend to provide similar responses when several completions per prompt are requested, the exact
+test-bench implementation can have a large impact on how many cases pass. We observe this in the LLMs’ responses to
+FSM problems 8, 15, and 17. As the problem comments do not specify whether the reset is synchronous/asynchronous,
+the LLMs are free to produce any variation. For all problems, we verify whether an active-high reset results in the
+correct value at the output, but we do not test the asynchronous/synchronous and other corner cases.
+     The best-performing LLM (CodeGen-16B (FT)) performed poorly for some problem sets. For any given problem from
+problem Set I, CodeGen-16B (FT) produced 540 completions, but for Problems 7 (LFSR) in Fig. 15 and 12 (Truth table)
+in Fig. 16, none passed, and for Problem 9 (Shift and Rotate) in Fig. 17, only one passed. We inspected the completions
+and observed that for Prob. # 7, the LLMs did not concatenate the most significant bits with the feedback value. This
+was the problem in most cases, and a better prompt might yield a correct result, pointing to prompt engineering as
+future work. For Prob. #9, completions 17 either do not cover all values of the shift or assign incorrect bit positions. For
+Prob. #12, completions 16 are close to the actual solution by using all input values in assign statements but fail to form
+correct expressions between input bits. This suggests a lack of diversity in the training corpus.
+     We find that this trend extends to complex problems in problem Set II. The response to Conway’s Game of Life
+problem, Category 14 from Table 3 shown in Fig. 18 illustrates this issue further. None of the LLMs – GPT3.5-turbo,
+PALM2, or CodeGen-16B-FT - were able to generate code that achieved full functional correctness. They exhibit similar
+tendencies as observed in the FSM problems, often falling short in accurately handling edge cases and intricacies of
+the given problem. The implementations produced for this problem by GPT-3.5-turbo and CodeGen-16B-FT shown
+in Figure 18 had unique issues. In the first implementation, we encounter a race condition as the model attempts to
+modify the next_state and current_state simultaneously at each clock edge, causing a conflict. The next_state
+is declared as a wire, yet it is updated within an always block, which is not appropriate. In the second implementation,
+the game logic is flawed, as the ternary operation does not align with the Conway’s Game of Life rules. Furthermore, the
+LLM fails to consider the toroidal nature of the game grid in the neighbor-counting function and mistakenly includes
+the cell itself as a neighbor.
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                                     23
+
+
+
+
+              Fig. 15. Problem 7, Description: H, Difficulty Level: Intermediate Table 2. We highlight the mistake.
+
+
+
+
+  This reinforces our observation that while LLMs have significantly improved in generating compilable "skeleton"
+code, achieving functionally correct code, especially in complex problems, continues to be a challenge. The generated
+code needs manual adjustments to handle edge cases and fully align with the problem’s requirements. This makes the
+role of the designer crucial in refining the output of the LLMs to ensure functional correctness.
+  While LLMs are trained on vast corpora of correct code, this doesn’t inherently equip them with the ability to identify
+incorrect code and resolve the issues. Furthermore, the problem of error localization poses a unique challenge. For
+instance, we analyzed the bug-fixing capabilities of LLMs using a problem related to an 8-bit 2-to-1 multiplexer. As
+shown in the prompt description Fig. 19, the error was not localized and instead embedded subtly within the code’s
+                                                                                                        Manuscript submitted to ACM
+24                                                                                                                       Thakur et al.
+
+
+
+
+                Fig. 16. Problem 12, Description: H, Difficulty Level: Intermediate Table 2. We highlight the mistake.
+
+
+
+structure. This required the LLMs to have a deeper comprehension of the code beyond the local context, something
+which they currently struggle with.
+     The solution generated by CodeGen-16B-FT is correct. It correctly identified and rectified the problem in the Verilog
+code. The second solution generated by PALM2 had a partial correction, but it still missed a crucial detail - the output
+port width. While the model correctly employed the ternary operator for the MUX operation, it failed to adjust the
+output port width to match the input, further reinforcing the issues seen in signal width handling. In the third solution,
+GPT-3.5-turbo correctly recognized the bug in the bitwise operations with different width signals. However, the
+solution did not fix the bug appropriately, implying a gap in the model’s understanding of hardware operation nuances,
+particularly in interfacing signals of different bit widths.
+
+7.2     Conclusions
+This study introduces a novel framework for automatically creating and validating Verilog code using LLMs. Drawing
+on the Pass@(scenario*𝑛) values detailed in Tables 4-5, we found that pre-tuned LLMs only generated functionally
+accurate completions 1.09% of the time. However, this figure jumps to 27.0% post-tuning, demonstrating the significant
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                                                  25
+
+
+
+
+                Fig. 17. Problem 9, Description: H, Difficulty Level: Intermediate, Table 2. We highlight the mistake.
+
+
+
+
+advantages of fine-tuning LLMs to cater to a specific language. Refined CodeGen-16B LLM is the most proficient in
+generating functionally correct completions. On the whole, it delivered functionally accurate code 41.9% of the time,
+while the commercial top-tier (non-fine-tuned) code-davinci-002 LLM yielded functionally correct code 35.4% of time.
+  New entrant, GPT4 has shown outstanding performance across the problems, particularly it did well on advanced
+problem-solves. Smaller, fine-tuned LLMs like CodeGen-16B-FT are proficient and adaptable across a variety of problem
+complexities. Choosing an LLM is a balanced decision, considering use-case requirements, computational resources,
+problem complexity, cost, and reliability, particularly for commercial LLMs.
+  Despite its impressive performance, there is room for improvement for CodeGen-16B-FT. Future work could refine
+its fine-tuning process, perhaps through targeted training data or additional iterations. Exploring hybrid approaches
+that combine the strengths of different LLMs is another potential avenue. There is the prospect of integrating domain-
+specific knowledge into the model to enhance its understanding of Verilog code generation. With these enhancements,
+CodeGen-16B-FT could compete with larger LLMs like GPT4 in terms of efficiency and output quality.
+
+
+REFERENCES
+[1] Aakash Ahmad, Muhammad Waseem, Peng Liang, Mahdi Fehmideh, Mst Shamima Aktar, and Tommi Mikkonen. 2023. Towards Human-Bot
+    Collaborative Software Architecting with ChatGPT. https://doi.org/10.48550/arXiv.2302.14600 arXiv:2302.14600 [cs].
+[2] AI21. 2021. Jurassic-1 Language Models - AI21 Studio Docs. https://studio.ai21.com/docs/jurassic1-language-models/#general-purpose-models
+[3] Jonathan Bachrach, Huy Vo, Brian Richards, Yunsup Lee, Andrew Waterman, Rimas Avižienis, John Wawrzynek, and Krste Asanović. 2012. Chisel:
+    constructing hardware in a Scala embedded language. In Proceedings of the 49th Annual Design Automation Conference (DAC ’12). Association for
+    Computing Machinery, New York, NY, USA, 1216–1225. https://doi.org/10.1145/2228360.2228584
+                                                                                                                   Manuscript submitted to ACM
+26                                                                                                                                     Thakur et al.
+
+
+ [4] Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish
+     Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel Ziegler,
+     Jeffrey Wu, Clemens Winter, Chris Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner,
+     Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei. 2020. Language Models are Few-Shot Learners. In Advances in Neural
+     Information Processing Systems, H. Larochelle, M. Ranzato, R. Hadsell, M. F. Balcan, and H. Lin (Eds.), Vol. 33. Curran Associates, Inc., 1877–1901.
+     https://proceedings.neurips.cc/paper/2020/file/1457c0d6bfcb4967418bfb8ac142f64a-Paper.pdf
+ [5] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph,
+     Greg Brockman, Alex Ray, Raul Puri, Gretchen Krueger, Michael Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin, Brooke Chan, Scott Gray, Nick
+     Ryder, Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mohammad Bavarian, Clemens Winter, Philippe Tillet, Felipe Petroski Such, Dave Cummings,
+     Matthias Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William Hebgen Guss, Alex Nichol, Alex Paino, Nikolas Tezak, Jie Tang,
+     Igor Babuschkin, Suchir Balaji, Shantanu Jain, William Saunders, Christopher Hesse, Andrew N. Carr, Jan Leike, Josh Achiam, Vedant Misra, Evan
+     Morikawa, Alec Radford, Matthew Knight, Miles Brundage, Mira Murati, Katie Mayer, Peter Welinder, Bob McGrew, Dario Amodei, Sam McCandlish,
+     Ilya Sutskever, and Wojciech Zaremba. 2021. Evaluating Large Language Models Trained on Code. https://doi.org/10.48550/arXiv.2107.03374
+     arXiv:2107.03374 [cs].
+ [6] Aakanksha Chowdhery, Sharan Narang, Jacob Devlin, Maarten Bosma, Gaurav Mishra, Adam Roberts, Paul Barham, Hyung Won Chung, Charles
+     Sutton, Sebastian Gehrmann, Parker Schuh, Kensen Shi, Sasha Tsvyashchenko, Joshua Maynez, Abhishek Rao, Parker Barnes, Yi Tay, Noam Shazeer,
+     Vinodkumar Prabhakaran, Emily Reif, Nan Du, Ben Hutchinson, Reiner Pope, James Bradbury, Jacob Austin, Michael Isard, Guy Gur-Ari, Pengcheng
+     Yin, Toju Duke, Anselm Levskaya, Sanjay Ghemawat, Sunipa Dev, Henryk Michalewski, Xavier Garcia, Vedant Misra, Kevin Robinson, Liam Fedus,
+     Denny Zhou, Daphne Ippolito, David Luan, Hyeontaek Lim, Barret Zoph, Alexander Spiridonov, Ryan Sepassi, David Dohan, Shivani Agrawal, Mark
+     Omernick, Andrew M. Dai, Thanumalayan Sankaranarayana Pillai, Marie Pellat, Aitor Lewkowycz, Erica Moreira, Rewon Child, Oleksandr Polozov,
+     Katherine Lee, Zongwei Zhou, Xuezhi Wang, Brennan Saeta, Mark Diaz, Orhan Firat, Michele Catasta, Jason Wei, Kathy Meier-Hellstern, Douglas
+     Eck, Jeff Dean, Slav Petrov, and Noah Fiedel. 2022. PaLM: Scaling Language Modeling with Pathways. https://doi.org/10.48550/arXiv.2204.02311
+     arXiv:2204.02311 [cs].
+ [7] Ghada Dessouky, David Gens, Patrick Haney, Garrett Persyn, Arun Kanuparthi, Hareesh Khattri, Jason M. Fung, Ahmad-Reza Sadeghi, and Jeyavijayan
+     Rajendran. 2019. HardFails: Insights into Software-Exploitable Hardware Bugs. 213–230. https://www.usenix.org/conference/usenixsecurity19/
+     presentation/dessouky
+ [8] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. 2019. BERT: Pre-training of Deep Bidirectional Transformers for Language
+     Understanding. In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human
+     Language Technologies, Volume 1 (Long and Short Papers). Association for Computational Linguistics, Minneapolis, Minnesota, 4171–4186. https:
+     //doi.org/10.18653/v1/N19-1423
+ [9] Rolf Drechsler, Ian G. Harris, and Robert Wille. 2012. Generating formal system models from natural language descriptions. In IEEE Int. High Level
+     Design Validation and Test Workshop (HLDVT). 164–165.
+[10] Philip Gage. 1994. A New Algorithm for Data Compression. C Users Journal 12, 2 (Feb. 1994), 23–38.
+[11] Leo Gao, Stella Biderman, Sid Black, Laurence Golding, Travis Hoppe, Charles Foster, Jason Phang, Horace He, Anish Thite, Noa Nabeshima, Shawn
+     Presser, and Connor Leahy. 2020. The Pile: An 800GB Dataset of Diverse Text for Language Modeling. https://doi.org/10.48550/arXiv.2101.00027
+     Number: arXiv:2101.00027 arXiv:2101.00027 [cs].
+[12] Christopher B. Harris and Ian G. Harris. 2016. GLAsT: Learning formal grammars to translate natural language specifications into hardware
+     assertions. In Design, Automation Test in Europe Conf. Exhibition (DATE). 966–971.
+[13] Hamel Husain, Ho-Hsiang Wu, Tiferet Gazit, Miltiadis Allamanis, and Marc Brockschmidt. 2020. CodeSearchNet Challenge: Evaluating the State of
+     Semantic Code Search. arXiv:1909.09436 [cs.LG]
+[14] Raymond Li, Loubna Ben Allal, Yangtian Zi, Niklas Muennighoff, Denis Kocetkov, Chenghao Mou, Marc Marone, Christopher Akiki, Jia Li, Jenny
+     Chim, Qian Liu, Evgenii Zheltonozhskii, Terry Yue Zhuo, Thomas Wang, Olivier Dehaene, Mishig Davaadorj, Joel Lamy-Poirier, João Monteiro,
+     Oleh Shliazhko, Nicolas Gontier, Nicholas Meade, Armel Zebaze, Ming-Ho Yee, Logesh Kumar Umapathi, Jian Zhu, Benjamin Lipkin, Muhtasham
+     Oblokulov, Zhiruo Wang, Rudra Murthy, Jason Stillerman, Siva Sankalp Patel, Dmitry Abulkhanov, Marco Zocca, Manan Dey, Zhihan Zhang, Nour
+     Fahmy, Urvashi Bhattacharyya, Wenhao Yu, Swayam Singh, Sasha Luccioni, Paulo Villegas, Maxim Kunakov, Fedor Zhdanov, Manuel Romero,
+     Tony Lee, Nadav Timor, Jennifer Ding, Claire Schlesinger, Hailey Schoelkopf, Jan Ebert, Tri Dao, Mayank Mishra, Alex Gu, Jennifer Robinson,
+     Carolyn Jane Anderson, Brendan Dolan-Gavitt, Danish Contractor, Siva Reddy, Daniel Fried, Dzmitry Bahdanau, Yacine Jernite, Carlos Muñoz
+     Ferrandis, Sean Hughes, Thomas Wolf, Arjun Guha, Leandro von Werra, and Harm de Vries. 2023. StarCoder: may the source be with you!
+     https://doi.org/10.48550/arXiv.2305.06161 arXiv:2305.06161 [cs].
+[15] Rada Mihalcea, Hugo Liu, and Henry Lieberman. 2006. NLP (Natural Language Processing) for NLP (Natural Language Programming). In
+     Computational Linguistics and Intelligent Text Processing, Alexander Gelbukh (Ed.). Springer Berlin Heidelberg, 319–330.
+[16] Erik Nijkamp, Bo Pang, Hiroaki Hayashi, Lifu Tu, Huan Wang, Yingbo Zhou, Silvio Savarese, and Caiming Xiong. 2022. A Conversational Paradigm
+     for Program Synthesis. https://doi.org/10.48550/arXiv.2203.13474 arXiv:2203.13474 [cs].
+[17] OpenAI. 2023. GPT-4. https://openai.com/research/gpt-4
+[18] Hammond Pearce, Baleegh Ahmad, Benjamin Tan, Brendan Dolan-Gavitt, and Ramesh Karri. 2022. Asleep at the Keyboard? Assessing the Security of
+     GitHub Copilot’s Code Contributions. In 2022 IEEE Symposium on Security and Privacy (SP). 754–768. https://doi.org/10.1109/SP46214.2022.9833571
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                                                     27
+
+
+     ISSN: 2375-1207.
+[19] Hammond Pearce, Benjamin Tan, and Ramesh Karri. 2020. DAVE: Deriving Automatically Verilog from English. In Proceedings of the 2020 ACM/IEEE
+     Workshop on Machine Learning for CAD. ACM, Virtual Event Iceland, 27–32. https://doi.org/10.1145/3380446.3430634
+[20] Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, and Ilya Sutskever. 2019. Language Models are Unsupervised Multitask Learners.
+     (2019), 24. https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf
+[21] Samyam Rajbhandari, Olatunji Ruwase, Jeff Rasley, Shaden Smith, and Yuxiong He. 2021. ZeRO-Infinity: Breaking the GPU Memory Wall for
+     Extreme Scale Deep Learning. https://doi.org/10.48550/arXiv.2104.07857 Number: arXiv:2104.07857 arXiv:2104.07857 [cs].
+[22] Jeff Rasley, Samyam Rajbhandari, Olatunji Ruwase, and Yuxiong He. 2020. DeepSpeed: System Optimizations Enable Training Deep Learning Models
+     with Over 100 Billion Parameters. In Proceedings of the 26th ACM SIGKDD International Conference on Knowledge Discovery & Data Mining (Virtual
+     Event, CA, USA) (KDD ’20). Association for Computing Machinery, New York, NY, USA, 3505–3506. https://doi.org/10.1145/3394486.3406703
+[23] Jie Ren, Samyam Rajbhandari, Reza Yazdani Aminabadi, Olatunji Ruwase, Shuangyan Yang, Minjia Zhang, Dong Li, and Yuxiong He. 2021. ZeRO-
+     Offload: Democratizing Billion-Scale Model Training. https://doi.org/10.48550/arXiv.2101.06840 Number: arXiv:2101.06840 arXiv:2101.06840
+     [cs].
+[24] Gustavo Sandoval, Hammond Pearce, Teo Nys, Ramesh Karri, Siddharth Garg, and Brendan Dolan-Gavitt. 2023. Lost at C: A User Study on the
+     Security Implications of Large Language Model Code Assistants. USENIX Security Symposium (2023).
+[25] Mohammad Shoeybi, Mostofa Patwary, Raul Puri, Patrick LeGresley, Jared Casper, and Bryan Catanzaro. 2020. Megatron-LM: Training Multi-Billion
+     Parameter Language Models Using Model Parallelism. http://arxiv.org/abs/1909.08053 arXiv:1909.08053 [cs].
+[26] Shailja Thakur, Baleegh Ahmad, Zhenxing Fan, Hammond Pearce, Benjamin Tan, Ramesh Karri, Brendan Dolan-Gavitt, and Siddharth Garg. 2023.
+     Benchmarking Large Language Models for Automated Verilog RTL Code Generation. In 2023 Design, Automation & Test in Europe Conference &
+     Exhibition (DATE). 1–6. https://doi.org/10.23919/DATE56975.2023.10137086 ISSN: 1558-1101.
+[27] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. 2017. Attention is
+     All you Need. In Advances in Neural Information Processing Systems, Vol. 30. Curran Associates, Inc. https://proceedings.neurips.cc/paper/2017/
+     hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html
+[28] Stephen Williams. 2023. The ICARUS Verilog Compilation System. https://github.com/steveicarus/iverilog original-date: 2008-05-12T16:57:52Z.
+[29] Henry Wong. 2019. Project:About - HDLBits. https://hdlbits.01xz.net/wiki/Project:About
+[30] Ziqi Yan, Jiqiang Liu, Gang Li, Zhen Han, and Shuo Qiu. 2017. PrivMin: Differentially Private MinHash for Jaccard Similarity Computation.
+     https://doi.org/10.48550/arXiv.1705.07258 Number: arXiv:1705.07258 arXiv:1705.07258 [cs].
+[31] Junjie Ye, Xuanting Chen, Nuo Xu, Can Zu, Zekai Shao, Shichun Liu, Yuhan Cui, Zeyang Zhou, Chao Gong, Yang Shen, Jie Zhou, Siming Chen, Tao
+     Gui, Qi Zhang, and Xuanjing Huang. 2023. A Comprehensive Capability Analysis of GPT-3 and GPT-3.5 Series Models. arXiv:2303.10420 [cs.CL]
+
+
+
+
+                                                                                                                     Manuscript submitted to ACM
+28                                                                                                              Thakur et al.
+
+
+
+
+Fig. 18. GPT-3.5-turbo vs CodeGen-16B-FT at implementing Conway game of life problem, category: Cellular Automata, Table 3. We
+highlight the mistakes.
+Manuscript submitted to ACM
+VeriGen: A Large Language Model for Verilog Code Generation                                                                   29
+
+
+
+
+Fig. 19. CodeGen-16B-FT vs GPT-3.5-turbo vs PALM2 at fixing bug in 8-bit 2-to-1 MUX, category: Finding Bugs in Code, Table 3. We
+highlight the mistake.
+
+
+
+
+                                                                                                      Manuscript submitted to ACM
+

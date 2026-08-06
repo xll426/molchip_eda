@@ -1,0 +1,732 @@
+                                                                     DeepGate2: Functionality-Aware Circuit
+                                                                           Representation Learning
+                                                                  Zhengyuan Shi1 , Hongyang Pan2 , Sadaf Khan1 , Min Li1 , Yi Liu1 , Junhua Huang3 ,
+                                                                          Hui-Ling Zhen3 , Mingxuan Yuan3 , Zhufei Chu2 and Qiang Xu1
+                                                                    1
+                                                                        The Chinese University of Hong Kong, 2 Ningbo University, 3 Noah’s Ark Lab, Huawei
+                                                                                      {zyshi21, skhan, mli, yliu22, qxu}@cse.cuhk.edu.hk
+
+                                            Abstract—Circuit representation learning aims to obtain neural repre-       equal logic probability of 0.5 for each PI under random simulation,
+                                         sentations of circuit elements and has emerged as a promising research         they do not offer unique identifiers for individual PIs. Consequently,
+                                         direction that can be applied to various EDA and logic reasoning tasks.
+                                                                                                                        the model lacks the capacity to discern whether gates are reconvergent
+                                         Existing solutions, such as DeepGate, have the potential to embed both
+                                                                                                                        and driven by common PIs, information that is vital for circuit
+arXiv:2305.16373v1 [cs.LG] 25 May 2023
+
+
+
+
+                                         circuit structural information and functional behavior. However, their
+                                         capabilities are limited due to weak supervision or flawed model design,       analysis. To preserve the logical correlation of gates, the model
+                                         resulting in unsatisfactory performance in downstream tasks. In this           must execute multiple forward and backward propagation rounds to
+                                         paper, we introduce DeepGate2, a novel functionality-aware learning            compensate for the absence of PI identification, which it achieves by
+                                         framework that significantly improves upon the original DeepGate solu-
+                                         tion in terms of both learning effectiveness and efficiency. Our approach      revealing differences in local structure. Nevertheless, a model that
+                                         involves using pairwise truth table differences between sampled logic          involves many rounds of message-passing is time-consuming and
+                                         gates as training supervision, along with a well-designed and scalable loss    inefficient, particularly when dealing with large circuits.
+                                         function that explicitly considers circuit functionality. Additionally, we        In response to these challenges, we present DeepGate2, an inno-
+                                         consider inherent circuit characteristics and design an efficient one-round
+                                         graph neural network (GNN), resulting in an order of magnitude faster
+                                                                                                                        vative functionality-aware learning framework that notably advances
+                                         learning speed than the original DeepGate solution. Experimental results       the original DeepGate solution in both learning effectiveness and
+                                         demonstrate significant improvements in two practical downstream tasks:        efficiency. Specifically, we incorporate the pairwise truth table dif-
+                                         logic synthesis and Boolean satisfiability solving. The code is available at   ference of logic gates as supplementary supervision. This involves
+                                         https://github.com/cure-lab/DeepGate2.                                         obtaining an incomplete truth table via rapid logic simulation, and
+                                                                                                                        then calculating the Hamming distance between the truth tables of
+                                                                    I. I NTRODUCTION
+                                                                                                                        two logic gates, referred to as the ’pairwise truth table difference’.
+                                            The application of Deep Learning (DL) techniques in Electronic              Subsequently, we construct a functionality-aware loss function with
+                                         Design Automation (EDA) has attracted a lot of attention, including            the following objective: to minimize the disparity between the
+                                         routing [1], [2], synthesis [3], [4], and testing [5], [6]. Among              pairwise node embedding distance in the embedding space and the
+                                         learning-based EDA solutions, circuit representation learning [7]–             pairwise truth table difference, which serves as the ground truth. As
+                                         [12] has emerged as a promising research paradigm. This paradigm               a result, our proposed supervision introduces authentic functional
+                                         adopts a two-step approach instead of training individual models from          information, a stark contrast to the initial DeepGate model, which
+                                         scratch for each EDA task. First, a general model is pre-trained with          predominantly depended on statistical facets of functionality.
+                                         task-agnostic supervision. Then, the model is fine-tuned for specific             Moreover, we introduce a single-round GNN architecture that
+                                         downstream tasks, resulting in improved performance.                           efficiently encapsulates both structural and functional characteristics.
+                                            One representative technique, called DeepGate, embeds both the              Our GNN segregates the node embeddings into two discrete elements:
+                                         logic function and structural information of a circuit as vectors on           functional embeddings and structural embeddings, each initialized
+                                         each gate. DeepGate uses signal probabilities as the supervision               differently. For the initial functional embeddings of the PIs, we assign
+                                         task and applies an attention-based graph neural network (GNN)                 a uniform vector to denote the equal logic probability shared among
+                                         that mimics the logic computation procedure for learning. It has               all PIs. For the initial structural embeddings of the PIs, we allocate a
+                                         achieved remarkable results on testability analysis [5] and SAT                set of orthogonal vectors. These vectors, unique and uniformly spaced
+                                         solving problems [13]. However, we argue that its capabilities can             apart in the embedding space, mirror the functional independence of
+                                         still be dramatically enhanced.                                                each PI. By transmitting these PI embeddings to the internal logic
+                                            On one hand, DeepGate falls short in circuit functionality supervi-         gates through two separate aggregation streams, our model effectively
+                                         sion. Generally speaking, the circuit truth table represents functional-       amalgamates both structural and functional data through a singular
+                                         ity in its most direct form. However, obtaining a complete truth table         round of forward message-passing procedure.
+                                         through exhaustive simulation is infeasible due to the exponentially              We execute a range of experiments to highlight the effective-
+                                         increasing time requirement in relation to the number of primary               ness and efficiency of our proposed circuit representation learning
+                                         inputs (PIs). DeepGate, as an alternative, employs the ratio of logic-         framework. When compared to the predecessor, DeepGate, our
+                                         1 in the truth table as a functionality-related supervision metric.            model, DeepGate2, demonstrates a significant accuracy improvement
+                                         It then approximates this value as the probability of logic-1 under            and achieves an order of magnitude speedup in logic probability
+                                         randomized simulations performed a limited number of times. This               prediction. To further demonstrate the generalization capability of
+                                         approach, however, has a notable caveat. For example, a NOT gate               DeepGate2 in critical downstream applications that heavily rely on
+                                         and its fan-in gate can both have a logic-1 probability of 0.5, but their      circuit functionality, we integrate it into EDA tools to aid logic
+                                         truth tables are entirely opposite, thus highlighting the inadequacy of        synthesis [14] and SAT solving [15]. The experimental results further
+                                         this supervision method.                                                       validate the efficacy of our DeepGate2 framework.
+                                            On the other hand, DeepGate assigns the same initial embedding                 The remainder of this paper is organized as follows. Section II sur-
+                                         to all the PIs. Although these homogeneous embeddings reflect the              veys related work. We then detail the proposed DeepGate2 framework
+in Section III. We compare DeepGate2 with the original DeepGate                                                              𝐴𝑔𝑔𝑟(ℎ!! , ℎ"! )
+                                                                                                   𝐴𝑔𝑔𝑟(ℎ! , ℎ" )    1’
+and another functionality-aware solution [8] in Section IV. Next, we                          1
+apply DeepGate2 onto several downstream tasks in Section V. Finally,                                    5                       5’
+                                                                                                                     2’
+Section VI concludes this paper.
+                                                                                              2
+                                                                                                        6            3’         6’
+                          II. R ELATED W ORK
+                                                                                              3    𝐴𝑔𝑔𝑟(ℎ" , ℎ# )
+A. Circuit Representation Learning                                                                                   4’      𝐴𝑔𝑔𝑟(ℎ#! , ℎ$! )
+
+   A prominent trend in the deep learning community is to learn a
+                                                                                            Fig. 1. An example of reconvergence structure
+general representation from data first and then apply it to various
+downstream tasks, for example, GPT [16] and BERT [17] learn                       First, logic probability is not an appropriate supervision for learn-
+representations of natural language text that can be fine-tuned for            ing functionality. The most direct representation of functionality is
+a wide range of natural language processing tasks. Circuit represen-           the truth table, however, using it as a training label is impractical due
+tation learning has also emerged as an attractive research direction,          to the immeasurable computational overhead. DeepGate proposes to
+which falls into two categories: structure-aware circuit representation        supervise the model by utilizing the proportion of logic-1 in the truth
+learning [9], [11], [12] and functionality-aware circuit representation        table and approximate this proportion as the logic probability through
+learning [7], [8].                                                             random simulation. However, logic probability is only a statistical
+   Since a circuit can be naturally formulated as a graph, with gates          information of functionality, indicating the number of logic-1 values
+as nodes and wires as edge, the GNN is a powerful tool to capture              in the truth table rather than which PI assignments lead to logic-1.
+the interconnections of logic gates and becomes a backbone model to            Consequently, DeepGate cannot differentiate the functional difference
+learn circuit representations. For example, TAG [9] is a GNN-based             between two circuits if they have the same probability.
+model designed for analog and mixed-signal circuit representation                 Second, DeepGate is not efficient enough to deal with large
+learning and applied for several physical design applications, such as         circuit. Specifically, DeepGate requires to perform forward and
+layout matching prediction, wirelength estimation, and net parasitic           backward message-passing operations for 20 rounds to embed rich
+capacitance prediction. ABGNN [12] learns the representation of                representations. Fig. 1 illustrates the need of this multi-round GNN
+digital circuits and handles the arithmetic block identification task.         design in DeepGate where the nodes in grey color represent PIs.
+                                                                                                                             ′         ′
+However, these models tend to focus on structural encoding and are             The incoming messages of nodes 5, 6, 5 , and 6 during forward
+not suitable for functionality-related tasks.                                  propagation are noted in the figure, where hi is the embedding vector
+   Consequently, the functionality-aware circuit representation learn-         of node i. Since, DeepGate uses the same initial embeddings for all
+                                                                                                                         ′        ′
+ing frameworks [7], [8] are designed to learn the underlying circuit           nodes, the messages of nodes 5, 6, 5 , and 6 in the first forward
+functionality. For instance, FGNN [8] learns to distinguishes be-              propagation round are identical. Thus, the model can only distinguish
+tween functionally equivalent and inequivalent circuits by contrastive         node embeddings based on their connections by repeatedly updating
+learning [18]. However, such self-supervised manner relies on data             PIs through multiple rounds of forward and backward message
+augmentation by perturbing the original circuit to logic equivalence           propagation.
+circuit. If the perturbation is not strong and diverse, the model still           We emphasize that the limitations of DeepGate comes from the
+identifies the functional equivalence circuits based on the invariant          lack of effective supervision and weak model design where the unique
+local structure, resulting a low generalization ability on capturing           identification of all PIs are ignored. To address these issues, we
+underlying functionality. DeepGate [7] leverages logic-1 probability           propose an efficient one-round GNN design that maintains the unique
+under random simulation as supervision, which approximates the                 identification of PIs and uses the pairwise truth-table difference of
+statistic of the most direct representation of functionality, i.e. truth ta-   two gates as an effective supervision.
+ble. Despite achieving remarkable progress on testability analysis [5],
+                                                                                                        III. M ETHODOLOGY
+there are limitations that affect the generalizability of DeepGate
+to other EDA tasks. We will elaborate on DeepGate in the next                  A. Problem Formulation
+subsection.                                                                       The circuit representation learning model aims to map both circuit
+                                                                               structure and functionality into embedding space, where the struc-
+B. DeepGate Framework                                                          ture represents the connecting relationship of logic gates and the
+   DeepGate [7] is the first circuit representation learning frame-            functionality means the logic computational mapping from inputs to
+work that embeds both structural and functional information of                 outputs. We conclude that the previous models still lack of ability
+digital circuits. The model pre-processes the input circuits into a            to capture functional information. In this paper, we propose to
+unified And-Inverter Graph (AIG) format and obtains rich gate-                 improve the previous DeepGate model [7] to represent circuits with
+level representations, which can be applied to various downstream              similar functionality with the similar embedding vectors. In other
+tasks. DeepGate treats the logic-1 probability as supervision to learn         words, these circuit representations should have short distance in the
+the functionality. Additionaly, the DeepGate consists of a GNN                 embedding space.
+equipped with an attention-based aggregation function that propagates             We take Circuit A, B, C, and D as examples in Fig. 2, where all
+information of gates in levelized sequential manner. The aggregation           of them have similar topological structures. Since Circuit A, B and
+function learns to assign high attention weights to controlling fan-in         C perform with the same logic probability, DeepGate [7] tends to
+of gates (e.g. the fan-in gate with logic-0 is the controlling fan-in of       produce the similar embeddings for these three circuits. Hence, it is
+AND gate) that mimics the logic computation process. Although it               hard to identify the logic equivalent circuits by DeepGate. Although
+has been applied to testability analysis [5] and SAT problem [13], we          FGNN [8] is trained to classify logical equivalence and inequivalence
+argue that the model still encounters with two major shortcomings              circuits by contrastive learning, they cannot differentiate the relative
+limiting its generalization ability.                                           similarity. As shown in the embedding space, the distance between
+                                                            Embedding Space                         difference. (2) The logic probability, which is the number of logic-1
+ 1                              1                                                                   percentage in the truth table, should be similar (distance within 5%).
+
+
+
+
+                                                                                    AC = AB < AD
+                                                                                    Distance:
+                                                                                    DeepGate
+                                                                B           C
+ 2                              2                                                                   This is because if the logic probability of two nodes is not consistent,
+                                                                    A
+ 3                              3                                                                   their functions are definitely not consistent. If the logic probability
+              Circuit A                     Circuit B                                               of two nodes is consistent, their functions may be consistent. (3)
+                                                                        D                           The difference in logic levels between two nodes should be within 5,
+                                                                                                    because when the two nodes are far apart, their functions are unlikely
+
+
+
+
+                                                                                    AC < AB = AD
+                                                                                    Distance:
+                                                                                    FGNN
+ 1                              1                                   A                               to be correlated. (4) We only consider the extreme cases, namely, the
+                                                                            C
+ 2                              2                                                                   difference between truth tables is within 20% or above 80%.
+ 3                              3                                                                      We do not perform the complete simulation, but set a maximum
+              Circuit C                     Circuit D                                               simulation time to obtain the response of each node as an incomplete
+                                                            D                   B
+  PI-1    PI-2    PI-3    𝑷𝑶𝑨       𝑷𝑶𝑩     𝑷𝑶𝑪     𝑷𝑶𝑫                                             truth table. It should be noted that we utilize the And-Inverter Graph
+   0       0       0       0         1       0       0
+                                                                                                    (AIG) as the circuit netlist format, which is only composed of AND
+
+
+
+
+                                                                                    AC < AB < AD
+                                                                                    Distance:
+                                                                                    DeepGate – v2
+   0       0       1       1         0       1       0
+   0       1       0       1         0       1       0              A       C
+   0       1       1       0         1       0       0
+                                                                                                    gate and NOT gate. Any other logic gates, including OR, XOR and
+   1       0       0       1         1       1       0                                              MUX, can be transformed into a combination of AND and NOT gates
+   1       0       1       1         1       1       0
+   1       1       0       1         1       1       0                      B                       in linear time.
+   1       1       1       1         1       1       1      D
+  0.500   0.500   0.500   0.750     0.750   0.750   0.125
+                                                                                                    C. Functionality-Aware Loss Function
+Fig. 2. Problem statement: the embedding vectors should be close if circuit                            The primary objective of our purposed functionality-aware circuit
+functions are similar                                                                               learning model is to learn node embeddings, where two embedding
+                                                                                                    vectors will be similar if the corresponding two node function are
+A and B is equal to the distance between A and D. Nonetheless,                                      similar. As we sample node pairs N in the Section III-B, we can
+as indicated in the truth table, Circuit A is equivalent to Circuit C,                              obtain the Hamming distance of truth table DT of each node pair.
+similar to Circuit B (with only 2 different bits), but dissimilar to
+                                                                                                             T             HammingDistance(Ti , Tj )
+Circuit D (with 5 different bits).                                                                          D(i,j) =                                 , (i, j) ∈ N        (2)
+                                                                                                                                length(Ti )
+   We expect that the model will bring together or separate the circuits
+in embedding space according to their truth tables. Therefore, the                                     According to Eq. (1), the distance of embedding vectors DH
+expected DeepGate2 model not only identifies the logic equivalent                                   should be proportional to the Hamming distance of the truth table
+nodes, but also predicts the functional similarity. Thus, we can apply                              DT . We define the distance of embedding vectors in Eq. (3), where
+such functionality-aware circuit learning model to provide benefits                                 is calculated based on cosine similarity. In other word, the similarity
+for the real-world applications.                                                                    of embedding vectors S(i,j) should be negative related to distance
+                                                                                                       T
+                                                                                                    D(i,j) .
+B. Dataset Preparation
+   To train the circuit representation learning model, we need to find                                              S(i,j) = CosineSimilarity(hi , hj )
+                                                                                                                     H                                                   (3)
+a supervision contains rich functional information and prepare an                                                   D(i,j) = 1 − S(i,j)
+effective dataset at first. Truth table, which records the complete
+                                                                                                      Therefore, the training objective is to minimize the difference
+logic computational mapping, provides the most direct supervision.
+                                                                                                    between DH and DT . We purpose the functionality-aware loss
+However, the length of the truth table increases exponentially with
+                                                                                                    function Lf unc as below.
+the number of primary inputs, and obtaining a complete truth table
+                                                                                                                     ′
+requires an immeasurable amount of time. Therefore, a reasonable                                                   T                  T
+                                                                                                                  D(i,j) = ZeroN orm(D(i,j) )
+supervision should be easily obtained and closely related to the truth                                             H   ′
+                                                                                                                                     H
+table.                                                                                                           D(i,j) = ZeroN orm(D(i,j) )                             (4)
+                                                                                                                                           T′    H′
+                                                                                                                           X
+   Firstly, we use the Hamming distance between truth tables of                                                  Lf unc =      (L1Loss(D(i,j) , D(i,j) ))
+two logic gates as supervision. That is, in a way similar to metric                                                            (i,j)∈N
+learning [19], we map nodes to an embedding space and hope that
+                                                                                                    D. One-round GNN Model
+the distance of the embedding vectors is positive correlated with the
+Hamming distance of the truth table. Formally, we denote the truth                                     In this subsection, we propose a GNN model that can capture both
+table vector of node i is Ti and the embedding vector of node i is                                  functional and structural information for each logic gate through one-
+hi .                                                                                                round forward propagation.
+                distance(hi , hj ) ∝ distance(Ti , Tj )            (1)                                 First, we propose to separate the functional embeddings hf and
+                                                                                                    structural embeddings hs, and initialize them in difference ways. We
+   Secondly, to improve the data efficiency, we regard the each                                     assign the uniform initial functional embeddings to primary inputs
+logic gate in circuit as a new circuit (logic cone) with the current                                (PI), as they all have equivalent logic probability under random simu-
+gate as output and the original PIs as inputs. By parsing a single                                  lation. However, we design a PI encoding (PIE) strategy by assigning
+original circuit, we obtain a large number of new circuits. Therefore,                              a unique identification to each PI as its initial structural embedding.
+the task of graph learning becomes the task of learning node-level                                  Specifically, the initial PI structural embeddings hsi , i ∈ P I are
+representation, and the difficulty of data collection is reduced.                                   orthogonal vectors. This means that the dot product of any two PIs’
+   Thirdly, to ensure the quality of sample pairs and limit the number                              embeddings is zero.
+                                                                                                                                                       s
+of sample pairs, we impose the following constraints during sampling                                   Second, we design four aggregators: aggrAN         D aggregates the
+                                                                                                                                                                      f
+node pairs: (1) Two logic cones of the two nodes should have the                                    message for structural embedding hs of an AND gate, aggrAN           D
+same PI, which is a necessary condition for comparing the truth table                               aggregates the message for functional embedding hf of an AND
+                                                                          2 entails identifying the structural correlation. To achieve this, we
+                       1                 4                                readout the functional embedding hfi to predict the logic probability
+                                                           6              P̂i by a multi-layer perceptron (MLP), denoted as M LPprob . In
+                       2
+
+
+
+
+                           ……
+                                                                          addition, we utilize the structural embeddings hsi and hsj to predict
+                                         5
+                                                                          whether node i and node j can be reconvergent by M LPrc .
+                       3                                   7
+                                                                                                   P̂i = M LPprob (hfi )
+                                                                                                                                               (8)
+                                                                                                 ˆ = M LPrc (hsi , hsj )
+                                                                                               R(i,j)
+                ℎ𝑠!"       ……        ℎ𝑠!!"#             ℎ𝑠!!
+                                                                            We define the loss function for Task 1 in Eq. (9), where the Pi is the
+                                                                          ground truth logic probability obtained through random simulation.
+                ℎ𝑓!"                 ℎ𝑓!!"#             ℎ𝑓!!
+                                                                                                Lprob = L1Loss(Pi , P̂i )                      (9)
+                  Step 1            Step N-1        Step N
+                                                                            Besides, we define the loss function for Task 2 in Eq. (10). The
+              Fig. 3. One-round GNN propagation process                   binary ground truth, denoted as R(i,j) , indicates whether node pair i
+                                                                          and j have a common predecessor.
+           s                 f
+gate. aggrN   OT and aggrN OT update hs and hf of a NOT gate,
+respectively.                                                                                                        ˆ )
+                                                                                            Lrc = BCELoss(R(i,j) , R(i,j)                    (10)
+   We implement each aggregator using the self-attention mecha-
+nism [20], as the output of a logic gate is determined by the                Consequently, the loss function for Stage 1 is presented in Eq. (11),
+controlling values of its fan-in gates. For example, an AND gate must     where the wprob and wrc are the weight for Task 1 and Task 2,
+output logic-0 if any of its fan-in gates has logic-0. By employing the   respectively.
+attention mechanism, the model learns to assign greater importance
+to the controlling inputs [7]. As illustrated in Eq. (5), wq , wk and                    Lstage1 = Lprob ∗ wprob + Lrc ∗ wrc                 (11)
+wv are three weight matrices and d is the dimension of embedding
+                                                                             The second training stage involves another more difficult Task 3.
+vectors h.
+                                                                          functionality-aware learning, as described in Section III-C. The loss
+                                wq⊤ hi · (wk⊤ hj )⊤                       function for Stage 2 is defined below, where wf unc represents the
+            αj = sof tmax(              √           )
+                                          d                               loss weight of Task 3.
+           mj = wv⊤ hj                                              (5)
+                                                X                            Lstage2 = Lprob × wprob + Lrc × wrc + Lf unc × wf unc           (12)
+            hi = aggr(hj |j ∈ P(i)) =                (αj ∗ mj )
+                                               j∈P(i)                        Overall, the model can differentiate gates with varying probability
+  Third, during forward propagation, the structural embeddings are        in Stage 1. As the logic equivalent pairs only occur when nodes
+updated only with the structural embeddings of predecessors. As           have the same probability, the model in Stage 2 learns to predicting
+shown in Eq. (6), where the Gate a is AND gate, the Gate b is             the functional similarity within the probability equivalent class. The
+NOT gate.                                                                 effectiveness of the above training strategies is demonstrated in
+                            s
+                                                                          Section IV-E.
+                  hsa = aggrAN D (hsj |j ∈ P(a))
+                            s                                       (6)                            IV. E XPERIMENTS
+                  hsb = aggrN OT (hsj |j ∈ P(b))
+                                                                             In this section, we demonstrate the ability of our proposed Deep-
+  At the same time, the gate function is determined by the function
+                                                                          Gate2 to learn functionality-aware circuit representations. Firstly,
+and the structural correlations of the fan-in gates. Therefore, the
+                                                                          Section IV-A provides the preliminary of our experiments, including
+functional embeddings are updated as Eq. (7).
+                                                                          details on dataset preparation, evaluation metrics and model set-
+                         f
+               hfa = aggrAN D ([hsj , hfj ]|j ∈ P(a))                     tings. Secondly, we compare the effectiveness and efficiency of our
+                         f
+                                                                    (7)   DeepGate2 against DeepGate [7] and FGNN [8] on two function-
+               hfb = aggrN OT ([hsj , hfj ]|j ∈ P(b))
+                                                                          related tasks: logic probability prediction (see Section IV-B) and
+   Therefore, as shown in Fig. 3, the GNN propagation process             logic equivalence gates identification (see Section IV-C). Thirdly, we
+performs from PI to PO level by level. For the node in level l,           investigate the effectiveness of model design and training strategies
+its structural embedding hsLl will be updated with the structural         in Section IV-D and Section IV-E, respectively.
+embeddings of the node in level l − 1. Additionally, the functional
+embedding hfLl will be updated with both structural embeddings            A. Experiment Settings
+hsLl−1 and functional embeddings hfLl−1 . The GNN propagation
+completes after processing N levels.                                         1) Dataset Preparation: We use the circuits in DeepGate [7],
+                                                                          which are extracted from ITC’99 [23], IWLS’05 [24], EPFL [25]
+E. Model Training Strategies                                              and OpenCore [26]. These circuits consists of 10, 824 AIGs with
+   To train the model, we employed multi-stage training strategy,         sizes ranging from 36 to 3, 214 logic gates. To obtain the incomplete
+similar to training a model with an easy task and then a harder task      truth table, we generate 15, 000 random patterns and record the corre-
+in curriculum learning [21]. During each stage, we trained the model      sponding response. Following the data preparation method described
+with multiple supervisions in multi-task learning manner [22]. In the     in Section III-B, we construct a dataset comprising 894, 151 node
+first stage, we train the one-round GNN model with two simple tasks.      pairs. We create 80/20 training/test splits for model training and
+The Task 1 involves predicting the logic probability, while the Task      evaluation.
+                    1             4
+                                                       1             4                                                Task 1. Predict logic probability
+                                          6
+  Circuit Netlist
+                                                                             6                ……       ……
+                                                                                                                                    𝑀𝐿𝑃!"#$                 𝑃%%
+
+
+
+
+                                                               ……
+                        ……
+                    2                                  2             5                                                   ℎ𝑓%                   𝑃%
+                                  5
+                                          7                                                   ℎ𝑓!      ℎ𝑠!
+                    3                                  3                     7
+                                                                                              ℎ𝑓"      ℎ𝑠"            Task 2. Identify reconvergence
+
+                                                                                                                         ℎ𝑠%    ℎ𝑠(     𝑀𝐿𝑃!"#$                       𝑅'(%,()
+                                                       1             4                                                                                 𝑅(%,()
+                    1             4                                                           ℎ𝑓#      ℎ𝑠#
+                                                                             6
+  Circuit Graph
+
+
+
+
+                                                               ……
+                                      6                2             5
+                             ……
+
+
+
+
+                    2             5                                                           ℎ𝑓$      ℎ𝑠$
+                                                                                                                      Task 3. Predict functional similarity
+                                                       3                     7                                                                                         +
+                                                                                                                                        Similarity                    𝐷(%,()
+                    3                 7                                                    Node Embeddings               ℎ𝑓%   ℎ𝑓(                      *
+                                                                                                                                                       𝐷(%,()
+                                              Functionality-Aware Circuit Learning Model
+
+                                                             Fig. 4. Functionality-aware circuit learning framework
+
+
+   2) Evaluation Metrics: We assess our DeepGate2 with two tasks.                                                        TABLE I
+The first task is to predict the logic probability for each logic gate.                      P ERFORMANCE OF D EEP G ATE ( V 1) AND OUR PROPOSED D EEP G ATE 2
+                                                                                                       ( V 2) ON L OGIC P ROBABILITY P REDICTION
+We calculate the average prediction error (PE) as Eq. (13), where the
+set V includes all logic gates.
+                                                                                             Circuit   #Gates        DeepGate          DeepGate2                Reduction
+                                1 X                                                                             PE       Time         PE     Time         PE         Time(x)
+                       PE =            |Pi − P̂i |                (13)
+                               |V| i∈V                                                       D1        19,485   0.0344     36.89s     0.0300   2.23s      12.79%     16.56
+                                                                                             D2        12,648   0.0356     16.11s     0.0309   1.18s      13.20%     13.66
+   The second task is to identify the logic equivalence gates within                         D3        14,686   0.0355     21.42s     0.0294   1.44s      17.18%     14.92
+a circuit. A gate pair (i, j) is considered as a positive pair if these                      D4        7,104    0.0368     5.89s      0.0323   0.50s      12.23%     11.89
+                                                                                             D5        37,279   0.0356     131.22s    0.0316   7.82s      11.24%     16.79
+two logic gates i and j have the same function, where the pairwise                           D6        37,383   0.0325     133.02s    0.0285   8.10s      12.31%     16.42
+                                       T
+Hamming distance of truth tables D(i,j)     = 0. If the similarity S(i,j)                    D7        10,957   0.0357     13.02s     0.0316   0.90s      11.48%     14.44
+between these two embedding vectors hfi and hfj exceeds a certain                            D8        3,183    0.0406     1.60s      0.0341   0.17s      16.01%     9.64
+threshold, the model will recognize the gate pair (i, j) as equivalent.                      D9        27,820   0.0368     77.20s     0.0322   4.73s      12.50%     16.34
+                                                                                             D10       40,496   0.0327     154.00s    0.0290   8.89s      11.31%     17.33
+The optimal threshold θ is determined based on the receiver operating
+characteristic (ROC). The evaluation metrics is formally defined in                          Avg.               0.0356     59.04s     0.0310   3.59s 13.08%          16.43
+Eq. (14), where T P , T N , F P , F N are true positive, true negative,
+false positive and false negative, respective, and M is the total number
+of gate pairs. In the following experiments, the performance on                            B. Comparison with DeepGate on Probability Prediction
+logic equivalence gates identification is measured in terms of Recall,
+Precision, F1-Score and area under curve (AUC).
+                                                                                              We compare the probability prediction error (PE, see Eq. (13))
+                       P     T
+                         ((D(i,j)  == 0) & (S(i,j) > θ))                                   and runtime (Time) with previous DeepGate. The previous DeepGate
+               TP =
+                                        M                                                  is denoted as DeepGate and our proposed model with novel loss
+                       P     T
+                         ((D(i,j)  > 0) & (S(i,j) < θ))                                    function and GNN design is named as DeepGate2 in Table I. Based
+              TN =                                                                         on the results presented in the table, we make two observations. First,
+                                       M                             (14)
+                       P     T                                                             our proposed DeepGate2 exhibits more accurate predictions of logic
+                         ((D(i,j)  > 0) & (S(i,j) > θ))
+              FP =                                                                         probability compared to the previous version. On average, the proba-
+                                       M
+                       P     T
+                         ((D(i,j)  == 0) & (S(i,j) < θ))                                   bility prediction error (PE) of DeepGate2 is 13.08% lower than that
+              FN =                                                                         of DeepGate. This suggests that using the novel model architecture
+                                        M
+                                                                                           with embedding initialization strategy can benefit logic representation
+   We conduct the following performance comparisons on 10 indus-                           learning and lead to better results on logic probability prediction.
+trial circuits, with circuit sizes ranging from 3.18k gates to 40.50k                      Second, our DeepGate2 performs more efficient than DeepGate. Take
+gates.                                                                                     the circuit D1 as an example, DeepGate requires 36.89 seconds for in-
+   3) Model Settings: In the one-round GNN model configuration,                            ference, but our DeepGate2 only needs 2.23s, which is 16.56x faster
+the dimension of both structural embedding hs and functional em-                           than the previous DeepGate. Moreover, compared to the previous
+bedding hf is 64. Both M LPprob and M LPrc contain 1 hidden                                model, DeepGate2 achieves an order of magnitude speedup (16.43x
+layer with 32 neurons and a ReLu activation function.                                      on average) in model runtime. This is attributed to the fact that the
+   The model is trained for 60 epochs to ensure each model can                             GNN model in DeepGate relies on 10 forward and 10 backward
+converge. The other models [7], [8] mentioned in the following                             message propagation, whereas the proposed one-round GNN model in
+experiments maintain their original settings and are trained until they                    DeepGate2 only performs forward propagation for 1 time. Therefore,
+converge. We train all the models for 80 epochs with batch-size 16                         the new circuit representation learning model is more effective and
+on a single Nvidia V100 GPU. We adopt the Adam optimizer [27]                              efficient than DeepGate, and demonstrates the generalization ability
+with learning rate 10−4 and weight decay 10−10 .                                           on large-scale circuits.
+C. Comparison with other Models on Logic Equivalence Gates                  correlation in the first stage and learn the more difficult task, which
+Identification                                                              predicts the functionality in the second stage. The results are shown
+   This section compares the functionality-aware accuracy, as defined       in Table IV, where the model w/ multi-stage achieves an F1-Score
+in Section IV-A2 of DeepGate2 with that of two other models:                of 0.9434 on average and the model w/o multi-stage achieves only
+DeepGate [7] and FGNN [8]. The DeepGate [7] model treats the logic          0.7137.
+probability as supervision since it contains the statistical information       We analyze the reason as follows. The cost of comparing each
+of truth table. The FGNN [8] is trained to differentiate between logic      pair of logic gates in the task of learning functionality is extremely
+equivalent and inequivalent circuits using contrastive learning.            high, which is proportional to the square of the circuit size. We
+   Table II presents the performance of three models on the task of         limit the dataset and train the model to learn functional similarity
+logic equivalence gates identification. Firstly, our proposed approach      only among pairs with similar logic probability, which is a necessary
+outperforms the other two models on all circuits with an average            condition for functional equivalence. Therefore, without the staged
+F1-score of 0.9434, while DeepGate and FGNN only achieve F1-                multi-stage strategy, be effectively supervised with the simplified
+Score 0.6778 and 0.4402, respectively. For instance, in circuit D7,         dataset, leading to poor performance in learning functionality. As
+our proposed functionality-aware circuit learning approach achieves         shown in Table V, the differences between the two models in the
+an F1-Score of 0.9831 and accurately identifies 99.15% of logic             loss values for predicting logic probability (Lprob ) and identifying
+equivalence gate pairs with a precision of 97.48%, indicating a low         reconvergence structures (Lrc ) are not significant, indicating that
+false positive rate. In contrast, DeepGate only achieves an F1-score        they perform similarly in these two tasks. However, compared to
+of 0.6778, while FGNN fails on most of the pairs. Secondly, although        the w/o multi-stage model, the w/ multi-stage model performs better
+DeepGate has an average recall of 91.46%, its precision is only             in learning functionality with Lf unc = 0.0594, which is 51.47%
+54.00%, indicating a large number of false positive identifications.        smaller than that of w/o multi-stage model. However, the w/ multi-
+This is because DeepGate can only identify logic equivalent pairs by        stage model outperforms the model w/o multi-stage in learning
+predicting logic probability, which leads to incorrect identification       functionality task with a significantly lower Lf unc value of 0.0594,
+of gate pairs with similar logic probability. According to our further      which is 51.47% smaller than that of the latter.
+experiment, in 80.83% of false positive pairs, the model incorrectly                             V. D OWNSTREAM TASKS
+identifies gate pairs with similar logic probability as functionally
+equivalent. Thirdly, FGNN achieves the lowest performance among                In this section, we combine our DeepGate2 with the open-
+the other models, with only 0.4402 F1-Score. The poor performance           source EDA tools and apply our model to practical EDA tasks:
+of FGNN is attributed to the lack of effective supervision. While           logic synthesis and Boolean satisfiability (SAT) solving. The logic
+FGCN learns to identify logic equivalence circuits generated by             synthesis tools aim to identify logic equivalence gates as quickly as
+perturbing local structures slightly, the model tends to consider           possible. In Section V-A, our proposed functionality-aware circuit
+circuits with similar structures to have the same functionality. How-       learning model provides guidance to the logic synthesis tool about
+ever, in the validation dataset and practical applications, two circuits    the logic similarity. Additionally, in Section V-B, we apply the
+may have the same function even if their topological structures are         learnt functional similarity in SAT solving, where the variables with
+extremely different. Therefore, the self-supervised approach limits the     dissimilar functionality are assigned the same decision value. This
+effectiveness of FGNN in identifying logic equivalence gates.               approach efficiently shrinks the search space by enabling solvers to
+                                                                            encounter more constraints.
+D. Effectiveness of PI Encoding Strategy
+                                                                            A. Logic Synthesis
+   To demonstrate the effectiveness of our proposed PI encoding
+(PIE) strategy, we trained another model without assigning unique              This subsection shows the effectiveness of our proposed
+identifications for PIs, which we refer to as w/o PIE. The results are      functionality-aware circuit learning framework in SAT-sweeping [28],
+presented in Table III, which show that disabling the PIE reduces           a common technique of logic synthesis. Fig. 5 illustrates the compo-
+the F1-Score of identifying logic equivalence gates from 0.9434 to          nents of a typical ecosystem for SAT-sweeping engine (also called
+0.7541, resulting in an average reduction of 20.07%.                        SAT sweeper), where including equivalence class (EC) manager,
+   Such reduction can be attributed to the fact that, as demonstrated       SAT-sweeping manager, simulator, and SAT solver. All computations
+as the failure case in Section II and Fig. 1, the one-round GNN model       are coordinated by the SAT-sweeping manager [29]. The SAT sweeper
+without the PIE strategy cannot model the structural information            starts by computing candidate ECs using several rounds of initial
+of the circuit. More specifically, the accuracy of the reconvergence        simulation and storing ECs into EC manager. In the next step, the
+structure identification task with w/ PIE model is 93.22%, while            SAT-sweeping manager selects two gates within an EC and then calls
+the w/o model only achieve 74.56%. The functionality of logic gate          the SAT solver to check whether they are equivalent. If so, the EC
+is affected by both functionality of fan-in gates and whether there         manager merges these two gates. Otherwise, SAT solver will return a
+is reconvergence between its fan-in gates. Once the reconvergence           satisfiable assignment as a counterexample for incremental simulation
+structure cannot be accurately identified, node functionality cannot        to refine the candidate ECs.
+be modeled accurately.                                                         To the best of our knowledge, most SAT-sweeping managers select
+                                                                            EC only based on the circuit structure, without efficient heuristic
+E. Effectiveness of Training Strategies                                     strategy considering the functionality of candidate gates. We will
+   To investigate the effectiveness of our multi-stage training strategy,   introduce the functional information into SAT-sweeping manager to
+we train another model (noted as w/o multi-stage model) with all loss       further improve efficiency.
+functions in only one stage, instead of adding the functionality-aware         1) Experiment Settings: We combine our DeepGate2 into SAT
+loss function in the second stage. The original model with multiple         sweeper to guide EC selection. To be specific, the updated manager
+stages training strategy is noted as w/ multi-stage model. The w/           sorts all candidate equivalence classes by computing the cosine
+multi-stage model learn to predict the logic probability and structural     similarity of their embeddings. Unlike traditional SAT sweepers, our
+                                                                       TABLE II
+                                     P ERFORMANCE OF D IFFERENT M ODELS ON L OGIC E QUIVALENCE G ATES I DENTIFICATION
+                                                   FuncModel                               DeepGate                                              FGNN
+               Circuit       Size
+                                        Recall     Precision F1-Score           Recall     Precision         F1-Score            Recall         Precision         F1-Score
+              D1            19,485      98.46%     84.34%       0.9085      94.59%         52.69%            0.6768             63.64%          41.18%            0.5000
+              D2            12,648      99.39%     89.07%       0.9395      92.07%         52.98%            0.6726             60.87%          35.00%            0.4444
+              D3            14,686      97.89%     84.36%       0.9062      93.25%         62.08%            0.7454             72.22%          44.83%            0.5532
+              D4            7,104       98.90%     97.83%       0.9836      90.11%         46.33%            0.6120             62.73%          23.53%            0.3422
+              D5            37,279      99.80%     88.49%       0.9381      93.69%         56.72%            0.7066             64.00%          69.57%            0.6667
+              D6            37,383      98.31%     93.19%       0.9568      93.23%         60.49%            0.7337             59.09%          46.67%            0.5215
+              D7            10,957      99.15%     97.48%       0.9831      88.89%         48.83%            0.6303             36.36%          23.53%            0.2857
+              D8            3,183       97.14%     97.14%       0.9714      82.86%         49.90%            0.6229             62.63%          22.22%            0.3280
+              D9            27,820      99.74%     85.16%       0.9188      92.51%         48.77%            0.6387             62.50%          26.79%            0.3750
+              D10           40,496      98.48%     87.80%       0.9283      93.35%         61.22%            0.7395             47.02%          32.63%            0.3853
+              Avg.                      98.73%     90.49%       0.9434      91.46%         54.00%            0.6778             59.11%          36.60%            0.4402
+
+
+                          TABLE III
+                                                                                                                           Equivalence class manager
+P ERFORMANCE C OMPARISON BETWEEN W / PIE AND W / O PIE ON L OGIC                                                           -    maintains candidate equivalence
+              E QUIVALENCE G ATES I DENTIFICATION                                                                          -    substitute when proved
+                                                                                                                           -    refine when disproved
+                           w/ PIE                            w/o PIE
+ Circuit
+             Recall      Precision   F1-Score    Recall     Precision F1-Score
+
+
+
+
+                                                                                                                                                                                      Our Model
+D1           98.46%      84.34%      0.9085      70.66%     64.66%     0.6753                                                   SAT-sweeping manager
+D2           99.39%      89.07%      0.9395      87.20%     78.57%     0.8266                                       -   initialize equivalence classes
+D3           97.89%      84.36%      0.9062      79.15%     76.21%     0.7765                                       -   define resources of SAT solver and simulator
+                                                                                                                    -   iterate over nodes in a topological order
+D4           98.90%      97.83%      0.9836      87.91%     59.70%     0.7111
+D5           99.80%      88.49%      0.9381      79.23%     76.73%     0.7796
+D6           98.31%      93.19%      0.9568      87.10%     77.56%     0.8205
+D7           99.15%      97.48%      0.9831      84.62%     64.13%     0.7296                             Simulator                                                SAT solver
+D8           97.14%      97.14%      0.9714      74.29%     83.87%     0.7879              -   disprove candidate equivalence                           -   (dis)prove candidate equivalence
+                                                                                           -   enables fast CEX simulation                              -   generate CEX for simulation
+D9           99.74%      85.16%      0.9188      62.27%     76.27%     0.6856
+D10          98.48%      87.80%      0.9283      87.07%     65.54%     0.7479
+Avg.                                 0.9434                            0.7541                              Fig. 5. The proposed SAT-sweeping ecosystem.
+
+                                                                                         baseline method, resulting in better efficiency for refining candidate
+                                     TABLE IV                                            ECs.
+   P ERFORMANCE C OMPARISON BETWEEN W / MULTI - STAGE AND W / O
+                                                                                            Our model is equipped into ABC [30] as a plug-in and integrated
+     MULTI - STAGE ON L OGIC E QUIVALENCE G ATES I DENTIFICATION
+                                                                                         into the SAT sweeper ‘&fraig’ [14], which is one of the most
+                      w/ multi-stage                      w/o multi-stage                efficient and scalable SAT sweeper publicly available at this time. The
+ Circuit                                                                                 AIGs derived by merging the resulting equivalence nodes are verified
+             Recall    Precision F1-Score        Recall     Precision F1-Score
+D1           98.46%      84.34%      0.9085      79.46%     67.68%     0.7310
+                                                                                         by ‘&cec’ command in ABC to ensure functional correctness. All
+D2           99.39%      89.07%      0.9395      74.39%     63.21%     0.6835            experiments are performed on a 2.40 GHz Intel(R) Xeon(R) Silver
+D3           97.89%      84.36%      0.9062      70.46%     62.78%     0.6640            4210R CPU with 64GB of main memory. A single core and less
+D4           98.90%      97.83%      0.9836      73.63%     72.83%     0.7323            than 1GB was used for any test case considered in this subsection.
+D5           99.80%      88.49%      0.9381      68.02%     77.19%     0.7232            The proposed SAT sweeper (named as Our) is compared against the
+D6           98.31%      93.19%      0.9568      71.46%     86.01%     0.7806
+D7           99.15%      97.48%      0.9831      65.81%     67.46%     0.6662            original engine, &fraig.
+D8           97.14%      97.14%      0.9714      71.43%     86.21%     0.7813               2) Results: We validate the performance of our SAT sweeper
+D9           99.74%      85.16%      0.9188      74.52%     63.17%     0.6838            with 6 industrial circuits. As shown in Table VI, section “Statistics”
+D10          98.48%      87.80%      0.9283      75.10%     64.02%     0.6912
+                                                                                         lists the number of PI and PO (PI/PO), logic levels (Lev) and
+Avg.                                 0.9434                            0.7137            internal AND-nodes in the original AIG (And). To ensure the fairness
+                                                                                         of comparison, the circuits after sweeping should have the same
+                           TABLE V                                                       size. Section “SAT calls” lists the number of satisfiable SAT calls,
+ L OSS C OMPARISON BETWEEN W / MULTI - STAGE AND W / O MULTI - STAGE                     performed by the solver employed in each engine. The data shows
+                                                                                         that our proposed engine decreases the number of satisfiable SAT
+                      w/o multi-stage     w/ multi-stage      Reduction                  calls, that explains why it has better results, since more resource are
+           Lprob      0.0205              0.0207              -0.98%                     used to prove equivalence gates. In addition, section “Total runtime”
+           Lrc        0.1186              0.1115              5.99%                      compares the runtime and section “Red.” shows the runtime reduction
+           Lf unc     0.1224              0.0594              51.47%                     from &fraig to Our.
+                                                                                            The number of “SAT calls” can get an average reduction of 53.37%
+proposed SAT sweeper does not need to validate the equivalence of all                    (95.88% maximum) through the integration of our DeepGate2 model.
+candidate ECs in one pass. Instead, node pairs with higher similarity                    As for “Total runtime”, this experiment shows that the DeepGate2-
+have high priority for SAT solver calls. If the gate pair is formally                    based SAT sweeper outperforms state-of-the-art engines, while reduc-
+proved to be equivalent, these two gate are merged. Otherwise, the                       ing the average runtime by 49.46% (57.77% maximum). Thus, the
+generated counterexample should contain more conflicts than the                          sweeper formally verifies the equivalence of functionally similar gates
+                          TABLE VI                                                   Algorithm 1 Variable Decision Function with DeepGate2
+C OMPARING THE NUMBER OF SAT CALLS AND THE RUNTIME OF THE SAT                        Current variable s just being assigned a value v; Set S containing
+                                     SWEEPERS
+                                                                                     the correlated variables with s;
+                                                                                     Function Sim(si , sj ) to calculate the behaviour similarity of two
+                  Statistic               SAT calls           Total Runtime (s)
+Circuit                                                                              variables;
+          PI/PO     Lev And          &fraig Our Red.         &fraig Our Red.
+                                                                                     δ is the threshold for the joint decision
+C1        128/128   4,372   57,247   13,826   570   95.88%   7.46    3.15   57.77%
+C2        24/25     225     5,416    100      74    26.00%   5.43    3.11   42.73%   Function V (s) to get the assigned value of variable s;
+C3        22/1      29      703      4        1     75.00%   19.07   9.10   52.28%   Function Decision(s, v) to assign the decision value v to the current
+C4        114/1     91      19,354   20       12    40.00%   6.49    4.04   37.75%   decision variable s.
+C5        126/1     83      20,971   6        4     33.33%   0.48    0.21   56.25%
+                                                                                      1: Decision(s, v)
+C6        96/1      79      14,389   10       5     50.00%   0.30    0.15   50.00%
+                                                                                      2: for s′ in S do
+Avg.                                                53.37%                  49.46%    3:    if s′ ̸= s and V (s′ ) = None then
+                                                                                      4:       if Sim(s′ , s) > 1 − δ then
+with the guidance from DeepGate2, thereby reducing the number of                      5:          Decision(s′ , v̄)
+invalid SAT calls and improving efficiency of SAT sweeping. Take                      6:       end if
+C1 as a representative example, the baseline &fraig selects gates in                  7:    end if
+EC for formal verification without considering their behaviour, thus,                 8: end for
+many solver calls return satisfiable results, and few gates can be
+merged. However, with the guidance of DeepGate2, the sweeper can
+                                                                                                                 TABLE VII
+prioritize the selection of gates with similar behavior, resulting in a                   C OMPARING THE RUNTIME BETWEEN BASELINE AND O UR S OLVERS
+significant reduction of 95.88% in SAT calls and 57.77% in runtime.
+                                                                                                          Baseline(s)           Our(s)
+B. Boolean Satisfiability Solving                                                     Instance    Size                                             Reduction
+                                                                                                                        Model   Solver   Overall
+   Boolean satisfiability (SAT) solving is a long-standing and fun-                  I1          17,495   88.01         1.77    30.25    32.02     63.62%
+damental NP-complete problem with applications in many areas,                        I2          21,952   29.36         2.85    6.01     8.86      69.82%
+especially in electronic design automation (EDA) [31]–[33]. The                      I3          23,810   61.24         3.25    32.88    36.13     41.00%
+                                                                                     I4          27,606   158.04        4.36    137.77   142.13    10.07%
+existing SAT solvers are designed to incorporate efficient heuris-                   I5          28,672   89.89         4.78    70.95    75.73     15.75%
+tics [34]–[36] to expedite the solving process. For instance, [34]
+                                                                                     Avg.                                                          40.05%
+proposes to utilize the correlation of logic gate functionality to
+enforce variable decision for solving circuit-based SAT instances.
+Although the solution achieves remarkable speedup over SAT solvers,                  First, our method achieves a substantial reduction in total runtime for
+it still relies on the time-consuming logic simulation to obtain the                 all test cases, with an average runtime reduction of 40.05%. Take I1
+functionality. Based on [34], we demonstrate how the DeepGate2                       as an example, the plain solver requires 88.01s to solve the problem,
+models functional correlation efficiently and accelerates SAT solving.               but by combining with our model, the new solver produces results in
+   1) Experiment Settings: We integrate our DeepGate2 into a mod-                    only 32.02s, reducing runtime by 63.62%. Second, our model only
+ern SAT solver, CaDiCal [15] to solve the instances from logic                       takes a few seconds to obtain embeddings, occupying less than 10%
+equivalence checking (LEC) task. Firstly, we obtain gate-level em-                   of overall runtime on average. It should be noted that our DeepGate2
+beddings of the original circuit and predict the pairwise functional                 is able to infer within polynomial time that is only proportional to
+similarity between these gates. Given the one-to-one mapping [37]                    the size of instance. Third, while the two largest instances I4 and I5
+between circuits and conjunctive normal form (a problem format                       show less reduction than the others, it does not necessarily mean that
+required by SAT solvers), we can easily transfer the gate functional                 our model is unable to generalize to larger instances. As evidenced
+similarity to variable behavioral similarity. If two logic gates have                by the results for I2, an instance with a similar size to I4 and I5
+similar representations (and therefore similar functionality), their                 also demonstrates a significant reduction. The reduction caused by
+corresponding variables should be correlated and grouped together                    our model should be determined by the characteristics of instance.
+during the variable decision process.                                                In summary, our model is effective in speeding up downstream SAT
+   Secondly, we incorporate the learnt knowledge into the SAT solver.                solving.
+As shown in Algorithm 1, when the current variable s is assigned                                               VI. C ONCLUSION
+a value v, we identify all unassigned variables s′ in the set S that
+                                                                                        This paper introduces DeepGate2, a novel functionally-aware
+contains correlated variables with s. As modern SAT solvers reduce
+                                                                                     framework for circuit representation learning. Our approach leverages
+searching space by detecting conflicts as much as possible [38], we
+                                                                                     the pairwise truth table differences of logic gates as a supervi-
+assign the reverse value v̄ to s′ to promptly cause conflict for joint
+                                                                                     sory signal, providing rich functionality supervision and proving
+decision. Besides, the threshold δ in Algorithm 1 is set to 1e − 5.
+                                                                                     scalable for large circuits. Moreover, DeepGate2 differentiates and
+   Thirdly, to evaluate the efficacy of our model in accelerating SAT
+                                                                                     concurrently updates structural and functional embeddings in two
+solving, we compare the aforementioned hybrid solver (labeled as
+                                                                                     dedicated flows, acquiring comprehensive representations through a
+Our) with original CaDiCal [15] (labeled as Baseline) on 5 industrial
+                                                                                     single round of GNN forward message-passing. In comparison to its
+instances. All experiments are conducted with a single 2.40GHz
+                                                                                     predecessor, DeepGate2 demonstrates enhanced performance in logic
+Intel(R) Xeon(R) E5-2640 v4 CPU.
+                                                                                     probability prediction and logic equivalent gate identification, while
+   2) Results: The runtime comparison between Baseline and Our
+                                                                                     simultaneously improving model efficiency tenfold. The applications
+are listed in Table VII. To ensure a fair comparison, we aggregate
+                                                                                     of DeepGate2 onto multiple downstream tasks further demonstrate
+the DeepGate2 model inference time (Model) and SAT solver runtime
+                                                                                     its effectiveness and potential utility in the EDA field.
+(Solver) as the Overall runtime. We have the following observations.
+                               R EFERENCES                                        [18] Z. Wu, Y. Xiong, S. X. Yu, and D. Lin, “Unsupervised feature learning
+                                                                                       via non-parametric instance discrimination,” in Proceedings of the IEEE
+ [1] J. Chen, J. Kuang, G. Zhao, D. J.-H. Huang, and E. F. Young, “Pros:
+                                                                                       conference on computer vision and pattern recognition, 2018, pp. 3733–
+     A plug-in for routability optimization applied in the state-of-the-art
+                                                                                       3742.
+     commercial eda tool using deep learning,” in Proceedings of the 39th
+                                                                                  [19] E. Hoffer and N. Ailon, “Deep metric learning using triplet network,”
+     International Conference on Computer-Aided Design, 2020, pp. 1–8.
+                                                                                       in Similarity-Based Pattern Recognition: Third International Workshop,
+ [2] A. Mirhoseini, A. Goldie, M. Yazgan, J. W. Jiang, E. Songhori, S. Wang,
+                                                                                       SIMBAD 2015, Copenhagen, Denmark, October 12-14, 2015. Proceed-
+     Y.-J. Lee, E. Johnson, O. Pathak, A. Nazi et al., “A graph placement
+                                                                                       ings 3. Springer, 2015, pp. 84–92.
+     methodology for fast chip design,” Nature, vol. 594, no. 7862, pp. 207–
+                                                                                  [20] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez,
+     212, 2021.
+                                                                                       Ł. Kaiser, and I. Polosukhin, “Attention is all you need,” Advances in
+ [3] W. L. Neto, M. Austin, S. Temple, L. Amaru, X. Tang, and P.-E.
+                                                                                       neural information processing systems, vol. 30, 2017.
+     Gaillardon, “Lsoracle: A logic synthesis framework driven by arti-
+                                                                                  [21] Y. Bengio, J. Louradour, R. Collobert, and J. Weston, “Curriculum
+     ficial intelligence,” in 2019 IEEE/ACM International Conference on
+                                                                                       learning,” in Proceedings of the 26th annual international conference
+     Computer-Aided Design (ICCAD). IEEE, 2019, pp. 1–6.
+                                                                                       on machine learning, 2009, pp. 41–48.
+ [4] W. Haaswijk, E. Collins, B. Seguin, M. Soeken, F. Kaplan, S. Süsstrunk,     [22] S. Ruder, “An overview of multi-task learning in deep neural networks,”
+     and G. De Micheli, “Deep learning for logic optimization algorithms,” in          arXiv preprint arXiv:1706.05098, 2017.
+     2018 IEEE International Symposium on Circuits and Systems (ISCAS).           [23] S. Davidson, “Characteristics of the itc’99 benchmark circuits,” in ITSW,
+     IEEE, 2018, pp. 1–4.                                                              1999.
+ [5] Z. Shi, M. Li, S. Khan, L. Wang, N. Wang, Y. Huang, and Q. Xu,               [24] C. Albrecht, “Iwls 2005 benchmarks,” in IWLS, 2005.
+     “Deeptpi: Test point insertion with deep reinforcement learning,” in 2022    [25] L. Amarú, P.-E. Gaillardon, and G. De Micheli, “The epfl combinational
+     IEEE International Test Conference (ITC). IEEE, 2022, pp. 194–203.                benchmark suite,” in IWLS, no. CONF, 2015.
+ [6] J. Huang, H.-L. Zhen, N. Wang, H. Mao, M. Yuan, and Y. Huang,                [26] O. Team, “Opencores,” https://opencores.org/.
+     “Neural fault analysis for sat-based atpg,” in 2022 IEEE International       [27] D. P. Kingma and J. Ba, “Adam: A method for stochastic optimization,”
+     Test Conference (ITC). IEEE, 2022, pp. 36–45.                                     arXiv preprint arXiv:1412.6980, 2014.
+ [7] M. Li, S. Khan, Z. Shi, N. Wang, H. Yu, and Q. Xu, “Deepgate:                [28] A. Kuehlmann, V. Paruthi, F. Krohm, and M. K. Ganai, “Robust boolean
+     Learning neural representations of logic gates,” in Proceedings of the            reasoning for equivalence checking and functional property verification,”
+     59th ACM/IEEE Design Automation Conference, 2022, pp. 667–672.                    IEEE Transactions on Computer-Aided Design of Integrated Circuits and
+ [8] Z. Wang, C. Bai, Z. He, G. Zhang, Q. Xu, T.-Y. Ho, B. Yu, and Y. Huang,           Systems, vol. 21, no. 12, pp. 1377–1394, 2002.
+     “Functionality matters in netlist representation learning,” in Proceedings   [29] A. Mishchenko and R. Brayton, “Integrating an aig package, simulator,
+     of the 59th ACM/IEEE Design Automation Conference, 2022, pp. 61–66.               and sat solver,” in International Workshop on Logic and Synthesis
+ [9] K. Zhu, H. Chen, W. J. Turner, G. F. Kokai, P.-H. Wei, D. Z. Pan,                 (IWLS), 2018, pp. 11–16.
+     and H. Ren, “Tag: Learning circuit spatial embedding from layouts,”          [30] B. L. Synthesis and V. Group, “Abc: A system for sequential synthesis
+     in Proceedings of the 41st IEEE/ACM International Conference on                   and verification.” http://www-cad.eecs.berkeley.edu/ãlanmi/abc, 2023.
+     Computer-Aided Design, 2022, pp. 1–9.                                        [31] E. I. Goldberg, M. R. Prasad, and R. K. Brayton, “Using sat for com-
+[10] Y. Lai, Y. Mu, and P. Luo, “Maskplace: Fast chip placement via rein-              binational equivalence checking,” in Proceedings Design, Automation
+     forced visual representation learning,” arXiv preprint arXiv:2211.13382,          and Test in Europe. Conference and Exhibition 2001. IEEE, 2001, pp.
+     2022.                                                                             114–121.
+[11] A. Fayyazi, S. Shababi, P. Nuzzo, S. Nazarian, and M. Pedram,                [32] K. L. McMillan, “Interpolation and sat-based model checking,” in
+     “Deep learning-based circuit recognition using sparse mapping and                 Computer Aided Verification: 15th International Conference, CAV 2003,
+     level-dependent decaying sum circuit representations,” in 2019 Design,            Boulder, CO, USA, July 8-12, 2003. Proceedings 15. Springer, 2003,
+     Automation & Test in Europe Conference & Exhibition (DATE). IEEE,                 pp. 1–13.
+     2019, pp. 638–641.                                                           [33] K. Yang, K.-T. Cheng, and L.-C. Wang, “Trangen: A sat-based atpg
+[12] Z. He, Z. Wang, C. Bail, H. Yang, and B. Yu, “Graph learning-                     for path-oriented transition faults,” in ASP-DAC 2004: Asia and South
+     based arithmetic block identification,” in 2021 IEEE/ACM International            Pacific Design Automation Conference 2004 (IEEE Cat. No. 04EX753).
+     Conference On Computer Aided Design (ICCAD). IEEE, 2021, pp.                      IEEE, 2004, pp. 92–97.
+     1–8.                                                                         [34] F. Lu, L.-C. Wang, K.-T. Cheng, and R.-Y. Huang, “A circuit sat solver
+[13] M. Li, Z. Shi, Q. Lai, S. Khan, and Q. Xu, “Deepsat: An eda-driven                with signal correlation guided learning,” in 2003 Design, Automation and
+     learning framework for sat,” arXiv preprint arXiv:2205.13745, 2022.               Test in Europe Conference and Exhibition. IEEE, 2003, pp. 892–897.
+[14] A. Mishchenko, S. Chatterjee, R. Jiang, and R. K. Brayton, “Fraigs:          [35] G. Audemard and L. Simon, “Glucose: a solver that predicts learnt
+     A unifying representation for logic synthesis and verification,” ERL              clauses quality,” SAT Competition, pp. 7–8, 2009.
+     Technical Report, Tech. Rep., 2005.                                          [36] ——, “On the glucose sat solver,” International Journal on Artificial
+[15] S. D. QUEUE, “Cadical at the sat race 2019,” SAT RACE 2019, p. 8,                 Intelligence Tools, vol. 27, no. 01, p. 1840001, 2018.
+     2019.                                                                        [37] G. S. Tseitin, “On the complexity of derivation in propositional calcu-
+[16] T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal,               lus,” Automation of reasoning: 2: Classical papers on computational
+     A. Neelakantan, P. Shyam, G. Sastry, A. Askell et al., “Language mod-             logic 1967–1970, pp. 466–483, 1983.
+     els are few-shot learners,” Advances in neural information processing        [38] J. Marques-Silva, I. Lynce, and S. Malik, “Conflict-driven clause learn-
+     systems, vol. 33, pp. 1877–1901, 2020.                                            ing sat solvers,” in Handbook of satisfiability. IOS press, 2021, pp.
+[17] J. Devlin, M.-W. Chang, K. Lee, and K. Toutanova, “Bert: Pre-training             133–182.
+     of deep bidirectional transformers for language understanding,” arXiv
+     preprint arXiv:1810.04805, 2018.
+

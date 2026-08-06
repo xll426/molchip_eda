@@ -1,0 +1,525 @@
+                                                    VPR-Evolve: Multi-Agent-Driven Algorithm Evolution
+                                                                 for FPGA Place and Route
+                                                                      Qihang Wu, Taizun Jafri, Aman Arora, and Vidya A. Chhabria
+                                                                                                   Arizona State University
+                                                                                                        United States
+                                         Abstract                                                                     cannot introduce new mechanisms or modify the source code that
+                                         CAD tools typically apply the same fixed, hand-designed algorithms           defines them, so the reachable space is bounded by the structure of
+                                         across circuits with widely different structural and timing character-       the fixed algorithm.
+                                         istics. A common way to specialize these one-size-fits-all flows to a            Tuning is also evaluation-hungry: each candidate configuration
+                                         target design is to tune the CAD tool’s hyperparameters. However,            requires a complete FPGA P&R run whose cost grows with circuit
+                                         hyperparameter tuning can only select among behaviors already im-            size, and the many interacting continuous and categorical param-
+                                         plemented by the fixed algorithm, limiting the achievable quality of         eters that FPGA CAD tools expose create a space that may need
+                                         results while requiring many expensive place-and-route evaluations.          thousands of trials. Tuning therefore specializes the settings of
+                                         We present VPR-Evolve, a multi-agent framework that specializes              a fixed tool without jointly exploring the target design and the
+                                         Versatile Place and Route (VPR), the open-source FPGA pack-place-            algorithms used to implement it.
+                                         and-route engine in the Verilog-to-Routing (VTR) flow, by evolving           Key insight. FPGAs derive much of their value from their ability to
+                                                                                                                      be reconfigured for different applications. We argue that the CAD
+arXiv:2607.24998v1 [cs.AR] 27 Jul 2026
+
+
+
+
+                                         its source code for each design. VPR-Evolve uses LLM agents to
+                                         propose, implement, and evaluate code-level modifications, while             algorithms used to configure them should also be reconfigurable,
+                                         a shared memory records prior outcomes and guides subsequent                 i.e., the algorithms themselves can be rewritten and specialized
+                                         evolution. Every candidate is evaluated through a complete VPR               to the target design. In other words, we seek to reconfigure the
+                                         build and run, directly optimizing a composite score measured as a           algorithms that configure the FPGA. This perspective expands the
+                                         weighted function of critical-path delay (CPD), routed wirelength            search from choosing hyperparameters for a fixed algorithm to
+                                         (WL), and tool runtime (RT). Across five VTR-9 benchmark circuits,           exploring code-level algorithm variants. Recent advances in large
+                                         VPR-Evolve improves the composite score by up to 2.7% over stock             language models (LLMs) have made such algorithm evolution pos-
+                                         VPR in VTR-9. Relative to stock VPR, it reduces CPD by up to 9.8%,           sible. LLMs can reason about source code, propose and implement
+                                         routed WL by up to 18.1%, and tool RT by up to 79.3%. VPR-Evolve             algorithmic changes, and revise their proposals from measured
+                                         reduces CPD by up to 6.0%, routed WL by up to 2.2%, and tool RT              outcomes. AlphaEvolve has demonstrated LLM-driven algorithm
+                                         by up to 7.8% compared with a hyperparameter-tuning baseline.                evolution in other domains [13], and [7] introduced design-adaptive
+                                                                                                                      algorithm evolution for ASIC global routing. These works motivate
+                                         1   Introduction                                                             a broader vision of design–tool co-exploration, in which both the
+                                         The place-and-route (P&R) stage of an FPGA CAD flow strongly                 design and the algorithm are variables in the search.
+                                         influences the quality of results (QoR) of a design, including its           Our approach. We present VPR-Evolve, a multi-agent framework
+                                         critical-path delay (CPD), routed wirelength (WL), and tool runtime          that brings design-adaptive algorithm evolution and design–tool
+                                         (RT). FPGA designs, however, differ substantially in their size, con-        co-exploration [7] to FPGA CAD. VPR-Evolve reconfigures VPR’s
+                                         nectivity, congestion, and timing characteristics, while CAD tools           packing, placement, and routing source code for each target design.
+                                         typically apply the same hand-designed algorithms across all de-             Hyperparameter tuning is retained as an additional stage within the
+                                         signs. These algorithms are therefore broadly effective compromises          same loop. VPR-Evolve decomposes the evolution process across
+                                         rather than specializations to an individual circuit. The open-source        multiple LLM agents that plan, implement, and review candidate
+                                         Verilog-to-Routing 9 (VTR 9) flow [5] and its Versatile Place and            changes. A Planner proposes candidate algorithmic modifications,
+                                         Route (VPR) engine [4] provide a representative example. VPR                 a Coder implements and benchmarks them, and a Reviewer de-
+                                         transforms a synthesized FPGA netlist into a placed-and-routed im-           cides whether each modification should be retained. An Inspiration
+                                         plementation through packing, placement, and routing. It exposes             Collector introduces new ideas when the search stops improving.
+                                         algorithmic choices and hyperparameters such as cost-function                These agents share a persistent memory of successful and unsuc-
+                                         weights, search schedules, and move-selection options, but these             cessful ideas, previously attempted modifications, measured QoR
+                                         remain coarse-grained: the underlying packing, placement, and                outcomes, and relevant algorithmic inspirations, which steers later
+                                         routing implementations are fixed and applied uniformly across de-           evolution toward promising directions and away from repeated
+                                         signs. Consequently, a single algorithmic structure may not provide          unproductive ideas.
+                                         the best tradeoff among CPD, WL, and RT for every circuit.                       The search proceeds through dedicated packing, placement, rout-
+                                         The limits of hyperparameter tuning. A common approach                       ing, cross-stage, and hyperparameter-tuning stages. This staged
+                                         for specializing an FPGA CAD flow to a target design is to tune              organization lets VPR-Evolve reason about individual components
+                                         the tool’s hyperparameters. Frameworks such as AutoTuner [8]                 of the flow and about interactions across them. Every candidate
+                                         search the exposed configuration space of an already implemented             is evaluated by rebuilding VPR and performing complete runs on
+                                         algorithm for settings that improve QoR on a particular circuit. Such        the target design. The objective is a composite score defined as a
+                                         a search selects among behaviors the algorithm already supports; it          weighted function of CPD, routed WL, and VPR RT. The output is
+                                                                                                                  1
+ASP-DAC’27, 2027, Jan                                                                                  Qihang Wu, Taizun Jafri, Aman Arora, and Vidya A. Chhabria
+
+
+not only a design-specific configuration but a reconfigured VPR                                                                                                             Yes
+implementation, given as a reviewable source-code patch. VPR-                                      Algorithmic Exploration                   Hyperparameter
+                                                                                                                                                 Tuning
+Evolve also preserves an annotated evolution trail of which code                                                                                                        Improvement?
+                                                                                     Stage 1        Stage 2      Stage 3       Stage 4          Stage 5
+modifications were attempted and how they affected QoR. We make                      Packing       Placement     Routing     Cross-Stage        Tuning
+
+the following contributions:                                                                                                                                                No
+• To the best of our knowledge, this is the first work to apply LLM-
+                                                                                 Plan 1   Plan 2    Plan 3     Plan 4   Plan 5                  Inspiration                  Hill-
+  driven evolution to FPGA physical design CAD. VPR-Evolve                                                                          Memory       Collector
+                                                                                                                                                              Trigger
+                                                                                                                                                                          Climbing
+  reconfigures the packing, placement, and routing source code.                                           Git Code
+                                                                                Git Decision              Commit
+• We introduce a staged multi-agent framework for algorithm evo-                  Commit
+                                                                                             Better
+                                                                                                                                                                 Revert to the relative
+                                                                                                Score?                                                           best log commit made
+  lution. Planner, Coder, Reviewer, and Inspiration Collector agents                                                     Reviewer     Coder        Planner         during last stage
+  cooperate through a shared persistent memory and use measured                                      Worse
+                                                                                                         Git Decision
+  VPR outcomes to guide algorithm evolution.                                                                Revert
+
+• We evaluate VPR-Evolve on five VTR 9 [5] benchmark circuits
+  ranging from 37K to 167K primitives. VPR-Evolve improves the                              Figure 1: Overview of VPR-Evolve Loop.
+  composite score, measured as a weighted function of CPD, routed
+                                                                            and instantiate it with Optuna’s TPE optimizer. Our primary com-
+  WL, and tool RT, by up to 2.7% over stock VPR. It reduces CPD by
+                                                                            parison is between tuning a fixed implementation and modifying
+  up to 9.8%, routed WL by up to 18.1%, and tool RT by up to 79.3%.
+                                                                            its source code, so the specific tuning strategy is secondary to the
+  It reduces CPD by up to 6.0%, routed WL by up to 2.2%, and tool
+                                                                            search space it can access. VPR-Evolve expands this space by evolv-
+  RT by up to 7.8% compared with AutoTuner hyperparameter-
+                                                                            ing the algorithms themselves, and tuning remains complementary:
+  tuning baseline with a smaller runtime budget.
+                                                                            it can be applied afterward to optimize the exposed parameters of
+• We analyze the stage-wise sources of improvement, consistency
+                                                                            the evolved implementation.
+  across random seeds, cross-design transferability, and the re-
+                                                                            Algorithm evolution for EDA. A recent line of work removes the
+  viewability of the source-code modifications.
+                                                                            fixed-implementation constraint by letting LLM agents modify tool
+VPR-Evolve is fully open-sourced and can be accessed through our
+                                                                            source code directly. SATLUTION [15] scales LLM-based code evo-
+GitHub repository [9].
+                                                                            lution to full repository scope, evolving SAT solver codebases under
+                                                                            strict correctness guarantees while also evolving its own evolution
+                                                                            policies. Within EDA, AuDoPEDA [6] deploys an autonomous cod-
+2    Background and Related Work                                            ing agent that reads the OpenROAD codebase, proposes research
+                                                                            directions, and submits executable diffs in a closed loop driven by
+FPGA place and route in VPR. VPR [4], the pack, place, and
+                                                                            QoR, and ABC/Yosys Evolve [16] brings the approach to logic syn-
+route engine of VTR 9 [5], transforms a synthesized netlist into
+                                                                            thesis, with multiple LLM agents iteratively rewriting the integrated
+a placed-and-routed implementation on a target FPGA architec-
+                                                                            ABC codebase. GR-Evolve [7] extends this paradigm to EDA by
+ture. Packing is performed by AAPack [11], which greedily groups
+                                                                            applying LLM-driven algorithm evolution to global routing in the
+LUTs, flip-flops, memories, and other primitives into legal clustered
+                                                                            OpenROAD flow. VPR-Evolve introduces this evolution to FPGA
+logic blocks. Placement uses simulated annealing with a cost bal-
+                                                                            CAD, where the flow spans multiple interacting stages (packing,
+ancing estimated wirelength and delay. VTR 9 additionally uses a
+                                                                            placement, and routing) and every candidate must be rebuilt and
+reinforcement-learning agent to select among available placement
+                                                                            evaluated through the complete flow. It evolves VPR for each target
+move types and provides an experimental analytical placement flow
+                                                                            design and folds hyperparameter tuning into the same loop as an
+that jointly considers primitive-level packing and placement. Rout-
+                                                                            additional stage.
+ing uses a timing-driven negotiated-congestion algorithm based
+on PathFinder [12] which routes nets using directed shortest-path
+search while balancing congestion and path delay. Although VPR ex-          3      VPR-Evolve Overview
+poses algorithmic choices and hyperparameters within these stages,          VPR-Evolve specializes VPR to a target FPGA design through a
+their underlying implementations remain fixed once selected and             closed loop of proposing, implementing, and evaluating source-
+are applied uniformly across designs. VPR-Evolve instead modifies           code modifications. As shown in Figure 1, the search begins from
+these implementations per design, letting the resulting flow com-           stock VPR and traverses five stages in each iteration loop: packing,
+bine mechanisms drawn from multiple approaches in the FPGA                  placement, routing, cross-stage evolution, and hyperparameter tun-
+CAD literature rather than relying on one predefined algorithm.             ing. Each candidate is evaluated using complete VPR runs on the
+Hyperparameter tuning for CAD. A common approach for                        target design and scored using CPD, WL, and tool runtime.
+adapting a fixed EDA flow to a target design is to tune the tool’s             A Planner agent proposes code modifications, a Coder agent im-
+exposed hyperparameters. Prior methods have used Bayesian op-               plements and evaluates them, and a Reviewer agent records whether
+timization [2, 8], reinforcement learning [1], and parallel multi-          each candidate is retained or reverted. The agents share a persistent
+armed-bandit search, as in DATuner [14], to identify parameter              memory of prior ideas and measured outcomes. When progress
+configurations that improve CPD. These methods differ in how                stalls, an Inspiration Collector adds new algorithmic ideas and the
+they explore the parameter space, but all remain constrained to             search may restart from a promising reverted candidate. The fi-
+the behaviors exposed by an existing CAD implementation. We                 nal output is the best design-specialized VPR implementation, its
+use AutoTuner as a representative hyperparameter-tuning baseline            hyperparameter configuration, and an annotated git history.
+                                                                        2
+VPR-Evolve: Multi-Agent-Driven Algorithm Evolution
+for FPGA Place and Route                                                                                                          ASP-DAC’27, 2027, Jan
+
+
+4     VPR-Evolve Framework Details                                           Algorithm 1 VPR-Evolve evolution loop.
+Algorithm 1 formalizes the complete evolution process. The search            Require: VPR codebase 𝑉 𝑃𝑅, memory M, stages 𝑆                          =
+starts from stock VPR and traverses the ordered stage sequence                   ⟨Pack, Place, Route, CrossStage, Tune⟩
+𝑆 = ⟨Pack, Place, Route, CrossStage, Tune⟩. For each stage, the              Require: plans per stage 𝑁 , seed counts 𝐵 and 𝐶, budgets 𝐼 max , 𝐸 max ,
+Planner generates up to 𝑁 modification plans, and the Coder eval-                𝑃 escape , and 𝑇max
+                                                                              1: 𝑓 𝑙𝑜𝑤 ← ComparePlacementFlows( {SA, AP}, 𝐶 )
+uates each plan using 𝐵 in-loop seeds. Before evolution begins,
+                                                                              2: 𝑥 ← 𝑉 𝑃𝑅; 𝑥 ∗ ← 𝑉 𝑃𝑅 {current and best implementations}
+VPR-Evolve compares the simulated-annealing (SA) and analytical-              3: 𝑖𝑡𝑟 ← 0; 𝑝𝑙𝑎𝑡𝑒𝑎𝑢 ← 0; 𝑒𝑠𝑐𝑎𝑝𝑒𝑠 ← 0
+placement (AP) flows using 𝐶 seeds and selects the better flow for            4: 𝑟 ∗ ← ∅ {best valid candidate rejected during plateau}
+the placement stage. The search is bounded by an iteration budget             5: while 𝑖𝑡𝑟 < 𝐼 max and 𝑒𝑠𝑐𝑎𝑝𝑒𝑠 < 𝐸 max and Elapsed() < 𝑇max and
+𝐼 max , wall-time budget 𝑇max , plateau-escape threshold 𝑃escape , and           TokenBudgetAvailable( ) do
+maximum number of plateau escapes 𝐸 max . LLM usage is addition-              6:     𝑘𝑒𝑝𝑡 ← 0
+ally constrained by hourly and weekly token budgets. Reaching                 7:     for each 𝑠 ∈ 𝑆 do
+the hourly limit pauses execution until the window resets, whereas            8:        WaitIfHourlyLimitReached( )
+reaching the weekly limit terminates the search. The variable 𝑥 de-           9:        𝑃 ← Planner(𝑠, M, 𝑥, 𝑁 )
+notes the current search state from which candidates are generated,          10:        for each 𝑝 ∈ 𝑃 do
+                                                                             11:            𝑐 ← Coder(𝑝, 𝑠, 𝑓 𝑙𝑜𝑤, 𝑥, 𝐵)
+while 𝑥 ∗ denotes the best implementation encountered.
+                                                                             12:             if Valid(𝑐 ) and Score(𝑐 ) < Score(𝑥 ) then
+                                                                             13:                𝑥 ← Keep(𝑐 ); 𝑘𝑒𝑝𝑡 ← 𝑘𝑒𝑝𝑡 + 1
+4.1     Multi-agent Architecture                                             14:                if Score(𝑥 ) < Score(𝑥 ∗ ) then
+VPR-Evolve separates proposal, implementation, and evaluation                15:                   𝑥∗ ← 𝑥
+across three primary LLM agents: the Planner, Coder, and Reviewer.           16:                end if
+Each agent receives only the context and permissions its role re-            17:             else
+                                                                             18:                if Valid(𝑐 ) then
+quires, which limits per-agent context and prevents any agent from
+                                                                             19:                   𝑟 ∗ ← BetterOf(𝑟 ∗ , 𝑐 )
+judging its own modifications. A fourth agent, the Inspiration Col-          20:                end if
+lector, is invoked only during plateau recovery.                             21:                RevertAndRecord(𝑐 )
+Planner. The Planner proposes code-level modifications for the               22:             end if
+current evolution stage. It receives the stage-relevant VPR source,          23:        end for
+the current search state 𝑥, the stage-specific idea menu, prior out-         24:     end for
+comes stored in the shared memory M, and an algorithmic source               25:     if 𝑘𝑒𝑝𝑡 > 0 then
+from the inspiration library. For each plan, it identifies the mech-         26:        𝑝𝑙𝑎𝑡𝑒𝑎𝑢 ← 0
+anism to modify, the expected QoR impact, the relevant source-               27:        𝑟 ∗ ← ∅ {start a new plateau period}
+code region, implementation feasibility, and potential risks. It also        28:     else
+                                                                             29:        𝑝𝑙𝑎𝑡𝑒𝑎𝑢 ← 𝑝𝑙𝑎𝑡𝑒𝑎𝑢 + 1
+checks whether the same or a closely related idea has already been
+                                                                             30:        if 𝑝𝑙𝑎𝑡𝑒𝑎𝑢 ≥ 𝑃 escape and 𝑟 ∗ ≠ ∅ then
+attempted, and produces at most 𝑁 plans per stage.                           31:             𝑥 ← PlateauEscape(𝑟 ∗ ) {controlled non-improving move}
+Coder. The Coder receives a single plan and implements it within             32:             InspirationCollector( M )
+an isolated VPR worktree. It edits the source code permitted by the          33:             𝑝𝑙𝑎𝑡𝑒𝑎𝑢 ← 0; 𝑒𝑠𝑐𝑎𝑝𝑒𝑠 ← 𝑒𝑠𝑐𝑎𝑝𝑒𝑠 + 1; 𝑟 ∗ ← ∅
+current stage, rebuilds VPR, and performs complete runs using the            34:        end if
+𝐵 in-loop seeds. During the placement stage, the Coder uses the              35:     end if
+placement flow selected by ComparePlacementFlows. It returns                 36:     𝑖𝑡𝑟 ← 𝑖𝑡𝑟 + 1
+the source-code diff, build and execution status, composite score,           37: end while
+and the corresponding CPD, routed WL, and RT.                                38: return 𝑥 ∗ and the annotated git history
+Reviewer. The Reviewer receives the candidate diff, build and exe-
+cution status, measured QoR, and the current search state. A candi-
+date that fails to compile or complete P&R is labeled BUILD_FAILED.          implementation and 𝑆𝑚 denote the value measured for a candi-
+A valid candidate is labeled KEPT when it improves the composite             date implementation. The relative improvement, expressed in per-
+score of the current state; otherwise, it is labeled REVERTED.                                             𝑆 −𝑆
+                                                                             cent, is imp(𝑆𝑏 , 𝑆𝑚 ) = 100 · 𝑏 𝑆 𝑚 . The composite score is Score =
+                                                                                                               𝑏
+Inspiration Collector. It is activated only when the search invokes                                                    
+                                                                             𝑆 ref − 𝛼 impCPD + 𝛽 impWL + 𝛾 impRT . The weights 𝛼, 𝛽, and 𝛾
+plateau recovery. It searches relevant FPGA CAD literature and               control the relative importance of CPD, WL, and RT, respectively,
+open-source reference implementations, summarizes potentially                and satisfy 𝛼 + 𝛽 + 𝛾 = 1. We include runtime in the score to ensure
+useful mechanisms, and appends new ideas to the inspiration library          that CPD and WL are not improved at the cost of runtime increases.
+and stage-specific idea menus. It may update the shared memory,              The baseline values 𝑆𝑏 are measured once per circuit from stock
+but it cannot modify source code or make acceptance decisions.               VPR at search setup and remain fixed for the rest of the run; the
+                                                                             recorded per-circuit reference values are included in the released
+4.2     Cost Function Scoring                                                repository. The candidate measurements and selected weights are
+Every candidate is judged by a score computed from a weighted                defined in Section 5. The fixed VPR implementation has zero rel-
+cost function of CPD, WL, and VPR runtime. For each QoR met-                 ative improvement for all three metrics and therefore receives a
+ric, let 𝑆𝑏 denote the baseline value obtained from the fixed VPR            composite score of exactly 𝑆 ref .
+                                                                         3
+ASP-DAC’27, 2027, Jan                                                                           Qihang Wu, Taizun Jafri, Aman Arora, and Vidya A. Chhabria
+
+
+4.3     Staged Algorithm Evolution
+Each iteration traverses five stages in a fixed order. Stage S1 evolves       Table 1: Five VTR 9 benchmark circuits used for evaluation.
+the packing implementation, S2 evolves placement, and S3 evolves
+                                                                                     Circuit   LUTs       FFs    Primitives      Layout       𝑊
+routing. Changes within these stages are restricted to the source
+code associated with the corresponding VPR component. Stage S4                       LU8       24,632    6,224       36,833     68 × 68      108
+performs cross-stage evolution, during which a plan may modify                       bgm       30,231    5,105       37,617     76 × 76       88
+                                                                                     sv2       25,552   15,585       53,686     96 × 96      116
+any combination of packing, placement, and routing to capture
+                                                                                     LU32      84,884   19,668      123,305    123 × 123     148
+interactions across stage boundaries. S4 also includes plans that
+                                                                                     mcml      90,208   51,529      167,249    117 × 117     164
+port a published algorithm from the inspiration library into VPR.
+Stage S5 tunes the exposed hyperparameters of the implementation
+produced by the preceding algorithmic stages. For the placement               the iteration count reaches 𝐼 max , the number of plateau escapes
+stage, evolution is performed only on the placement flow selected             reaches 𝐸 max , the elapsed wall time reaches 𝑇max , or the weekly
+before the main loop. Within each stage, plans are evaluated se-              token budget is exhausted. The hourly token limit is treated as a
+quentially. A valid candidate replaces the current search state 𝑥             rate limit: execution pauses until the hourly window resets and
+only when it achieves a lower composite score. Consequently, an               then resumes without advancing the iteration counter. At termina-
+accepted change becomes the starting point for all subsequent plans.          tion, VPR-Evolve returns the best-so-far implementation 𝑥 ∗ and its
+Rejected candidates are restored, while candidates that fail to build         annotated evolution history.
+or complete P&R are marked as invalid. The best-so-far implemen-
+tation 𝑥 ∗ is maintained separately from the current search state.
+                                                                              5   Experimental Setup
+Whenever an accepted candidate improves upon 𝑥 ∗ , it becomes the
+new best-so-far implementation. Each evaluated plan is recorded               Benchmarks. We evaluate on five large benchmark circuits from
+in an annotated git history together with its source-code diff, mea-          the VTR 9 benchmark suite [5] (Table 1). VPR-Evolve shines on
+sured QoR, and outcome: KEPT, REVERTED, or BUILD_FAILED. This                 larger benchmarks, where hyperparameter tuning struggles; on
+history provides the evolution trail analyzed in Section 7.                   small designs the scope for improvement is narrow and tuning can
+                                                                              yield similar benefits.
+4.4     Shared Memory                                                         VPR and VTR settings. We use VPR’s flagship architecture
+                                                                              k6_frac_N10_frac_chain_mem32K_40nm with a fixed layout and
+VPR-Evolve maintains a persistent shared memory M across agents,              a fixed channel width, which are determined once per circuit from
+stages, and iterations. Its long-term portion contains the inspiration        VPR’s auto minimum layout and channel width searching: the lay-
+library, summaries of relevant FPGA CAD literature and open-                  out dimension is 1.2 ×𝑑 min for the minimum auto-layout dimension
+source reference implementations, stage-specific idea menus, and              𝑑 min , and the routing channel width is 1.2 × 𝑊min rounded up to
+the annotated history of previously evaluated plans.                          the next even value, since channel width only takes even numbers.
+   Its short-term portion records the current search state and score,         This results in approx. 80% resource usage, ensuring a challenging
+the best-so-far score and CPD, recently evaluated plans and their             problem for the CAD tool and mirroring common industrial FPGA
+outcomes, and the idea tags already attempted during the current              deployment scenarios. Every experiment runs on this same fixed
+iteration. The Planner uses this information to generate proposals            layout, so no gains are from device sizing.
+that are relevant to the current search state while avoiding repeated         Hardware evaluation platform. Our experiments are performed
+exploration of previously unsuccessful ideas.                                 on a datacenter server with a 64-core CPU and 256 GB of RAM.
+                                                                              LLM configuration. All agents run on Anthropic Claude mod-
+4.5     Plateau Recovery and Termination                                      els through the Claude Code agent harness. The Planner runs on
+An iteration in which no candidate is retained is classified as a             Claude Opus 4.7 with a 1M-token context window, since plan gen-
+plateau iteration. The counter 𝑝 records the number of consecutive            eration is the one judgment-heavy call per stage; the Coder, the
+plateau iterations and is reset whenever at least one candidate               Reviewer, and the Inspiration Collector run on Claude Sonnet 4.6.
+is accepted. During this period, VPR-Evolve tracks the best valid             Baselines. We compare against two baselines. The first is default
+reverted candidate 𝑟 ∗ encountered since the last accepted iteration          stock VTR 9 pinned commit bd5434a94, so all evolved algorithms
+or plateau escape. When 𝑝 reaches the plateau-escape threshold                and tuned configurations are measured on an identical code and
+𝑃escape , VPR-Evolve performs a controlled non-monotonic move.                baseline. The second baseline is the AutoTuner hyperparameter-
+The candidate 𝑟 ∗ becomes the new current search state 𝑥, even                tuning framework [8]. We run AutoTuner, driven by Ray Tune [10],
+though it did not improve upon the previous state. This move                  with Optuna’s Tree-structured Parzen Estimator (TPE) sampler [2,
+allows subsequent plans to explore from a different implementation            3], a Bayesian-family sequential model-based optimizer. Both base-
+without replacing the best-so-far solution 𝑥 ∗ .                              lines are evaluated with 100 seeds at the end of tuning or evolution.
+   The Inspiration Collector is invoked during the same recovery              Each iteration during training and evolution uses 𝐵 = 5 seeds for
+operation. It gathers additional mechanisms from FPGA CAD litera-             QoR. All composite scores, both in-loop and in Section 6, are com-
+ture and reference implementations and appends them to the shared             puted against the same fixed per-circuit stock baseline recorded
+memory. The plateau counter is then reset, the escape counter is              at search setup. Reported scores are means of the per-seed scores,
+incremented, and the next iteration proceeds from the recovered               while Table 3 reports geometric means of CPD, WL, and RT. The
+state using the refreshed idea pool. The search terminates when               parameters used in VPR-Evolve are in Table 2.
+                                                                          4
+       VPR-Evolve: Multi-Agent-Driven Algorithm Evolution
+       for FPGA Place and Route                                                                                                                                                                   ASP-DAC’27, 2027, Jan
+
+
+
+
+                                        Table 2: VPR-Evolve parameters.                                  Table 3: Per-circuit CPD, WL, and tool runtime, reported as
+                     Parameter           Definition                                        Value
+                                                                                                         geometric means across 100 evaluation seeds. The default
+                                                                                                         RT column is the fixed per-circuit stock baseline.
+                   𝑁                     Maximum plans proposed per stage                  5
+                   𝐵                     In-loop seeds used to evaluate each candidate     5                              Default VTR-9 VPR                                    VPR-Evolve                    AutoTuner
+                   𝐶                     Seeds used to compare SA and AP placement         100                         CPD                           RT      Placer   CPD                   RT        CPD                 RT
+                   𝐼 max                 Maximum number of evolution iterations            5                 Circuit   (ns)                WL        (s)     Winner   (ns)         WL       (s)       (ns)      WL        (s)
+                   𝑃 escape              Plateau iterations before recovery                1                 LU8       73.55         299,621        101        SA     73.24      306,777    83      74.48      301,392     90
+                   𝐸 max                 Maximum number of plateau escapes                 2                 bgm       20.20          358,086       106        SA     19.96      355,893    103     21.13     328,997     110
+                   𝑇max                  Wall-time budget per circuit                      120 hrs           sv2       14.47          372,893        98        AP     13.05      305,466     80     13.34     301,609      69
+                   𝑇 𝑜𝑘𝑒𝑛 hourly         Hourly token limit that pauses the search         60M               LU32      75.66         1,219,834      521        AP     75.03     1,125,196   439     75.49     1,150,584   394
+                   𝑇 𝑜𝑘𝑒𝑛 weekly         Weekly token budget that terminates the search    600M              mcml      48.58          910,450      2,175†      AP     46.81      834,429    451     49.78      841,805    461
+
+                    𝛼                    CPD weight in the composite score                 0.5           † Dominated by timed-out runs: on most seeds stock VPR fails to route mcml at our
+                    𝛽                    Wirelength weight in the composite score          0.2           fixed layout and channel width and stops at the 3000 s timeout.
+                    𝛾                    Runtime weight in the composite score             0.3
+                    𝑆 ref                Reference score assigned to fixed VPR             1000
+                                                                                                                                          103
+
+
+
+
+                                                                                                                                                                                   728.3M
+                                                                                                                                                                      500.4M
+                                     LU8                          bgm                         sv2
+
+
+
+
+                                                                                                                                                            385.7M
+                                                                                                                                                468.1M
+                                                                                                                         Wall-clock (h)
+
+
+
+
+                                                                                                                                                                                             338.8M
+                                                   1004                             1000                                                  102
+                          1000
+                                                   1002
+                              998
+                                                                                     995                                                  101
+                                                   1000                              990
+                              996                                                                                                         100
+QoR Score (Lower is Better)
+
+
+
+
+                                                      998
+                                                                                     985                                                          LU8         bgm sv2               LU32 mcml
+                              994                     996
+                                                                                                                                                            VPR-Evolve              AutoTuner
+                                                  LU32                              mcml                 Figure 3: Total tuning wall-clock of VPR-Evolve. Blue label
+                                    1000.0                        1000                                   above each VPR-Evolve bar is its total LLM token count used.
+                                     997.5                         990                                   and 2.2% on mcml. On sv2 and LU32 it accepts a higher RT (15.9%
+                                     995.0                                                               and 11.4%, respectively) in exchange for lower CPD, and on both
+                                                                   980                                   circuits the composite score still favors VPR-Evolve. Compared
+                                     992.5
+                                                                   970                                   with default VTR 9, VPR-Evolve reduces routed WL by up to 18.1%
+                                              VPR-Evolve                 AutoTuner                       and per-seed VPR RT by up to 79.3%. These results show that
+                                                                                                         VPR-Evolve reaches QoR tradeoffs that are not obtained by tuning
+       Figure 2: Composite score over the 100 evaluation seeds, one                                      the exposed parameters of the fixed algorithms in VPR.
+       panel per circuit (1000 = default VTR 9 reference).                                               Parameter tuning and evolution runtime. Figure 3 reports the
+       6 VPR-Evolve Evaluation                                                                           end-to-end tuning wall-clock required to produce the final evolved
+                                                                                                         implementation and the 3000-iteration AutoTuner result. Unlike
+       6.1 QoR Against AutoTuner and VTR 9                                                               the per-seed VPR RT in Table 3, this metric captures the total cost
+      We give AutoTuner a generous budget of up to 3,000 iterations per                                  of overall flow. VPR-Evolve requires less tuning wall-clock than
+      circuit, which costs more tuning wall-clock than VPR-Evolve on                                     AutoTuner on every circuit while achieving better composite QoR
+      every circuit.                                                                                     (Table 3). This advantage primarily results from search efficiency.
+      Composite QoR. Figure 2 shows the composite-score distributions                                    For example, on mcml, VPR-Evolve evaluates only 25 code modifica-
+      over the 100 independent evaluation seeds. Each box spans the                                      tions, compared with 2,645 AutoTuner configurations. Across five
+      25th–75th percentiles, the center line denotes the median, and                                     in-loop seeds, this corresponds to 125 versus 13,225 VPR runs, or ap-
+      the whiskers denote the 5th–95th percentiles. The dashed line at                                   proximately 106× fewer evaluations. Although algorithm evolution
+      1000 represents the default VTR-9 reference; lower values indicate                                 incurs a substantial one-time search cost, the resulting implementa-
+      better QoR. VPR-Evolve’s score distribution lies below AutoTuner                                   tion can be reused across many subsequent VPR runs. Conceptually,
+      and the default VTR-9 reference on every circuit. The boxes and                                    VPR-Evolve produces a new release of the place-and-route tool spe-
+      whiskers further show that these improvements are consistent                                       cialized to the target design. Unlike a conventional release, which
+      across independent seeds. The coefficient of variation (CoV) of                                    provides one implementation for many designs, this evolved re-
+      VPR-Evolve’s composite score is 0.06%, 0.14%, 0.20%, 0.05%, and                                    lease contains algorithms customized to a single design. The tuning
+      0.12% on LU8, bgm, sv2, mcml, and LU32, respectively.                                              wall-clock in Fig. 3 should therefore be interpreted as a one-time
+      Individual QoR metrics. Table 3 decomposes the composite                                           design-specific tool-development cost, whereas the per-seed VPR
+      score into CPD, WL, and tool RT. VPR-Evolve achieves the lowest                                    runtime in Table 3 represents the cost of repeatedly deploying
+      geometric-mean CPD on every circuit. The WL and RT columns                                         the resulting tool. The labels in Fig. 3 report the LLM tokens con-
+      expose the tradeoffs selected by the composite objective. Auto-                                    sumed by each VPR-Evolve run. These totals are cumulative over
+      Tuner obtains lower WL on LU8, bgm, and sv2, whereas VPR-Evolve                                    the whole run and are dominated by cached-context reads, which
+      obtains 2.2% lower WL on LU32 and 0.9% lower WL on mcml. Nev-                                      the provider serves at reduced cost and does not count to token
+      ertheless, VPR-Evolve’s stronger CPD and RT results produce a                                      budgets in Table 2. Input, output, and cache-creation tokens stay
+      lower composite score on all circuits. Compared with AutoTuner,                                    below 𝑇𝑜𝑘𝑒𝑛 weekly , so every run ended on 𝐼 max , 𝐸 max , or 𝑇max rather
+      VPR-Evolve reduces per-seed VPR RT by 7.8% on LU8, 6.4% on bgm,                                    than the weekly limit.
+                                                                                                     5
+ASP-DAC’27, 2027, Jan                                                                               Qihang Wu, Taizun Jafri, Aman Arora, and Vidya A. Chhabria
+
+
+
+
+Table 4: Cross-circuit transfer composite score (lower is bet-                 Table 5: Stage-wise CPD improvement of VPR-Evolve.
+ter; 1000 = VTR 9). Rows are the source circuit whose evolved
+                                                                                                    CPD (ns)                      ΔCPD by stage (ns)
+recipe is applied to the target column.
+                                                                                   Circuit    VTR 9    VPR-Evolve          S1       S2       S3         S4     S5
+                                Transferring Design                                LU8         73.40           72.60                                         −0.80
+                                                                                   bgm         20.04           19.87   +0.27    −0.29                        −0.14
+         Evolved Source   LU8   bgm     sv2   LU32    mcml
+                                                                                   sv2         13.06           12.77            −0.11                −0.17
+         LU8              995    994    995    990     990                         LU32        75.81           72.60   −1.99    −0.05                        −1.16
+         bgm              992   999    1011    993      –                          mcml        47.91           46.84   −1.27    +0.19
+         sv2              991    997   986     987     991                         Total                               −2.99    −0.26    −0.00       −0.17   −2.10
+         LU32             993   1003    993    993     992                  CPD values are 5-seed in-loop means from each circuit’s winning flow, so
+         mcml             993    995    994    988     973                  they differ from the 100-seed final evaluation in Table 3. Stage deltas sum
+                                                                            the kept commits’ CPD changes; positive entries are CPD regressions
+6.2     Cross-Design Transferability                                        retained because they improved the composite score.
+We evaluate whether implementations evolved for one source cir-
+                                                                            Table 6: Evolution artifacts: (a) a partial mcml evolution trace,
+cuit transfer to other circuits without additional evolution. Table 4
+                                                                            with CPD and score over the five in-loop seeds; and (b) final
+reports the composite score obtained by applying each evolved
+                                                                            lines of code change over default VTR-9.
+implementation unchanged to every target circuit. Rows denote the
+source circuit and columns the target circuit. Scores are normalized                     (a) mcml evolution trace                              (b) Code changes
+to default VTR-9, with values below 1000, indicating improvement.           Commit         Stage          Decision CPD (ns)         Score                Lines
+Diagonal entries represent native evaluation, while off-diagonal                                                                                Circuit changed
+                                                                            87beff686      pack           reverted        46.65    999.03
+entries measure cross-design transfer.                                      4811c323f      place           KEPT           46.84   998.93                       +640
+                                                                                                                                                  LU8          −12
+   Among the 19 completed off-diagonal transfers, 17 improve over           16492548f      place          reverted        47.52   1000.73
+default VTR-9 VPR. The implementations evolved on LU8, sv2,                 1c4bbecdf      route          reverted        46.84    999.73                      +352
+                                                                            a1dd0eb3e      cross-stage    reverted        47.36   1000.80         bgm           −8
+and mcml improve all completed target circuits, showing that VPR-
+                                                                            8f4c9bf2c      cross-stage    reverted        48.20   1002.18                      +403
+Evolve discovers code-level improvements that are not limited to            0b668797e      tune           reverted        47.67   1000.77         sv2          −34
+the source design. For sv2 and mcml the largest gains occur on              1acac63e4      tune           reverted        48.47   1003.16                      +172
+the source design itself, while for LU8, bgm, and LU32 at least one         de6b925e3      tune           reverted        48.21   1003.02         LU32          −2
+transferred implementation matches or exceeds the source evolved            26b8b502e      tune           reverted        50.30   1004.95
+                                                                                                                                                               +27
+result. These results establish that VPR-Evolve can produce both            3c47deeee      tune           reverted        46.83   1001.49         mcml         −9
+design-specialized and broadly reusable algorithmic improvements.           Default VTR-9 baseline                         47.91 1000.00
+                                                                            Bold marks the final state, which has the best (lowest) score.
+6.3     Evolution Stage Analysis                                            // vpr/src/pack/greedy_candidate_selector.cpp
+                                                                               float dist = get_manhattan_distance_to_tile(target_loc,
+Table 5 quantifies the contribution of each evolution stage using the                           cluster_tile_loc, g_vpr_ctx.device().grid);
+retained commits from the winning runs. From the default VTR-9              - float gain_mult = 1.0f;
+                                                                            - if (dist < appack_options.dist_th) {
+VPR implementation, S1 evolves packing, S2 evolves placement, S3            -    gain_mult = 1.0f - (appack_options.quad_fac_sqr * dist * dist);
+                                                                            - } else {
+evolves routing, S4 performs cross-stage optimization across mul-           -    gain_mult = 1.0f / std::sqrt(dist - appack_options.sqrt_offset);
+                                                                            - }
+tiple stages (pack, place, route) and ports of published algorithms,        + // [s1-appackgain] Smooth Gaussian decay replaces the piecewise
+                                                                            + // quad/sqrt knee.
+and S5 tunes the exposed hyperparameters of the evolved imple-              + const float sigma = appack_options.gauss_sigma; // = 2.0f
+                                                                            + float gain_mult = std::exp(-(dist * dist) / (2.0f * sigma * sigma));
+mentation. Different stages contribute to the CPD reduction on                 VTR_ASSERT_SAFE(gain_mult >= 0.0f && gain_mult <= 1.0f);
+different circuits, and no single stage dominates across all designs.
+Overall, the code-level evolution stages S1–S4 account for 62% of           Figure 4: Commit 87beff686: the addition of Gaussian gain
+the total CPD improvement, while S5 contributes the remaining               decay that had the largest single-commit CPD win (mcml,
+38%. It’s important to note here that this is tuning on the evolved         47.91 → 46.65 ns; a later commit brings the CPD to 46.84 ns).
+code, not tuning on the stock VPR code.
+                                                                            found for mcml. The evolved packing code replaces VPR’s piecewise
+7     Discussion                                                            distance attenuation with a smooth Gaussian decay, reducing the
+VPR-Evolve produces not only a final evolved algorithm, but also an         five-seed in-loop CPD from 47.91 ns to 46.65 ns. The score gate then
+annotated trace of the evolution process. Table 6(a) shows a partial        retained one further placement change that gives back 0.19 ns of
+trace for mcml, including the stage of each attempted modification,         CPD but improves the composite score, so the final implementation
+whether it was retained, and its measured CPD and composite score.          lands at 46.84 ns, a 2.24% net CPD reduction. The Gaussian-decay
+This trace makes the search auditable: retained changes show how            edit is an algorithmic change rather than a new setting of an ex-
+the final implementation was constructed, while reverted changes            isting parameter. The retained edit adds six lines and removes six
+reveal directions that were evaluated but not used.                         lines across two files. Table 6(b) summarizes the final source-code
+   Fig 4 shows part of the diff between the evolved and the original        differences for each circuit. The patch size varies from only +27/−9
+VPR source that produced the single largest CPD improvement                 lines for mcml to +640/−12 lines for LU8, and does not increase
+                                                                        6
+VPR-Evolve: Multi-Agent-Driven Algorithm Evolution
+for FPGA Place and Route                                                                                                                               ASP-DAC’27, 2027, Jan
+
+
+with circuit size. Indeed, the largest circuit produces the small-                        [4] Vaughn Betz and Jonathan Rose. 1997. VPR: A New Packing, Placement and
+est patch and the best composite score. These results show that                               Routing Tool for FPGA Research. In Proceedings of the International Workshop on
+                                                                                              Field-Programmable Logic and Applications (FPL). 213–222.
+design-specific algorithm evolution need not produce an entirely                          [5] Mohamed A. Elgammal, Amin Mohaghegh, Soheil Gholami Shahrouz, Fatemehsa-
+new tool; it can identify localized, reviewable changes to an existing                        dat Mahmoudi, Fahrican Koşar, Kimia Talaei, Joshua Fife, Daniel Khadivi, Kevin
+                                                                                              Murray, Andrew Boutros, Kenneth B. Kent, Jeff Goeders, and Vaughn Betz. 2025.
+implementation.                                                                               VTR 9: Open-Source CAD for Fabric and Beyond FPGA Architecture Exploration.
+                                                                                              ACM Trans. Reconfigurable Technol. Syst. 18, 3, Article 39 (Aug. 2025), 53 pages.
+8    Conclusion                                                                           [6] Amur Ghose, Junyeong Jang, Andrew B. Kahng, and Jakang Lee. 2026. Automated
+                                                                                              QoR Improvement in OpenROAD with Coding Agents. arXiv:2601.06268 [cs.AR]
+We presented VPR-Evolve, a multi-agent framework that specializes                             https://arxiv.org/abs/2601.06268
+VPR to a target FPGA design by evolving its packing, placement,                           [7] Taizun Jafri and Vidya A. Chhabria. 2026. GR-Evolve: Design-Adaptive Global
+                                                                                              Routing via LLM-Driven Algorithm Evolution. arXiv:2604.22234 [cs.AR] https:
+and routing source code. Planner, Coder, Reviewer, and Inspiration                            //arxiv.org/abs/2604.22234
+Collector agents cooperate through a shared memory, and every                             [8] Jinwook Jung, Andrew B. Kahng, Seungwon Kim, and Ravi Varadarajan. 2021.
+candidate is judged by a full VPR build and run against a composite                           METRICS2.1 and Flow Tuning in the IEEE CEDA Robust Design Flow and Open-
+                                                                                              ROAD (ICCAD Special Session Paper). In Proceedings of the IEEE/ACM Interna-
+objective over CPD, WL, and RT. Across five VTR 9 benchmarks,                                 tional Conference on Computer-Aided Design (ICCAD). 1–9.
+VPR-Evolve improves the composite score by up to 2.7% over stock                          [9] ASU VDA Lab. 2026. VPR-Evolve. https://github.com/ASU-VDA-Lab/VPR-
+                                                                                              Evolve.
+VPR, reducing CPD by up to 9.8%, WL by up to 18.1%, and RT by                            [10] Richard Liaw, Eric Liang, Robert Nishihara, Philipp Moritz, Joseph E. Gonzalez,
+up to 79.3%. Compared with an AutoTuner hyperparameter-tuning                                 and Ion Stoica. 2018. Tune: A Research Platform for Distributed Model Selection
+baseline given a larger evaluation budget, it reduces CPD by up to                            and Training. arXiv:1807.05118 [cs.LG] https://arxiv.org/abs/1807.05118
+                                                                                         [11] Jason Luu, Jason Helge Anderson, and Jonathan Rose. 2011. Architecture De-
+6.0%, WL by up to 2.2%, and RT by up to 7.8%. Code-level evolution                            scription and Packing for Logic Blocks with Hierarchy, Modes and Complex
+stages account for most of the CPD gain, while the resulting patches                          Interconnect. In Proceedings of the ACM/SIGDA International Symposium on Field-
+remain small and reviewable, and many transfer to other designs.                              Programmable Gate Arrays (FPGA). 227–236.
+                                                                                         [12] Larry McMurchie and Carl Ebeling. 1995. PathFinder: A Negotiation-Based
+These results show that design-adaptive algorithm evolution can                               Performance-Driven Router for FPGAs. In Proceedings of the ACM International
+move beyond the QoR frontier of a fixed CAD algorithm and toward                              Symposium on Field-Programmable Gate Arrays (FPGA). 111–117.
+                                                                                         [13] Alexander Novikov, Ngân Vũ, Marvin Eisenberger, Emilien Dupont, Po-Sen
+design-tool co-exploration for FPGA physical design.                                          Huang, Adam Zsolt Wagner, Sergey Shirobokov, Borislav Kozlovskii, Francisco
+                                                                                              J. R. Ruiz, Abbas Mehrabian, M. Pawan Kumar, Abigail See, Swarat Chaudhuri,
+References                                                                                    George Holland, Alex Davies, Sebastian Nowozin, Pushmeet Kohli, and Matej Ba-
+                                                                                              log. 2025. AlphaEvolve: A Coding Agent for Scientific and Algorithmic Discovery.
+ [1] Anthony Agnesina, Kyungwook Chang, and Sung Kyu Lim. 2020. VLSI Placement                arXiv:2506.13131 [cs.AI] https://arxiv.org/abs/2506.13131
+     Parameter Optimization using Deep Reinforcement Learning. In Proceedings of         [14] Chang Xu, Gai Liu, Ritchie Zhao, Stephen Yang, Guojie Luo, and Zhiru Zhang.
+     the IEEE/ACM International Conference on Computer-Aided Design (ICCAD).                  2017. A Parallel Bandit-Based Approach for Autotuning FPGA Compilation. In
+ [2] Takuya Akiba, Shotaro Sano, Toshihiko Yanase, Takeru Ohta, and Masanori                  Proceedings of the ACM/SIGDA International Symposium on Field-Programmable
+     Koyama. 2019. Optuna: A Next-Generation Hyperparameter Optimization Frame-               Gate Arrays (FPGA). 157–166.
+     work. In Proceedings of the ACM SIGKDD International Conference on Knowledge        [15] Cunxi Yu, Rongjian Liang, Chia-Tung Ho, and Haoxing Ren. 2025. Autonomous
+     Discovery and Data Mining (KDD). 2623–2631.                                              Code Evolution Meets NP-Completeness. arXiv:2509.07367 [cs.AI] https://arxiv.
+ [3] James S. Bergstra, Rémi Bardenet, Yoshua Bengio, and Balázs Kégl. 2011. Algo-            org/abs/2509.07367
+     rithms for Hyper-Parameter Optimization. In Advances in Neural Information          [16] Cunxi Yu and Haoxing Ren. 2026. Autonomous Evolution of EDA Tools: Multi-
+     Processing Systems (NeurIPS). 2546–2554.                                                 Agent Self-Evolved ABC. arXiv:2604.15082 [cs.AR] https://arxiv.org/abs/2604.
+                                                                                              15082
+
+
+
+
+                                                                                     7
+

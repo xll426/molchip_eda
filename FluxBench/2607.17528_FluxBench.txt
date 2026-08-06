@@ -1,0 +1,435 @@
+                                                     Can AI Agents Really Complete RTL-to-GDS?
+                                             Lessons from Benchmarking Tool-Interactive EDA Workflows
+                                             Jinyuan Deng1 , Zhengrui Chen1,2 , Xufeng Wei1 , Tianyu Xing1 , Chenyi Wen1 , Qi Sun1 , Cheng Zhuo1,∗
+                                                                                 1 Zhejiang University, China
+                                                                                       2 ChipFlux, China
+                                                                         ∗ Corresponding email: czhuo@zju.edu.cn
+
+                                         Abstract                                                                        must proceed through logic synthesis, floorplanning, power plan-
+                                         Large language model (LLM) agents are extending electronic de-                  ning, placement, clock-tree synthesis (CTS), routing, timing analy-
+                                         sign automation (EDA) beyond static RTL generation toward long-                 sis, physical-aware ECO, and final artifact generation. Each stage
+                                         horizon, tool-interactive workflows. Yet it remains unclear whether             produces a new design database, exposes a different action space,
+                                         general-purpose coding agents, even with domain-specific EDA                    and introduces new constraints on timing, area, power, routability,
+                                         skills, can reliably execute an end-to-end RTL-to-GDS flow en-                  and physical correctness. The flow is not a single programming
+                                         compassing synthesis, physical implementation, and engineering                  problem. It is a long-horizon engineering process in which the va-
+                                         change order (ECO) optimization. We evaluate AI agents on a Pi-                 lidity of the next action depends on the current tool, loaded design,
+                                         coRV32 RTL-to-GDS flow using commercial EDA tools under two                     flow stage, analysis corner, and history of previous modifications.
+                                         timing targets. Their performance is assessed using end-to-end de-                 This makes RTL-to-GDS a particularly revealing stress test for AI
+arXiv:2607.17528v3 [cs.AI] 23 Jul 2026
+
+
+
+
+                                         sign score, stage completion, and Token ROI, a cost-efficiency metric           agents. In a conventional coding benchmark, a syntactically plausi-
+                                         relating design quality to runtime and cost. Comparing three agent              ble command may be sufficient to obtain partial credit. In physical
+                                         architectures and four foundation models, we derive three practical             design, however, a single invalid command can terminate a session
+                                         lessons. First, domain-specific skills improve agents’ understand-              after a lengthy tool run, corrupt the expected design context, or
+                                         ing of individual subtasks but do not ensure reliable completion                invalidate downstream results. The difficulty is amplified by hetero-
+                                         of a long-horizon EDA flow. Second, agents that achieve similar                 geneous interfaces. Industrial EDA workflows commonly combine
+                                         design progress can still differ by up to 141× in Token ROI, reveal-            Tcl shells, Python scripts, Makefiles, vendor-specific commands,
+                                         ing substantial differences in runtime and cost efficiency. Third,              project conventions, and hand-maintained glue logic. Tool capabili-
+                                         low-level tool-interface mismatches are a major source of physical              ties are often exposed through proprietary or version-dependent
+                                         design failures, particularly when Tcl commands depend on the                   interfaces rather than a uniform action protocol. As a result, EDA
+                                         tool version or execution mode. These results suggest that robust               flow integration remains fragmented and heavily dependent on
+                                         Agentic EDA requires not only stronger models but also structured               expert application engineers.
+                                         tool interfaces, persistent design context, controlled execution, and              The evaluation problem is equally important. Static RTL bench-
+                                         process-level evaluation.                                                       marks measure whether generated code compiles, simulates, or
+                                                                                                                         passes hidden tests [6, 7, 9, 11]. These metrics are essential, but
+                                                                                                                         they do not reveal whether an agent can maintain a design con-
+                                         Keywords                                                                        text across many tool invocations, identify the stage at which a
+                                         Agentic EDA, RTL-to-GDS, LLM Agents, Workflows, Benchmarking                    workflow failed, recover from an invalid action, or improve QoR
+                                                                                                                         without excessive trial and error. A final pass/fail label also hides
+                                                                                                                         large differences in engineering cost. Two agents may reach compa-
+                                                                                                                         rable final QoR, while one uses a small number of targeted actions
+                                         1    Introduction                                                               and the other repeatedly regenerates scripts, reinitializes tools, and
+                                         Artificial intelligence is rapidly changing the role of automation              explores dominated configurations.
+                                         in chip design. Earlier AI-for-EDA efforts largely focused on point                This paper asks a focused question: Can current AI agents
+                                         solutions, such as quality-of-result (QoR) prediction, placement and            reliably complete an RTL-to-GDS design task under realistic
+                                         routing optimization, or RTL generation. The emergence of large                 and stringent design constraints? We investigate this question
+                                         language models introduces a different possibility: an agent can rea-           through a representative case study: implementing PicoRV32 [14]
+                                         son about a design objective, call specialized tools, inspect reports           using commercial synthesis and physical-design tools under two
+                                         and logs, revise its plan, and repeatedly act on the design until a veri-       timing targets with different levels of constraint tightness. The case
+                                         fiable artifact is produced. This transition shifts the system behavior         study compares a general-purpose coding agent, the same agent
+                                         from a feed-forward pattern of “prompt–model–output” toward                     augmented with EDA skills, and FluxEDA, an execution architec-
+                                         a feedback loop of “think/plan–act with tools–observe/reflect–re-               ture designed to organize heterogeneous EDA capabilities into an
+                                         plan.” Recent community discussions therefore identify Agentic                  executable, verifiable, and recoverable workflow. Our evaluation
+                                         EDA as a promising path from isolated assistance to complex end-                considers not only final design quality, but also stage completion,
+                                         to-end automation [3, 8, 12, 16].                                               runtime, token cost, Token ROI, and physical-design failure pat-
+                                            RTL generation [6, 13] is an important entry point, but it is only           terns.
+                                         the first step of a complete chip-design workflow. A usable design                 Our contributions can be summarized as follows:
+                                                                                                                     1
+                                                                 Jinyuan Deng, Zhengrui Chen, Xufeng Wei, Tianyu Xing, Chenyi Wen, Qi Sun, and Cheng Zhuo
+
+
+      • We formulate RTL-to-GDS implementation under different              have been propagated, which constraints and parasitics are active,
+        constraints as a tool-interactive agent evaluation problem.         and which reports or artifacts correspond to the current database.
+        The task requires agents to maintain design state, respond          Losing this context turns a continuous engineering process into
+        to tool feedback, and produce physically valid results across       disconnected one-shot scripts.
+        multiple design stages.                                                A robust agent execution layer must therefore provide controlled,
+      • We develop a process-aware evaluation methodology that              stateful access to EDA tools rather than unrestricted shell access. It
+        jointly measures stage completion, design quality, runtime,         should expose tool capabilities through validated interfaces, main-
+        token cost, Token ROI, and failure patterns. This evaluation        tain persistent tool sessions, return structured observations, pre-
+        distinguishes inexpensive early failures from efficient and         serve the association between reports and design states, and isolate
+        verified design progress.                                           each run from unrelated workspaces. These requirements motivate
+      • We compare multiple agent architectures and foundation              the execution architecture introduced in the following section.
+        models, and show that reliable RTL-to-GDS completion de-
+        pends on the complete agent system rather than the founda-
+        tion model alone. Domain-specific skills provide inconsis-
+                                                                            2.3    From Final Correctness to Process-Level
+        tent gains, while structured tool interfaces and persistent                Efficiency
+        design context substantially improve execution stability            Agentic workflows substantially increase interaction volume. Com-
+        and reduce operational failures.                                    pared with a one-shot generation setting, the agent must repeatedly
+                                                                            inspect logs, request reports, propose actions, verify outcomes, and
+2  Why RTL-to-GDS Is a Hard Agent                                           sometimes rollback. The cost is not only token consumption. Each
+                                                                            unnecessary action can invoke an expensive EDA run, consume
+   Environment                                                              a license, and delay the overall design cycle. A benchmark that
+2.1 Long-Horizon, Multi-Stage Execution                                     reports only the final QoR may therefore reward brute-force or
+The traditional RTL-to-GDS flow is a multi-stage engineering pro-           unstable behavior.
+cess. Logic synthesis transforms RTL and constraints into a gate-              We use Token ROI to summarize how effectively an agent con-
+level implementation; floorplanning defines geometry, utilization,          verts model and tool investment into EDA progress. At a high level,
+and major physical structures; placement and CTS determine cell
+locations and clock distribution; routing creates detailed intercon-                                       normalized EDA return
+nect; static timing analysis and ECO iteratively repair setup and             TokenROI =                                                       .
+                                                                                              token investment × execution-time investment
+hold violations; and final checks produce the netlist, layout, tim-                                                                             (1)
+ing reports, and other deliverables. A failure late in the flow may         The numerator represents task-specific design quality and com-
+invalidate hours of upstream work.                                          pletion, while the denominator penalizes excessive model inter-
+   For an agent, the challenge is not simply to know the nominal            action and long tool runtime. We further use normalized Token
+sequence of steps. It must recognize which steps are already com-           ROI, which rescales token cost and execution time to comparable
+plete, which reports are current, which actions have side effects,          ranges for more consistent comparison across runs. A meaningful
+and whether a modification improves the global objective or merely          RTL-to-GDS agent evaluation should therefore consider not only
+shifts a violation to another corner. For example, a timing fix that        final design quality, but also stage completion, execution cost, and
+improves setup slack may degrade hold slack or increase area. A             failure behavior. Together, these process-level signals distinguish
+denser floorplan may reduce wirelength but create routing conges-           efficient, verified progress from low-cost early failures or expensive
+tion. The agent must therefore account for delayed feedback and             trial-and-error execution.
+competing objectives while maintaining a consistent design state
+throughout the flow.
+                                                                            2.4    Relation to Existing EDA Benchmarks
+                                                                            Existing RTL benchmarks have driven rapid progress by providing
+2.2    Fragmented Tool Interfaces and Hidden                                reproducible specifications, simulators, and hidden tests. Verilo-
+       Operational State                                                    gEval and RTLLM focus on functional RTL generation, while newer
+Industrial EDA orchestration faces a long-standing integration bot-         datasets such as RealBench and CVDP increase realism, coverage,
+tleneck. Tool entry points are fragmented across proprietary Tcl,           and difficulty [6, 7, 9, 11]. These benchmarks answer an essential
+Python, Bash, and workflow scripts. Internal capabilities are fre-          question: can a model translate a specification into functionally
+quently encapsulated behind tool-specific protocols, and external           correct hardware description code?
+automation relies on project-local wrappers and manual CAD effort.             RTL-to-GDS asks a complementary question. Even when the
+This fragmentation creates two related problems for LLM agents.             RTL is fixed and correct, can an agent navigate a heterogeneous im-
+   First, the valid action space is narrower than the apparent pro-         plementation flow, adapt to tool feedback, and produce a physically
+gramming language. A command can be syntactically well formed               meaningful result? This setting introduces delayed rewards, expen-
+yet invalid for the active tool version, execution mode, database           sive evaluation, large combinatorial action spaces, and cross-stage
+state, or multi-mode multi-corner (MMMC) initialization. Second,            dependencies. The same final QoR may be reached through very
+the operational state required to interpret a command is often im-          different trajectories, and many failures arise from the interaction
+plicit. The agent must know which design is loaded, whether clocks          boundary rather than the design algorithm itself. For this reason,
+                                                                        2
+Can AI Agents Really Complete RTL-to-GDS?
+Lessons from Benchmarking Tool-Interactive EDA Workflows
+
+
+
+
+Figure 1: PicoRV32 RTL-to-GDS evaluation flow. The agent must advance a single design through synthesis, physical imple-
+mentation, physical-aware ECO, and final deliverable generation while receiving tool feedback after each stage.
+
+RTL-to-GDS should be viewed not as a replacement for RTL gener-                  Table 1: PicoRV32 RTL-to-GDS case-study setup.
+ation benchmarks, but as a workflow-level extension that evaluates
+agent behavior under realistic engineering constraints.                      Item                 Setting
+   A complete Agentic EDA benchmark will eventually need both.
+                                                                             Design               PicoRV32 RISC-V core
+Code-grounded tasks test generation and repair against compila-              Technology           Commercial 55-nm technology setup
+tion or simulation feedback. Flow-grounded tasks test multi-stage            Clock targets        350 MHz (loose), 700 MHz (tight)
+orchestration and deliverable production. Report-grounded tasks              Flow stages          Synthesis, floorplan/power, placement, CTS,
+test whether an agent can interpret timing, DRC, or power reports                                 routing, ECO, final reports
+and perform targeted optimization. The present invited paper iso-            Architectures        Claude Code, Claude Code + EDA Skills,
+lates the flow-grounded case so that the operational challenges and                               FluxEDA
+lessons can be examined in depth.                                            Models               DeepSeek-V4, GLM-5.2, Claude Sonnet 5, Kimi
+                                                                                                  K3
+3 Case Study and Evaluation Methodology                                      Measurements         Score, Token ROI, cost, runtime, stage comple-
+                                                                                                  tion, error category
+3.1 PicoRV32 RTL-to-GDS Task
+We select PicoRV32 as the target design because it provides a
+more realistic multi-stage implementation workload than small
+arithmetic benchmarks, while remaining tractable for repeated              3.2    Agent Architectures
+commercial-tool experiments. The task begins with RTL, timing              Claude Code(CC) [1] represents a general-purpose command-line
+constraints, and technology configuration, and requires the agent          coding agent. It can inspect files, generate scripts, and interact
+to complete logic synthesis, floorplanning and power planning,             with the tool environment through shell-oriented operations. This
+placement, CTS, routing, physical-aware ECO, and final report gen-         baseline tests how far a capable general agent can progress without
+eration. The expected outputs include a gate-level netlist, placed-        an EDA-specific execution substrate.
+and-routed layout data, timing and QoR reports, and the final GDS-         Claude Code + EDA Skills [5] augments the same interaction
+related deliverables.                                                      pattern with domain-specific procedural knowledge. The skills
+   Two clock targets are used to vary task difficulty. The 350-MHz         provide guidance on flow steps, commands, reports, and common
+setting is a relatively loose target that tests whether an agent can       debugging procedures. This condition tests whether adding EDA
+complete the entire flow and produce valid outputs. The 700-MHz            knowledge alone is sufficient to stabilize the workflow.
+target places greater pressure on timing closure and makes the             FluxEDA [3] separates agent reasoning from tool execution. The
+flow more sensitive to implementation and ECO decisions. The               agent discovers registered EDA capabilities, invokes structured
+pair exposes whether an approach merely follows a nominal recipe           actions through a gateway, receives normalized results, and reuses
+or can continue to operate when the design objective becomes               persistent tool sessions and design context. The architecture is
+demanding.                                                                 not another EDA engine; it is an execution harness that abstracts
+                                                                       3
+                                                                  Jinyuan Deng, Zhengrui Chen, Xufeng Wei, Tianyu Xing, Chenyi Wen, Qi Sun, and Cheng Zhuo
+
+
+heterogeneous engines into a unified API, manages lifecycle and
+state, and constrains invalid or unsafe operations.
+   Each architecture is paired with DeepSeek-V4 [4], GLM-5.2 [15],
+Claude Sonnet 5 [2] and Kimi K3 [10]. Holding the task and tool
+environment fixed while varying the architecture and foundation
+model helps distinguish model capability from execution support.
+
+3.3    Scoring Method
+Each run receives an end-to-end score on a 0–100 scale:
+                      𝑆 = 0.2𝑆 stage + 0.8𝑆 result .              (2)
+The stage score measures sequential progress through logic syn-
+thesis, physical implementation, and ECO. Logic synthesis is eval-
+uated using netlist-generation and clock-gating checks. Physical
+implementation includes I/O placement, standard-cell placement,
+clock-tree synthesis, and routing, while ECO is evaluated as a bi-
+nary pass/fail stage. The stages are gated sequentially: physical-
+implementation checks contribute only after logic synthesis is com-
+plete, and the ECO stage contributes only after both preceding
+stages have been fully passed. The stage score is the average of the
+                                                                             Figure 2: Performance–runtime–cost trade-off across agent
+three resulting gate scores. The result score is enabled only when
+                                                                             architectures under the 700 MHz timing target. Higher scores
+all three stages are complete. Let
+                                                                             and shorter runtimes are preferred.
+                     M = {𝐴, 𝑃,𝑊𝑠 ,𝑇𝑠 ,𝑊ℎ ,𝑇ℎ },                  (3)
+where 𝐴 and 𝑃 denote area and power, respectively, and 𝑊𝑠 , 𝑇𝑠 , 𝑊ℎ ,
+and 𝑇ℎ denote setup WNS, setup TNS, hold WNS, and hold TNS,                  DeepSeek-V4 is the least expensive and fastest configuration under
+respectively. The result score is computed as                                the 350-MHz target, but achieves a score of only 13.33. Similarly,
+                  1 ∑︁                                                       several expensive runs fail to complete critical stages, resulting in
+                         𝑆𝑚 , if all three stages are complete,
+                
+                                                                             low scores and poor Token ROI. Thus, lower token consumption
+                
+      𝑆 result = 6 𝑚∈ M
+                
+                                                                   (4)
+                
+                
+                 0,                                                         or shorter runtime does not necessarily indicate greater efficiency
+                                otherwise,
+                
+                                                                             when a run fails to produce a valid end-to-end design.
+                
+                
+where 𝑆𝑚 denotes the normalized score of metric 𝑚. Area and                     Token ROI provides a more informative measure by relating
+power are smaller-is-better metrics and are normalized against               token expenditure to verified design progress. Configurations that
+frequency-specific reference values. Timing metrics are larger-is-           avoid repeated failures, unnecessary retries, and prolonged tool-
+better: nonnegative values receive full credit, while negative values        runtime waste achieve better efficiency than those that consume
+are scaled according to predefined lower bounds. This gating rule            fewer resources but fail at critical stages. Overall, meaningful cost
+prevents partial outputs or isolated reports from being treated as           efficiency depends on reliably converting computational expendi-
+valid final designs.                                                         ture into validated RTL-to-GDS outcomes.
+    Token ROI complements the end-to-end score by relating nor-
+malized design return to the token cost and execution time required
+                                                                             4.2    Model Backend Comparison
+to achieve it, as defined in Eq. (1). For normalized Token ROI, token
+cost and execution time are also rescaled before the efficiency score        Kimi K3 achieves the strongest overall performance with
+is computed, reducing the effect of differences in scale between the         FluxEDA, obtaining the highest score under both timing tar-
+two cost components.                                                         gets. However, without a structured execution architecture,
+                                                                             its execution is less stable. In the Claude Code and CC+EDA
+4 Experiments                                                                Skills configurations, its performance varies substantially across
+                                                                             timing targets, with some runs failing to complete required physical-
+4.1 End-to-End Quality and Cost Efficiency                                   design milestones, such as I/O placement or physical-aware ECO.
+Table 2 reports the twelve architecture–model combinations evalu-            This contrast indicates that FluxEDA makes Kimi K3’s high
+ated under two timing targets. Across all four model backends and            performance reliable through persistent design-state man-
+both targets, every FluxEDA-backed run achieves a score above                agement, stage-aware execution, and physically grounded
+90, demonstrating consistently strong end-to-end completion un-              feedback.
+der different timing constraints. This consistency is notable under             Among the other backends, DeepSeek-V4 offers the best cost
+the tighter 700-MHz constraint, which places greater pressure on             efficiency, GLM-5.2 demonstrates strong cross-architecture adapt-
+timing closure and physical-design decisions.                                ability, and Claude Sonnet 5 delivers competitive quality at a higher
+   The results also show that cost and runtime cannot be interpreted         cost. Overall, strong model reasoning requires structured architec-
+independently of outcome quality. For example, Claude Code with              tural support to produce reliable end-to-end results.
+                                                                         4
+Can AI Agents Really Complete RTL-to-GDS?
+Lessons from Benchmarking Tool-Interactive EDA Workflows
+
+
+                     Table 2: End-to-end PicoRV32 RTL-to-GDS results. ROI denotes the normalized Token ROI.
+
+                                                             Loose target (350 MHz)                                Tight target (700 MHz)
+   Architecture         Model
+                                               Score       Cost ($)     Runtime (min)       ROI       Score      Cost ($)     Runtime (min)     ROI
+
+                        DeepSeek-V4            13.33        0.11           58.78            12.71     10.00       0.21           105.19         5.83
+                        GLM-5.2                13.33        33.29          302.30           0.12      13.33       14.35          236.09         0.32
+   Claude Code
+                        Claude Sonnet 5        87.05        20.52          284.23           1.26      81.33       18.16          277.18         1.36
+                        Kimi K3                13.33        19.33          251.73           0.23      82.33       20.05          393.75         0.91
+
+                        DeepSeek-V4            11.67        0.64           111.70           4.81      11.67        0.94          180.81         2.75
+                        GLM-5.2                95.97        8.37           129.84           6.22      84.47       11.56          222.04         2.61
+   CC+EDA Skills
+                        Claude Sonnet 5        11.67        16.96          118.81           0.42      11.67       12.11          185.00         0.40
+                        Kimi K3                13.33        29.77          472.13           0.09      11.67       15.26          214.74         0.29
+
+                        DeepSeek-V4            97.94        0.56           120.83           39.91     90.99        0.45          94.28         48.06
+                        GLM-5.2                97.72        10.67          110.63            5.77     93.70       11.92          115.27         4.84
+   FluxEDA
+                        Claude Sonnet 5        96.41        48.24          252.65            0.68     92.36       51.58          208.48         0.72
+                        Kimi K3                98.26        18.65          176.53            2.36     94.10       27.81          306.83         0.95
+
+
+Table 3: Gated stage completion across eight model–target
+runs for each architecture. A stage is counted as complete
+only when all required milestones and prerequisite stages
+are completed.
+
+          Architecture          Syn.      Physical Impl.    ECO
+          Claude Code            8/8           7/8           3/8
+          CC + EDA Skills        8/8           3/8           2/8
+          FluxEDA                8/8           8/8           8/8
+
+
+
+
+4.3    Stage Completion and Workflow Stability
+Table 3 summarizes gated stage completion across the eight model–
+target runs for each architecture. All runs complete synthesis, but                 Figure 3: Distribution of physical-implementation error cate-
+the command-line-based architectures show substantially lower                       gories. The dominant category is tool- and mode-dependent
+completion rates in later stages. Claude Code completes physical im-                Tcl command compatibility.
+plementation in seven runs and physical-aware ECO in three, while
+CC+EDA Skills completes these stages in three and two runs, re-
+                                                                                    on the execution support used to preserve design context, enforce
+spectively. FluxEDA completes all three stages in all eight evaluated
+                                                                                    valid stage transitions, and manage tool interactions.
+runs. All six physical-implementation failures in the command-line-
+based configurations involve incomplete I/O placement, and one of
+these runs also fails at CTS. No failures are observed in standard-                 4.4   Where Do Agents Fail?
+cell placement or routing, while physical-aware ECO remains the                     Physical design errors provide a more concrete explanation for the
+most frequent late-stage failure.                                                   performance gap. As shown in Figure 3, Tcl command compatibil-
+   Adding EDA skills improves selected configurations, but the                      ity is the largest PR-stage error category, accounting for 31.7% of
+gains are not consistent across models or timing targets. For exam-                 observed events. The failures include commands incompatible with
+ple, CC+EDA Skills with GLM-5.2 completes all three stages under                    the active EDA tool version, execution mode, MMMC initialization,
+both timing targets, whereas several other skill-augmented config-                  or reporting/export interface. Claude Code with DeepSeek-V4 and
+urations still fail during physical implementation or ECO. These                    GLM-5.2 contributes 48.7% and 28.0% of these events, respectively.
+results suggest that providing procedural EDA knowledge does not                    EDA Skills reduce the fractions to 10.0% and 7.7%, but do not elimi-
+by itself ensure execution reliability. A skill may recommend an ap-                nate the issue. FluxEDA records 0.0% for this category across the
+propriate flow or command family, yet it cannot guarantee that the                  evaluated models. The broader lesson is that a general agent of-
+command is valid for the active tool version and execution mode,                    ten treats the EDA shell as an open programming surface, while
+that the required database state is available, or that the workflow                 the real action space is constrained by tool version, loaded design,
+can recover after an error.                                                         flow stage, and project conventions. Structured wrappers and regis-
+   Overall, the stage-completion results indicate that reliable RTL-                tered APIs can remove entire classes of syntactically plausible but
+to-GDS execution depends not only on model knowledge, but also                      operationally invalid actions.
+                                                                              5
+                                                                  Jinyuan Deng, Zhengrui Chen, Xufeng Wei, Tianyu Xing, Chenyi Wen, Qi Sun, and Cheng Zhuo
+
+
+5  Lessons for Agentic EDA and Benchmark                                     stages. A minimal operational contract covering tool state, allowed
+   Design                                                                    actions, required deliverables, and standardized results makes this
+                                                                             distinction auditable without prescribing a particular backend.
+5.1 Domain Skills Do Not Guarantee
+    End-to-End Completion                                                    6    Discussions and Conclusions
+The paired architecture comparisons show that the effect of EDA              This focused case study supports a clear answer to the title question.
+skills is strongly model- and target-dependent. At 350 MHz, adding           Current AI agents can complete RTL-to-GDS, but reliable comple-
+EDA skills raises the GLM-5.2 score from 13.33 to 95.97, but lowers          tion is not determined by foundation-model capability alone. The
+the Claude Sonnet 5 score from 87.05 to 11.67. At 700 MHz, the same          workflow exposes failure modes that are largely invisible in static
+intervention raises GLM-5.2 from 13.33 to 84.47, while reducing              RTL generation: invalid vendor commands, lost or inconsistent
+Kimi K3 from 82.33 to 11.67. The stage profiles show, among the              design context, late-stage flow failures, QoR regressions, and ineffi-
+evaluated skill-augmented configurations, only GLM-5.2 completes             cient trial-and-error interaction. Domain-specific skills can improve
+all three gated stages under both timing targets.                            local procedural knowledge, yet they do not by themselves guaran-
+    The architecture comparison further indicates that agent ca-             tee stable operation across models and timing targets.
+pability is a system-level property rather than a property of the               The strongest result is therefore not simply the highest numer-
+foundation model alone. For DeepSeek-V4 at 350 MHz, the score                ical score. It is the consistent completion of synthesis, physical
+spans from 11.67 to 97.94 across the three architectures, a difference       implementation, and ECO across model backends and constraints,
+of 86.27 points. Moreover, all eight FluxEDA model–target runs               together with substantially higher Token ROI and the elimination
+score above 90 and complete every reported stage. Agentic EDA                of a dominant class of Tcl compatibility errors. The findings suggest
+benchmarks should therefore evaluate complete agent configura-               that Agentic EDA should be viewed as a systems problem involving
+tions across multiple models and constraints, rather than reporting          four coupled elements: a capable foundation model, reusable EDA
+only a single favorable pairing.                                             knowledge, structured tool interfaces, and an execution layer that
+                                                                             preserves context and controls side effects.
+5.2    Efficiency Must Be Conditioned on Verified                               This study is limited to one design, one technology setup, se-
+       Progress                                                              lected commercial-tool versions, and one run per configuration.
+Raw cost and runtime are insufficient measures of end-to-end                 Although PicoRV32 is more representative than a small test circuit,
+efficiency unless interpreted together with verified progress. At            it does not capture the scale and signoff complexity of industrial
+350 MHz, Claude Code with DeepSeek-V4 is the cheapest and fastest            SoCs. The results should therefore be interpreted as evidence of
+configuration, costing $0.11 and taking 58.78 minutes, but it scores         workflow behavior rather than universal rankings. Future evalu-
+only 13.33 and does not complete physical-aware ECO. FluxEDA                 ations should include multiple designs, technologies, toolchains,
+with the same model costs $0.56 and takes 120.83 minutes, yet com-           and repeated runs. They should also cover code generation and
+pletes every reported stage and reaches a score of 97.94 with a              repair, multi-stage implementation, and report-based optimization,
+normalized Token ROI of 39.91. Early termination can therefore               with controlled ablations of EDA skills, structured APIs, persistent
+look inexpensive while producing little end-to-end value.                    context, checkpoint and rollback mechanisms.
+   Token ROI also distinguishes runs that reach the same verified               In summary, the central question for AI-assisted chip design is
+milestone with very different resource use. At 350 MHz, Claude               no longer only whether an LLM can generate correct RTL or Tcl.
+Code with DeepSeek-V4 and CC+EDA Skills with Kimi K3 both                    The more consequential question is whether an agent can move a
+score 13.33; both complete synthesis and physical implementation,            design through a long, heterogeneous toolchain reliably, efficiently,
+but not physical-aware ECO. Their normalized Token ROI values are            and verifiably. Our results indicate that progress will depend not
+12.71 and 0.09, respectively, a difference of approximately 141.2×.          only on foundation models, but also on a shift from prompt-centric
+Conversely, Token ROI should be interpreted only together with               automation toward execution-aware infrastructure and process-
+stage completion and final design quality: a low-cost partial run            level benchmarking.
+may still obtain a numerically favorable ROI. Benchmarks should
+therefore jointly report the stage-gated score, milestone completion,
+token cost, runtime, and Token ROI.
+
+5.3    Distinguishing Operational Validity from
+       Optimization Effectiveness
+The error analysis in Figure 3 reveals a practical mismatch between
+open-ended code generation and state-constrained EDA execution.
+A Tcl command may be syntactically correct yet invalid for the
+active tool version, design state, or flow stage, causing an agent
+to fail before its optimization strategy is exercised. Benchmarks
+should therefore distinguish operational validity—whether actions
+are legal and state-appropriate—from optimization effectiveness—
+whether valid actions improve QoR and complete the required
+                                                                         6
+Can AI Agents Really Complete RTL-to-GDS?
+Lessons from Benchmarking Tool-Interactive EDA Workflows
+
+
+References
+ [1] Anthropic. 2026. Claude Code Documentation. https://docs.anthropic.com/en/
+     docs/claude-code/overview. Accessed: 2026-06-27.
+ [2] Anthropic. 2026. Introducing Claude Sonnet 5. https://www.anthropic.com/
+     news/claude-sonnet-5. Accessed: 2026-07-09.
+ [3] Zhengrui Chen, Zixuan Song, Yu Li, Qi Sun, and Cheng Zhuo. 2026. FluxEDA:
+     A Unified Execution Infrastructure for Stateful Agentic EDA. arXiv preprint
+     arXiv:2603.25243 (2026).
+ [4] Anyi DeepSeek-AI, Xu, Bangcai Lin, Bing Xue, Bingxuan Wang, Bingzheng
+     Xu, Bochao Wu, Bowei Zhang, Chaofan Lin, Chen Dong, Chenchen Ling, et al.
+     2026. DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence.
+     arXiv preprint arXiv:2606.19348 (2026).
+ [5] ICkylin Team. 2026. IC Agent Hub: IC-Oriented Agent Skills by ICkylin. https://
+     www.icagenthub.com/skills. Accessed: 2026-07-09. IC-oriented skill marketplace
+     developed by Zhongke Qixin / ICkylin; homepage: https://www.ickylin.com/.
+ [6] Pengwei Jin, Di Huang, Chongxiao Li, Shuyao Cheng, Yang Zhao, Xinyao Zheng,
+     Jiaguo Zhu, Shuyi Xing, Bohan Dou, Rui Zhang, et al. 2025. RealBench: Bench-
+     marking verilog generation models with real-world ip designs. arXiv preprint
+     arXiv:2507.16200 (2025).
+ [7] Mingjie Liu, Nathaniel Pinckney, Brucek Khailany, and Haoxing Ren. 2023. Ver-
+     ilogEval: Evaluating large language models for verilog code generation. In 2023
+     IEEE/ACM International Conference on Computer Aided Design (ICCAD). IEEE,
+     1–8.
+ [8] Yiyi Lu, Hoi Ian Au, Junyao Zhang, Jingyu Pan, Guanglei Zhou, Yiting Wang,
+     Jingwei Sun, Ang Li, Jianyi Zhang, Hai Li, et al. 2025. AutoEDA: Enabling
+     EDA flow automation through microservice-based LLM agents. arXiv preprint
+     arXiv:2508.01012 (2025).
+ [9] Yao Lu, Shang Liu, Qijun Zhang, and Zhiyao Xie. 2024. RTLLM: An open-source
+     benchmark for design rtl generation with large language model. In 2024 29th
+     Asia and South Pacific Design Automation Conference (ASP-DAC). IEEE, 722–727.
+[10] Moonshot AI. 2026. Kimi K3: Open Frontier Intelligence. https://www.kimi.com/
+     blog/kimi-k3. Official technical blog, accessed July 21, 2026.
+[11] Nathaniel Pinckney, Chenhui Deng, Chia-Tung Ho, Yun-Da Tsai, Mingjie Liu,
+     Wenfei Zhou, Brucek Khailany, and Haoxing Ren. 2025. Comprehensive Verilog
+     design problems: A next-generation benchmark dataset for evaluating large
+     language models and agents on rtl design and verification. arXiv preprint
+     arXiv:2506.14074 (2025).
+[12] The Verkor Team, Ravi Krishna, Suresh Krishna, and David Chin. 2026. Design
+     Conductor: An agent autonomously builds a 1.5 GHz Linux-capable RISC-V CPU.
+     arXiv preprint arXiv:2603.08716 (2026).
+[13] Shailja Thakur, Baleegh Ahmad, Hammond Pearce, Benjamin Tan, Brendan
+     Dolan-Gavitt, Ramesh Karri, and Siddharth Garg. 2024. Verigen: A large language
+     model for verilog code generation. ACM Transactions on Design Automation of
+     Electronic Systems 29, 3 (2024), 1–31.
+[14] Clifford Wolf. 2019. PicoRV32 - A Size-Optimized RISC-V CPU. https://github.
+     com/YosysHQ/picorv32. Accessed: 2026-07-09.
+[15] Z.AI. 2026. GLM-5.2. https://docs.z.ai/guides/llm/glm-5.2. Developer documen-
+     tation. Accessed: 2026-07-09.
+[16] Ruizhe Zhong, Xingbo Du, Shixiong Kai, Zhentao Tang, Siyuan Xu, Hui-Ling
+     Zhen, Jianye Hao, Qiang Xu, Mingxuan Yuan, and Junchi Yan. 2023. Llm4eda:
+     Emerging progress in large language models for electronic design automation.
+     arXiv preprint arXiv:2401.12224 (2023).
+
+
+
+
+                                                                                       7
+

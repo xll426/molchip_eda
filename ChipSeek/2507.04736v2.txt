@@ -1,0 +1,1504 @@
+                                                  ChipSeek: Optimizing Verilog Generation via EDA-Integrated
+                                                                   Reinforcement Learning
+                                                         Zhirong Chen1,2 , Kaiyan Chang1,2 , Zhuolin Li3 , Cangyuan Li1,2 ,
+                                                          Xinyang He4 , Chujie Chen1,2 , Mengdi Wang1,2 , Haobo Xu1,2 ,
+                                                                       Yinhe Han1,2 , Huawei Li1,2 , Ying Wang1,2
+                                                     1
+                                                       SKLP, Institute of Computing Technology, Chinese Academy of Sciences,
+                                                                     2
+                                                                       University of Chinese Academy of Sciences,
+                                                            3
+                                                              University of Electronic Science and Technology of China,
+                                                                            4
+                                                                              Beijing Institute of Technology
+                                                                          Correspondence: wangying2009@ict.ac.cn
+                                                                                                  4                                         3.73
+
+
+
+
+                                                                                                          Average EDAP
+                                                            Abstract
+                                                                                                  3                     2.65 2.56      2.43                2.53
+                                             Large Language Models have emerged as pow-           2                                              1.43 1.56      1.45
+                                                                                                  1 1.00 1.02 1.06 0.94           1.04
+arXiv:2507.04736v2 [cs.AI] 10 Apr 2026
+
+
+
+
+                                             erful tools for automating Register-Transfer
+                                                                                                              0 k o 1 B B B B
+                                                                                                                   r 4 o                                          -M B CL B Q B
+                                             Level (RTL) code generation, yet they face
+                                                                                                              c hma GPT- GPTL-lama-C-7oderQ-7wen-C-7oderL-C7oder-rDC-6C.o7deVV--DC-C6.o7deVe-Cn-DC-7
+                                                                                                          Ben            de     k       de
+                                                                                                                       Co pSee Cowen2 RTLCod  .5     RT      e             e           Orig
+                                             critical limitations: existing approaches typi-                                                                         Cod
+                                             cally fail to simultaneously optimize functional                          Dee            Q
+                                                                                                                                                         Model
+                                             correctness and hardware efficiency metrics
+                                             such as Power, Performance, and Area (PPA).                 Figure 1: PPA performance comparison between Verilog
+                                             Methods relying on supervised fine-tuning com-              from models and benchmark RTLLM using the EDAP
+                                             monly produce functionally correct but subop-               (Energy-Delay-Area Product). Lower values are better.
+                                             timal designs due to the lack of inherent mecha-
+                                             nisms for learning hardware optimization prin-
+                                             ciples. Conversely, external post-processing
+                                                                                                         Level (RTL) code generation (Cui et al., 2025;
+                                             techniques aiming to refine PPA performance
+                                             after generation often suffer from inefficiency             Pei et al., 2024). Previous works have improved
+                                             and do not improve the LLMs’ intrinsic capa-                RTL generation by employing various techniques,
+                                             bilities.                                                   including Supervised Fine-tuning (SFT) (Thakur
+                                             To overcome these challenges, we propose                    et al., 2023; Chang et al., 2024), Retrieval-
+                                             ChipSeek, a novel hierarchical reward based                 Augmented Generation (RAG) (Gao et al., 2024),
+                                             reinforcement learning framework designed to                multi-agent collaboration (Yu et al., 2025b; Ho
+                                             encourage LLMs to generate RTL code that                    et al., 2025), and Chain of Thought (CoT) rea-
+                                             is both functionally correct and optimized for              soning (Qin et al., 2025). While these approaches
+                                             PPA metrics. Our approach integrates direct                 successfully enhance functional correctness, they
+                                             feedback from EDA simulators and synthesis                  generally neglect critical hardware metrics such
+                                             tools into a hierarchical reward mechanism,
+                                                                                                         as synthesizability and more importantly, Power,
+                                             facilitating a nuanced understanding of hard-
+                                             ware design trade-offs. Through Curriculum-                 Performance, and Area (PPA).
+                                             Guided Dynamic Policy Optimization (CDPO),                     However, to truly assist engineers, it is not
+                                             ChipSeek enhances the LLM’s ability to gen-                 enough to produce merely functionally correct Ver-
+                                             erate high-quality, optimized RTL code. Eval-               ilog. The generated RTL must also be high-quality
+                                             uations on standard benchmarks demonstrate
+                                                                                                         in terms of PPA metrics. PPA performance is a cru-
+                                             ChipSeek’s superior performance, achieving
+                                             state-of-the-art functional correctness and PPA             cial indicator of Verilog code quality. In practice,
+                                             performance. Furthermore, it excels in specific             design specifications vary widely: edge devices
+                                             optimization tasks, consistently yielding highly            may emphasize area and power constraints, while
+                                             efficient designs when individually targeting               data center accelerators focus on timing and per-
+                                             fine-grained optimization goals such as power,              formance. Existing models, trained predominantly
+                                             delay, and area. The artifact is open-source in             on inconsistent and noisy RTL corpora, lack the
+                                             https://github.com/rong-hash/chipseek.                      inductive bias needed to internalize such nuanced
+                                                                                                         trade-offs, sometimes outcompeted by designs writ-
+                                         1   Introduction
+                                                                                                         ten by expert engineers. Figure 1 illustrates this
+                                         Large Language Models (LLMs) show immense                       problem clearly: the Verilog generated by exist-
+                                         potential to revolutionize hardware design method-              ing models mostly underperforms compared to the
+                                         ology, particularly in tasks like Register-Transfer             RTLLM benchmark, a collection of expert-written
+designs. These models fail to match the hardware        such as format reward and syntax reward are eas-
+efficiency of manually crafted RTL and often re-        ier to learn and serve as early-stage scaffolding
+quire post-processing, such as Monte Carlo Tree         while functional correctness and PPA are the ulti-
+Search (MCTS) (DeLorenzo et al., 2024) or ex-           mate goals; and (ii) scale mismatch, arises from the
+ternal optimization pipelines (Yao et al., 2024b),      disparity between binary discrete signals (0/1) for
+to improve PPA. However, such methods oper-             syntax or function rewards versus continuous, the-
+ate externally, introducing computational and man-      oretically unbounded PPA rewards, which renders
+ual overhead to take effect without improving the       traditional reward aggregation unstable. CDPO
+LLM intrinsic ability. Therefore, there is a fun-       addresses these issues with a curriculum-guided
+damental gap: current methods lack an inherent          weight schedule, advantage-level aggregation, and
+mechanism to optimize functional correctness and        prompt-conditioned PPA preference weighting, en-
+hardware-specific PPA metrics concurrently. Bridg-      abling curriculum training and controllable power–
+ing this gap is essential for making LLMs viable        performance–area trade-offs.
+co-designers in practical RTL workflows.                   Automated Data Augmentation Pipeline: We
+   To address this challenge, we introduce              propose a multi-stage automated data augmenta-
+ChipSeek, a novel reinforcement learning frame-         tion pipeline that systematically processes Verilog
+work that integrates EDA toolchains directly into       codes into richer PPA-aware datasets. This pipeline
+the training loop. The EDA toolchain offers func-       executes three fundamental tasks: (1) generating
+tional verification to ensure logical correctness and   reasoning cold-start datasets tailored explicitly for
+PPA metric measurement to quantify hardware ef-         the SFT phase; (2) synthesizing diverse PPA prefer-
+ficiency. Together, these feedback signals serve        ence vectors and augmenting design descriptions to
+as rewards to enforce both functional validity and      facilitate comprehensive multi-objective RTL opti-
+alignment with design specifications. Our frame-        mization; and (3) producing accurate testbenches
+work employs a hierarchical reward system and           and corresponding PPA metrics critical for precise
+Curriculum-Guided Dynamic Policy Optimization           reward computation. Extensive validation and rig-
+(CDPO), enabling the LLM to adapt the optimiza-         orous filtering procedures ensure dataset quality,
+tion goals with the training process and optimize       significantly boosting the robustness and effective-
+RTL code generation according to specific PPA           ness of subsequent training processes.
+targets. This empowers the LLM to generate RTL
+codes that not only meet functional correctness re-     2   Background
+quirements but also exhibit high quality in terms
+of hardware PPA. Our main contributions are as          Large Language Models (LLMs) have demon-
+follows:                                                strated significant potential in generating Verilog
+   Hierarchical Rewards from Comprehensive              code directly from natural language specifications.
+EDA Toolchain: We build a closed-loop RTL gen-          Despite this potential, the quality of the generated
+eration pipeline that tightly integrates a compre-      Verilog code remains limited due to two fundamen-
+hensive open-source EDA toolchain (compilation,         tal challenges: ensuring functional correctness and
+simulation, synthesis, and backend analysis) into       achieving optimization in terms of PPA.
+reinforcement learning. Based on this toolchain, we        Several approaches have been proposed to im-
+derive hierarchical reward signals spanning think-      prove functional correctness in Verilog code genera-
+ing format, syntax validity, functional correctness,    tion. For instance, RTLFixer (Tsai et al., 2024) and
+synthesizability, and PPA, together with a strict hi-   HDLDebugger (Yao et al., 2024a) utilize Retrieval-
+erarchical gating mechanism that avoids expensive       Augmented Generation (RAG) to facilitate au-
+downstream evaluation on invalid designs. This          tonomous debugging by LLMs. Additionally, fine-
+enables direct tool-verified supervision for func-      tuning (Chang et al., 2024) and multimodal tech-
+tional correctness and provides PPA-aware feed-         niques (Chang et al., 2025) have been explored
+back grounded in physical implementation.               to enhance functional accuracy. Regarding perfor-
+   Curriculum-Guided Dynamic Policy Opti-               mance optimization, RTLRewriter and SymRTLO
+mization (CDPO): We propose CDPO for multi-             (Yao et al., 2024b; Wang et al., 2025) applies code
+objective RTL optimization under two key chal-          analysis combined with RAG to pinpoint redundant
+lenges in managing EDA-derived rewards: (i)             structures and potential optimizations. VeriGen-
+learning-stage mismatch, where process rewards          MCTS (DeLorenzo et al., 2024) leverages MCTS
+                                                   Multi-Stage Automatic Data Augmentation
+                                                                                                                     Augmented Prompt                      SFT Data
+                            Reasoning            Reasoning           Preference-Aware Data Augmentation
+                                                                                                                     with Design Priority               Design Prompt
+                           Commercial            Response        Add Design Priority Preference Vector Setup
+                             Models                                                                                  Preference Vector                Reasoning Response
+                                                                                                                                                            RL Data
+                                                                                Verified Data
+                        Large Commercial                       Iverilog        Design Prompt                        EDA                               Augmented Prompt
+    Design Verilog                                Verilog
+                              Model                           Simulator          Testbench        Verified         Tools                                   Testbench
+    Prompt
+                                                                                  Verilog         Verilog                         Reference               PPA Metrics
+                                                 Testbench                                                                                             Preference Vector
+                                                                                                                                 PPA metrics
+                                                                                                                                                                Process Reward
+      Training Pipeline                                        Hierarchical Reward Based Reinforcement Learning                                                  Core Reward
+                                            Design
+                                           Description          Sample 0
+          Base Model                                                                Extract
+                                                                <Thinking>                               Testbench               Reference PPA
+                                                                                    Verilog
+                                                                    +
+                     Cold Start                                  <Verilog>
+
+                     Finetuning              CoT Prompt                           Reasoning
+                                                                Sample 1                           Iverilog           Iverilog             Yosys
+                                                                                   Format                                                                 OpenROAD
+                                             Model                                                Compiler           Simulator
+        Finetuned Model                                                            Checker
+                                                                Sample 2
+
+                         RL
+                                                                    ……
+                                                                                    Format        Compilation         Function            Synthesis        PPA Reward
+                                        Update
+                      Training                                                      Reward          Reward            Reward               Reward            Vector
+                                        Params
+                                                                Sample n
+            ChipSeek
+                                                             Curriculum-Guided Dynamic Policy             {𝑟𝑓𝑚𝑡 , 𝑟𝑠𝑦𝑛 , 𝑟𝑓𝑢𝑛 , 𝑟𝑠𝑦𝑠 , 𝑟𝑝𝑝𝑎 }1~𝑛 Reward Vector List
+                                                                       Optimization                             𝑝𝑑𝑒𝑙𝑎𝑦 , 𝑝𝑎𝑟𝑒𝑎 , 𝑝𝑝𝑜𝑤𝑒𝑟            Preference Vector
+
+
+                         Figure 2: Our Hierarchical Reward based Reinforcement Learning Framework.
+
+
+to optimize hardware performance metrics.                                           tional correctness and PPA). To optimize compu-
+                                                                                    tational resources, we implement a strict gating
+3     Method                                                                        mechanism where downstream metrics are only
+                                                                                    evaluated if upstream constraints are satisfied.
+3.1     Overview
+                                                                                    Process Rewards (Rpro ): These serve as binary
+Our framework, ChipSeek, aims to align LLMs                                         prerequisites for a valid Verilog code.
+with the rigorous constraints of hardware design.                                      Format Reward (rf mt ) enforces the CoT struc-
+As illustrated in Figure 2, the framework operates                                  ture (think)...(answer)... to promote
+in a closed loop where the LLM acts as a policy                                     reasoning stability.
+πθ , generating Verilog code y given a design spec-                                    Syntax Reward (rsyn ) is verified by the Icarus
+ification x. The generated code is evaluated by a                                   Verilog compiler, where rsyn = 1 indicates suc-
+comprehensive EDA toolchain, providing feedback                                     cessful compilation.
+signals ranging from basic syntax compliance to                                        Synthesis Reward (rsys ) is verified by Yosys
+complex PPA metrics.                                                                and OpenROAD (Ajayi et al., 2019), where rsys =
+   To effectively navigate this complex optimiza-                                   1 confirms the design is physically synthesizable
+tion landscape, we propose Curriculum-Guided                                        into a netlist, ensuring hardware realizability be-
+Dynamic Policy Optimization. Unlike traditional                                     yond logical syntax.
+RLVR methods that aggregate rewards into a scalar                                   Core Rewards (Rcor ): These evaluate the seman-
+before optimization, CDPO disentangles distinct                                     tic quality and performance of the design.
+feedback signals, normalizes and aggregates them                                       Function Reward (rf unc ) is determined by test-
+in the advantage space, and dynamically modu-                                       bench simulation, where rf unc = 1 only if all test
+lates their influence via a curriculum schedule. This                               cases pass.
+schedule guides the model to first master reason-                                      PPA Reward Vector(rppa ) quantifies Power,
+ing structures and syntactic compliance, laying the                                 Delay, and Area rewards. For each metric m ∈
+groundwork for subsequent optimization of func-                                     {power, delay, area}, the reward is the relative
+tional correctness and PPA performance.                                             improvement over a reference design: rm =
+                                                                                    refm /genm , where refm and genm are the metric
+3.2     Hierarchical Rewards Definition                                             values of the reference design and the generated
+We partition the rewards into Process Rewards (For-                                 design.
+mat, Syntax, Synthesis) and Core Rewards (func-                                     Gating Mechanism: We impose a hierarchical de-
+pendency chain to avoid expensive simulations on                process rewards (e.g., syntax and format) and grad-
+invalid code: Syntax → Function → Synthesis                     ually shifts its emphasis toward the core objectives
+→ PPA. Specifically, a higher-level reward is com-              (e.g., functional correctness and PPA) as it masters
+puted only if the immediate lower-level reward is               basic Verilog programming patterns, enabling an
+positive (e.g., rf unc is triggered only if rsyn = 1).          easy-to-hard learning progression. For each process
+If a stage fails, the evaluation terminates, and all            objective k ∈ Rpro at training step s, we compute
+subsequent rewards are assigned a value of 0.                                             (s)
+                                                                the global success rate µ̄k over the entire training
+                                                                batch of B prompts and G completions:
+3.3   Curriculum-Guided Dynamic Policy
+                                                                                                 B   G
+      Optimization (CDPO)                                                        (s)        1 X X (s)
+                                                                               µ̄k =                   r ,                                   (2)
+Given the hierarchical rewards in Section 3.2, we                                         B × G j=1 i=1 k,ji
+optimize the policy with two design choices: (i)                        (s)
+decoupled advantage estimation for each reward,                 where rk,ji is the reward for the i-th completion of
+and (ii) dynamic policy optimization that apply self-           the j-th prompt. We first compute an instantaneous
+adaptive weights of rewards over training steps                 curriculum signal
+and conditions PPA optimization on prompt-level
+                                                                                                      
+                                                                                  (s)              (s)
+                                                                                α̂k = max 0, 1 − µ̄k ,                                       (3)
+preferences. Finally, we aggregate all objectives at
+the advantage level and update the policy with the              and then apply an exponential moving average to
+corresponding loss.                                             obtain a smooth curriculum coefficient:
+                                                                               (s)          (s−1)                         (s)
+3.3.1 Decoupled Advantage Estimation                                          αk = β αk              + (1 − β) α̂k .                         (4)
+
+For each prompt q, we sample a group of G com-                  This ensures the gradient contribution of each pro-
+pletions {oi }Gi=1 . Each completion yields a multi-            cess reward changes smoothly across steps, reduc-
+objective reward vector ri containing component                 ing batch-to-batch oscillation. The aggregated pro-
+metrics rk,i , where each metric corresponds to the             cess advantage is:
+process (Rpro ) and objective (Rcor ) definitions de-                                            X          (s)     (k)
+                                                                                 Apro
+                                                                                  i,t =                    αk Âi,t .                        (5)
+tailed in Section 3.2.                                                                      k∈Rpro
+   For a specific component k, the decoupled token-
+level advantage is defined as:                                  Preference-conditioned Weighting for PPA Re-
+                                                                wards. We maintain a fixed weight for func-
+         (k)     rk,i − µk
+       Âi,t =             ,   ∀t ∈ {1, . . . , |oi |},   (1)   tional correctness while steering PPA optimiza-
+                  σk + ϵ
+                                                                tion via prompt-dependent preference templates.
+where µk and σk denote the mean and standard de-                This design allows the policy to prioritize the cor-
+viation of the k-th reward component across group               responding PPA component according to the opti-
+G. This results in a set of advantages that are subse-          mization preference specified in the prompt. Let
+quently aggregated in the dynamic policy optimiza-              p(q) = (pP , pD , pA ) denote the preference vec-
+tion phase. Such normalization brings reward com-               tor extracted from promptP q (e.g., via tags like
+ponents of different scales onto a common scale                 [low_power]), where         pm = 1. For the i-th
+before aggregation, effectively mitigating cross-               completion, the aggregated core advantage is:
+component interference caused by reward scale                                          (f unc)
+                                                                                                           X                       (m)
+                                                                   Acor
+                                                                    i,t = wf unc Âi,t           +                    pm (q)Âi,t .          (6)
+mismatch.                                                                                            m∈{P,D,A}
+
+3.3.2 Dynamic Policy Optimization                                  The final token-level advantage for optimization
+We dynamically weight Process rewards via cur-                  is formed by summing the adaptive process compo-
+riculum annealing, and weight Objective rewards                 nent and the preference-weighted core component:
+via fixed function reward weight plus preference-
+                                                                                     Atotal
+                                                                                      i,t   = Apro    cor
+                                                                                               i,t + Ai,t .                                  (7)
+conditioned PPA reward weights. All objectives are
+combined after advantage estimation.                               For each prompt q, we sample a group of G
+                                                                rollouts {oi }G
+                                                                              i=1 from the behavior policy πθold . We
+Adaptive Curriculum for Process Rewards.
+                                                                maximize the expected objective:
+We utilize a curriculum weight schedule mecha-
+                                                                                                                     |oi |
+                                                                                            "                      G X
+                                                                                                                                         #
+nism to stabilize the optimization trajectory. This                                                   1            X
+                                                                 J (θ) = E{oi }G                                                Oi,t (θ) , (8)
+ensures that the policy initially focuses on easier                            i=1 ∼πθold
+                                                                                                 PG
+                                                                                                     i=1   |oi |   i=1 t=1
+                                                                                                Format Reward                                           Syntax Reward
+where the token-level objective Oi,t (θ) prevents                                  1.0
+                                                                                                                                      0.950
+
+
+
+
+                                                                      Average Reward
+
+
+
+
+                                                                                                                         Average Reward
+excessive policy updates via decoupled clipping:                                   0.8                                                0.925
+                                                                                   0.6                                                0.900
+                 
+   Oi,t (θ) = min ri,t (θ)Atotal
+                           i,t ,
+                                                                                                        Format Reward                 0.875                    Syntax Reward
+                                                            (9)
+                                                                                           50      100 150 200                                     50     100 150 200
+                                                       
+            clip ri,t (θ), 1 − εlow , 1 + εhigh Atotal
+                                               
+                                                 i,t   .                                             Steps                                                  Steps
+                                                                               0.75         Function Reward                                      PPA & Synthesis Rewards
+                                                                                                                                          0.65
+
+
+
+
+                                                                  Average Reward
+
+
+
+
+                                                                                                                             Average Reward
+The probability ratio ri,t (θ) is defined as in                                0.70                                                       0.60                    Synth
+Eq. (10).                                                                                                                                                         Delay
+                                                                               0.65                                                       0.55
+                                                                                                                                                                  Area
+                                                                                                       Function Reward                    0.50                    Power
+                           πθ (oi,t | q, oi,<t )
+             ri,t (θ) =                            .       (10)                            50      100 150 200                                     50     100 150 200
+                          πθold (oi,t | q, oi,<t )                                                   Steps                                                  Steps
+
+3.4   Multi-Stage Data Generation Framework                           Figure 3: The Verilog code rewards and format reward
+                                                                      increase during reinforcement learning. Each plotted
+As depicted on the upper half of Figure 2, our                        point is computed as an average over a window of 30
+multi-stage automated data augmentation frame-                        neighboring steps to smooth the curves.
+work comprises three main stages. The first creates
+a dataset for supervised fine-tuning using CoT rea-                                P
+                                                                     the constraint m∈P,D,A pm = 1, the template
+soning. The subsequent two stages generate data
+                                                                     ensures the preferred metric receives the largest
+tailored for reinforcement learning stage.
+                                                                     weight.
+   For the initial supervised training, we curate Ver-
+ilog code from online repositories, perform syntax                    4                  Experiment
+checking, and then use the DeepSeek-R1 model to
+enrich the samples with natural language descrip-                     4.1                 Implementation Details
+tions and CoT reasoning chains. This foundational                    We adopt the CodeLlama-7B, CodeQwen-7B,
+dataset fosters the model’s initial reasoning and                    DeepSeek-Coder-v1.5-7B and Qwen2.5-Coder-7B-
+Verilog generation capabilities.                                     Instruct model as our base models. During the cold-
+   To generate data for accurate rewards computa-                    start fine-tuning stage, we use 29,127 data samples
+tion, we first address the functional reward. We                     to impart preliminary reasoning and Verilog genera-
+use GPT-5 to generate multi-case testbenches for                     tion capabilities to the model. Subsequently, during
+our Verilog codes. A verification pipeline then en-                  reinforcement learning stage, we further train the
+sures that only functionally correct code-testbench                  model using 8,453 data samples to enhance its ca-
+pairs are included in the RL training set, providing                 pabilities. Both training datasets are strictly filtered
+significant validation feedback.                                     to exclude any cases from the benchmark. We con-
+   Next, to provide the PPA performance reward,                      duct all training processes on a cluster of 4 NVIDIA
+we use an automated backend pipeline to extract                      A100 80GB GPUs, leveraging the DeepSpeed dis-
+power, area, and delay metrics via NanGate45 pro-                    tributed training framework and the vLLM infer-
+cess simulations. Validated designs with their PPA                   ence framework to accelerate training.
+metrics are integrated into the dataset.                                Furthermore, we employ a multi-faceted strategy
+   To enable multi-objective optimization, we em-                    to accelerate the computationally intensive reward
+ploy a specialized data augmentation strategy con-                   calculation process. First, we utilize a thread pool
+sisting of two key steps: prompt augmentation and                    to concurrently run multiple simulation and synthe-
+preference vector generation.                                        sis tasks. Additionally, we implement a hierarchical
+   For Prompt Augmentation, we augment each                          gating technique based on a “fail-fast" principle. In
+instruction in our RL dataset with a fine-grained                    this pipeline, any Verilog sample that fails an early-
+design priority, such as “Focus on minimizing the                    stage evaluation is immediately discarded and not
+hardware area." This guides the model to optimize                    passed to subsequent more costly stages. For exam-
+for specific PPA metrics.                                            ple, a design that fails the functional correctness
+   To complement these prompts, we assign                            simulation will not proceed to the PPA evaluation.
+a corresponding Preference Vector p⃗(q) =                            This multistage filtering dramatically reduces com-
+(pP , pD , pA ) according to a predefined set of                     putation time by avoiding full evaluations for in-
+templates. This vector is used to compute the                        feasible candidates, significantly accelerating the
+preference-weighted advantage in Eq. 6. Under                        overall reward calculation process.
+Type             Model            Size   VerilogEval Machine (%)    VerilogEval Human (%)     RTLLM v1.1 (%)
+                                         pass@1   pass@5 pass@10 pass@1     pass@5 pass@10 Syntax@5 Pass@5
+Foundational     GPT-4o              -    65.9     71.4    72.7     57.1     63.9     66.7      93.9     65.5
+Models           GPT-o1              -    67.4     79.2    81.8     58.5     68.0     71.2      93.1     72.4
+                 CodeLlama        7B      43.1     47.1    47.7     18.2     22.7     24.3      62.6     29.9
+                 DeepSeek-Coder 6.7B      52.2     55.4    56.8     30.2     33.9     34.9      64.4     29.3
+Base Models
+                 CodeQwen         7B      46.5     54.9    56.4     22.5     26.1     28.0      65.8     34.0
+                 Qwen2.5-Coder    7B      51.3     76.3    81.8     27.8     43.6     48.7      86.2     48.3
+Origen           DeepSeek-Coder    7B     74.1     82.4    85.7     54.4     60.1     64.2       -       65.5
+ReasoningV       Qwen2.5-Coder     7B     73.6     83.4    85.3     57.8     69.3     72.4       -       62.2
+                 Mistral           7B     62.5     72.2    76.6     36.7     45.5     49.2      73.7     37.3
+RTLCoder
+                 DeepSeek-Coder    7B     61.2     76.5    81.8     41.6     50.1     53.4      83.9     40.3
+                 CodeLlama        7B      78.1     86.0    88.5     45.2     59.5     63.8      89.2     50.3
+CodeV            DeepSeek-Coder 6.7B      77.9     88.6    90.7     52.7     62.5     67.3      87.4     51.5
+                 CodeQwen         7B      77.6     88.2    90.7     53.2     65.1     68.5      89.5     53.3
+                 CodeLlama        7B      78.1     85.5    87.8     63.1     67.8     69.7      93.9     52.9
+CraftRTL         DeepSeek-Coder 6.7B      77.8     85.5    88.1     65.4     70.0     72.1      92.9     58.8
+                 Starcoder2      15B      81.9     86.9    88.1     68.0     72.4     74.6      93.9     65.8
+                 CodeLlama         7B     85.7     88.8    89.5     63.4     70.1     72.4      93.1     82.8
+                 Deepseek-Coder    7B     83.3     88.9    90.2     64.3     71.1     73.7      93.1     72.4
+ChipSeek
+                 CodeQwen          7B     87.2     90.3    90.9     63.8     69.4     70.5      89.7     75.8
+                 Qwen2.5-Coder     7B     84.1     90.6    92.3     62.2     73.7     76.9      96.6     87.2
+
+Table 1: Evaluation Results on VerilogEval (Cui et al., 2025) and RTLLM v1.1 (Liu et al., 2024b). We compare our
+models with GPT series, 4 coding language models, and several Verilog specific models including RTLCoder (Liu
+et al., 2024a), CodeV (Zhao et al., 2024), Origen (Cui et al., 2025), CraftRTL (Liu et al., 2025) and ReasoningV
+(Qin et al., 2025).
+
+
+   As shown in Figure 3, the rewards designed in           21.4% and 2.7% respectively. In Table 1, we high-
+Section 3.2 steadily increase with training steps.         light the best scores in boldface.
+The rise in format reward indicates that the model
+has learned to apply chain of thought before code          Overall Performance Evaluation: To compare
+generation. The increase in Verilog code reward re-        the core design capabilities of different models, we
+flects the model’s improved chip design capability         first conduct an overall performance evaluation on
+during reinforcement learning, including enhanced          RTLLM v2.0 without any specified optimization
+syntax correctness, functional correctness, and PPA        objectives, with the results shown in Table 11. We
+performance. This upward trend in rewards pro-             focus our comparison on two key metrics: pass@5
+vides preliminary evidence for the effectiveness of        and the comprehensive Energy-Delay-Area Prod-
+our method.                                                uct (EDAP). We evaluate the original benchmark,
+                                                           GPT series, RTLCoder series, CodeV series, Ori-
+4.2    Results                                             gen, Verigen-MCTS and our ChipSeek series. For
+                                                           each design prompt, every large language model
+Functional Correctness: In Table 1, we compare             generates 10 candidate solutions. We then select
+the Verilog functional correctness of our proposed         the functionally correct designs and report the max-
+model against several baseline models on RTLLM             imum, mean, and minimum EDAP scores among
+v1.1 and VerilogEval benchmarks. On the Verilo-            these candidates. Our ChipSeek models achieve
+gEval benchmark, our model ChipSeek achieves               state-of-the-art results, with our best configura-
+the best performance for pass@1, pass@5, and               tion improving functional correctness (pass@5) by
+pass@10 in the Machine track. In the Human track,          11.4% and reducing the worst, average and best
+it attains state-of-the-art results for pass@5 and         EDAP by 20%, 18% and 9% respectively com-
+pass@10, and its performance for pass@1 is com-            pared to the previous best-performing models.
+parable to the previous best. On the RTLLM v1.1
+benchmark, our generated code achieves the high-           Performance Evaluation With Design Priorities:
+est pass@5 rate in both functionality and syntac-          To investigate the model’s fine-grained design ca-
+tical correctness, surpassing the previous best by         pabilities, we augmented the RTLLM v2.0 bench-
+                                     Func. ↑                    EDAP ↓                           Baseline barrel_shifter                     ChipSeek barrel_shifter
+Model                                                                                    module barrel_shifter (in, ctrl, out);      module barrel_shifter (
+                                                                                            input [7:0] in;                              input [7:0] in,
+                                     pass@5             max         avg          min        input [2:0] ctrl;                            input [2:0] ctrl,
+                                                                                            output [7:0] out;                            output [7:0] out
+                                                                                         wire [7:0] x,y;                             );
+GPT-4o                                70.45              1.13       1.02         0.84    mux2X1 ins_27 (.in0(in[7]),.in1(1'b0),      wire [7:0] shift_4;
+                                                                                         .sel(ctrl[2]),.out(x[7]));//4 bit shift     wire [7:0] shift_2;
+GPT-o1                                72.73              1.14       1.06         0.99    ……                                          wire [7:0] shift_1;
+                                                                                         mux2X1 ins_17 (.in0(x[7]),.in1(1'b0),       assign shift_4 = ctrl[2] ?
+                                                                                         .sel(ctrl[1]),.out(y[7]));//2 bit shift                      (in >> 4) : in;
+CodeLlama                             43.18              1.04       0.94         0.87    ……                                          assign shift_2 = ctrl[1] ?
+                                                                                         mux2X1 ins_07 (.in0(y[7]),.in1(1'b0),                        (shift_4 >> 2) : shift_4;
+DeepSeek-Coder-7B                     56.82              3.00       2.65         1.91    .sel(ctrl[0]),.out(out[7]));//1 bit shift   assign shift_1 = ctrl[0] ?
+CodeQwen                              38.64              2.76       2.56         2.41    ……
+                                                                                         endmodule
+                                                                                                                                                      (shift_2 >> 1) : shift_2;
+                                                                                                                                     assign out = shift_1;
+Qwen2.5-Coder                         56.82              1.38       1.04         0.89    module mux2X1 ( in0,in1,ssel,out);
+                                                                                         input in0, in1, sel;
+                                                                                                                                     endmodule
+
+                                                                                         output out;                                 Clarity: 63.9% lines of code reduction
+Verigen-MCTS                          45.45              0.96       0.93         0.87    assign out=(sel)?in1:in0;
+                                                                                         endmodule
+                                                                                                                                     Performance: 13.3% area reduction
+                                                                                                                                     Optimization Strategy: Operator Inference
+RTLCoder-M                            50.00              2.97       2.43         0.83
+RTLCoder-DC-6.7B                      52.27              5.83       3.73         1.41                  Figure 5: Case Study of ChipSeek.
+CodeV-CL                              59.09              2.12       1.43         1.02
+CodeV-DC-6.7B                         63.64              2.30       1.56         1.28
+CodeV-CQ                              61.36              3.35       2.53         1.03
+Origen-DC-7B                          65.91              3.17       1.45         0.85
+                                                                                         Delay Product), EDP (Energy-Delay Product) and
+                                                                                         functional error rate across 11 models grouped by
+ChipSeek-CL                           77.27              0.85       0.76         0.74
+ChipSeek-DC-7B                        75.00              0.93       0.84         0.78    4 base models, with the comprehensive results vi-
+ChipSeek-CQ                           72.73              0.84       0.83         0.81    sualized in the radar charts in Figure 4. We choose
+ChipSeek-QC                           84.09              0.96       0.88         0.81    the best metric score across 5 attempts for each
+                                                                                         problem. Each axis on the charts represents a nor-
+Table 2: A comparison of various models and methods
+                                                                                         malized score, where values closer to the center
+on function and overal performance. EDAP values are
+normalized to the original benchmark. QC: Qwen2.5                                        signify better performance. The visual evidence
+Coder, M: Mistral, DC: DeepSeek-Coder, CQ: Code-                                         shows that the polygon representing the ChipSeek
+Qwen, CL: CodeLlama                                                                      model is substantially smaller and more centered
+                                                                                         than that of its corresponding baseline in every
+Model             Delay↓      Area↓ Power↓ ADP↓                  EDP↓       Error↓       comparison, demonstrating superior results across
+Base Model         0.93        1.02  1.02 1.02                    1.02       0.46        all metrics simultaneously.
+Origen             0.88        0.93  0.93 0.85                    0.86       0.34
+                                                                                           For a quantitative view, Table 3 details the results
+ChipSeek           0.83        0.88  0.85 0.80                    0.77       0.25
+                                                                                         on the DeepSeek-Coder-7B based models. Com-
+Table 3: Specific design goals optimization capability of                                pared to the strong Origen baseline, our ChipSeek
+Verilog Coding Models with the DeepSeek-Coder-v1.5-                                      method significantly improves all metrics com-
+7B as the Base Model.                                                                    pared to the base model, reducing delay by 5%, area
+                                                                                         by 5%, power by 8%, ADP by 5% and EDP by 9%.
+  Base Model: CodeLlama                        Base Model: CodeQwen
+      Power          Area                        Power          Area                     This comprehensive improvement highlights the so-
+                                                                                         phisticated trade-off navigation learned through our
+ADP                          Delay        ADP                           Delay
+                                                                                         dynamic preference reinforcement learning frame-
+                                                                                         work.
+                                 CL                                        CQ
+                                 CodeV-CL                                  CodeV-CQ
+      EDP            Error       ChipSeek-CL      EDP           Error      ChipSeek-CQ
+
+Base Model: DeepSeek-Coder                Base Model: Qwen2.5-Coder
+      Power          Area                        Power          Area                     Case Study: The barrel shifter is a crucial com-
+                                                                                         ponent in high-performance computing. As shown
+ADP                          Delay        ADP                           Delay            on the left in Figure 5, the baseline design uses a
+                                                                                         traditional implementation with explicitly instanti-
+                                DS
+                                Origen-DS
+                                ChipSeek-DS
+                                                                           QC
+                                                                           ChipSeek-QC
+                                                                                         ated multiplexer (MUX) sub-modules. In contrast,
+      EDP            Error                        EDP           Error
+                                Metric Ranges:                                           shown on the right, our model found that describing
+            Delay: [0.83, 0.96] Area: [0.87, 1.12] Power: [0.84, 1.13]
+             ADP: [0.79, 1.12] EDP: [0.77, 1.12] Error: [0.16, 0.61]                     only the high-level barrel-shift behavior—without
+                                                                                         employing MUX sub-modules—allows backend
+Figure 4: Radar chart comparison of key performance
+                                                                                         EDA tools to perform the optimization of oper-
+metrics.
+                                                                                         ator inference. This process, combining a large-
+                                                                                         scale generation of candidate circuits with rapid
+mark with specific optimization objectives commu-                                        RL-based iteration and EDA feedback, yields a
+nicated through targeted prompts. We measure the                                         powerful co-optimization of front-end and back-
+metrics including power, delay, area, ADP (Area-                                         end design stages.
+   Optimized vs. Unoptimized Verilog                  Optimization Strategies                                     Reward Calculation Time per Step                                              Step Time
+            by Design Type                                                                                         869.2s                                                   1000 962.1s
+               Control                                   Algorithmic Optimization                           800
+         Memory           Utility              Operator                  Procedural Modeling                                                                                    800
+                4.5%                                               3.6%                                     600
+
+
+
+
+                                                                                                 Time (s)
+
+
+
+
+                                                                                                                                                                     Time (s)
+            4.5%       13.6%                   Inference 21.4%        7.1%
+                                                                               Pipelining                                                                                       600
+                                                                          7.1%                              400                                                                               417.4s
+                             11.4% Memory                                                                                   272.5s                                              400
+   Utility20.5%
+                       Unoptimized                                                     FSM                                                                                                                 239.2s 177.3s
+                                                                            10.7% Optimization              200                          99.3s                                  200
+           Optimized     (36.4%)
+                                6.8% Arithmetic
+                                                                                                                                                       58.1s
+            (63.6%)                                                                                           0                                                                   0
+                                                       21.4%                                                            e           st        llel              +                         e           st        llel              +
+                                                                                                                    Naiv    Fail-
+                                                                                                                                  fa     Para              fast                       Naiv    Fail-
+                                                                                                                                                                                                    fa     Para              fast
+                                                                                                                                                     FaiPl-arallel                                                     FaiPl-arallel
+                              4.5%              Logic                     14.3%
+                                   Control                                      Resource
+                                            Restructuring
+                 34.1%                                         14.3%             Sharing
+             Arithmetic                               Redundant Logic Elimination
+                                                                                                            Figure 7: Effect of Acceleration on Training Time.
+      Figure 6: Optimization Analysis of ChipSeek.
+
+ Method        Syntax↑ Pass@1↑ Synthesis↑ EDAP↓                                                   4.1, we significantly reduce computational over-
+ ChipSeek      91.36% 71.36%     70.91%     0.81                                                  head, achieving marked improvements in runtime
+ w/o Format    -7.27% -10.00%   -10.23%    +0.08                                                  performance. Specifically, as demonstrated in Fig-
+ w/o Syntax    -2.73%   -0.45%   -0.68%    +0.02                                                  ure 7, we achieve a substantial reduction of 93.5%
+ w/o Function -0.91% -14.31%    -14.55%    +0.56                                                  in reward calculation time and 81.6% in step up-
+ w/o Synthesis +0.45% -0.22%     -3.18%    +0.05                                                  date time. To ensure a rigorous and fair evaluation,
+ w/o PPA       -0.68%   -1.36%   -1.36%    +1.10                                                  all experiments were executed with the same train-
+                                                                                                  ing config on an isolated, dedicated server without
+Table 4: Ablation Study of Rewards. We use Qwen2.5-                                               concurrent processes.
+Coder-7B as the base model to conduct the experiment.
+
+ Method           Delay↓            Area↓        Power↓           ADP↓          EDP↓
+                                                                                                   5              Optimization Analysis
+ GRPO              0.89              0.90         0.91             0.85          0.85
+ DAPO              0.92              0.90         0.89             0.87          0.86              Shown in Figure 6, the optimization profile of
+ CDPO              0.84              0.87         0.86             0.79          0.77              ChipSeek demonstrates a strong competency in
+                                                                                                   gate-level and structural refinement. The model
+Table 5: Ablation Study of Reinforcement Learning                                                  predominantly leverages techniques such as Op-
+Methods (Shao et al., 2024; Yu et al., 2025a) on different
+                                                                                                   erator Inference and Logic Restructuring (both at
+RTL Performance Optimization goals.
+                                                                                                   21.4%) to enhance design efficiency. This profi-
+                                                                                                   ciency is particularly impactful on Arithmetic mod-
+4.3      Ablation Study                                                                            ules, which constitute the largest portion of opti-
+                                                                                                   mized designs. However, despite these strengths,
+We conducted an ablation study on the RTLLM
+                                                                                                   the model exhibits a comparatively weaker opti-
+v2.0 to evaluate the contribution of each component
+                                                                                                   mization capability on Control and Memory mod-
+within our framework, as detailed in Table 4. In this
+                                                                                                   ules. We hypothesize that this stems from a relative
+study, we systematically removed each reward and
+                                                                                                   scarcity of these circuit types within the training
+measured the impact on a suite of metrics: syntax
+                                                                                                   dataset, which may have limited the model’s expo-
+pass rate, pass@5, synthesis pass rate, and EDAP.
+                                                                                                   sure to their unique optimization patterns.
+The results in Table 4 show that the removal of
+any single component leads to performance degra-
+                                                                                                   6              Conclusion
+dation to varying degrees. Furthermore, we com-
+pared our CDPO algorithm with prior optimization                                                  We introduce ChipSeek, a reinforcement learning
+methods. As shown in Table 5, CDPO consistently                                                   framework for superior RTL generation. By using
+outperforms both GRPO and DAPO across all RTL                                                     direct feedback from the EDA toolchain as reward
+performance goals, highlighting its superior capa-                                                signals within our CDPO algorithm, ChipSeek si-
+bilities in multi-objective optimization tasks for                                                multaneously optimizes for both functional correct-
+critical chip design metrics.                                                                     ness and specific PPA goals. On standard bench-
+                                                                                                  marks, this approach allows our model to signifi-
+4.4      Runtime Analysis                                                                         cantly outperform previous models, demonstrating
+Compact and fast-inference RTL generation mod-                                                    superior results in both functional correctness and
+els are essential for efficient chip design work flows,                                           PPA performance. ChipSeek thus enables more
+particularly given the computational intensity and                                                efficient automated hardware design by bridging
+resource constraints of large-scale designs. Utiliz-                                              the gap between the training process and EDA
+ing the acceleration techniques detailed in Section                                               toolchain feedback.
+Limitations                                               Fan Cui, Chenyang Yin, Kexing Zhou, Youwei Xiao,
+                                                            Guangyu Sun, Qiang Xu, Qipeng Guo, Yun Liang,
+Our approach still has several practical limitations.       Xingcheng Zhang, Demin Song, and Dahua Lin.
+First, although the closed-loop design enables di-          2025. Origen: Enhancing rtl code generation with
+                                                            code-to-code augmentation and self-reflection. In
+rect optimization against compilation, simulation,
+                                                            Proceedings of the 43rd IEEE/ACM International
+and synthesis feedback, it remains computation-             Conference on Computer-Aided Design, ICCAD ’24,
+ally heavy due to repeated EDA invocations; in              New York, NY, USA. Association for Computing
+particular, reward evaluation still takes a long time       Machinery.
+even with the proposed gating mechanism to skip           Matthew DeLorenzo, Animesh Basak Chowdhury, Va-
+unnecessary tool calls. Second, while the optimiza-        sudev Gohil, Shailja Thakur, Ramesh Karri, Sid-
+tion profile indicates strong competency in gate-          dharth Garg, and Jeyavijayan Rajendran. 2024. Make
+level and structural refinement, the gains are not         every move count: Llm-based high-quality rtl code
+                                                           generation using mcts. Preprint, arXiv:2402.03289.
+uniform across circuit categories: consistent with
+our optimization analysis, ChipSeek exhibits com-         Mingzhe Gao, Jieru Zhao, Zhe Lin, Wenchao Ding, Xi-
+paratively weaker optimization capability on Con-           aofeng Hou, Yu Feng, Chao Li, and Minyi Guo. 2024.
+trol and Memory modules than on Arithmetic and              Autovcoder: A systematic framework for automated
+                                                            verilog code generation using llms. In 2024 IEEE
+Utility modules. We hypothesize that this gap is            42nd International Conference on Computer Design
+partly driven by a relative scarcity of control- and        (ICCD), pages 162–169.
+memory-centric designs in the training/evaluation
+data, which limits the model’s exposure to their          Chia-Tung Ho, Haoxing Ren, and Brucek Khailany.
+                                                            2025. Verilogcoder: Autonomous verilog coding
+distinct optimization patterns (e.g., stateful con-         agents with graph-based planning and abstract syntax
+trol flow and memory access behaviors) and makes            tree (ast)-based waveform tracing tool. Proceedings
+it harder to consistently discover effective refine-        of the AAAI Conference on Artificial Intelligence,
+ments under the same feedback budget.                       39(1):300–307.
+
+                                                          Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying
+                                                           Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gon-
+References                                                 zalez, Hao Zhang, and Ion Stoica. 2023. Efficient
+                                                           memory management for large language model serv-
+Tutu Ajayi, Vidya A. Chhabria, Mateus Fogaça, Soheil       ing with pagedattention. In Proceedings of the 29th
+  Hashemi, Abdelrahman Hosny, Andrew B. Kahng,             Symposium on Operating Systems Principles, SOSP
+  Minsoo Kim, Jeongsup Lee, Uday Mallappa, Ma-             ’23, page 611–626, New York, NY, USA. Association
+  rina Neseem, Geraldo Pradipta, Sherief Reda, Mehdi       for Computing Machinery.
+  Saligane, Sachin S. Sapatnekar, Carl Sechen, Mo-
+  hamed Shalan, William Swartz, Lutong Wang, Zhe-         Cangyuan Li, Chujie Chen, Yudong Pan, Wenjun Xu,
+  hong Wang, and 2 others. 2019. Invited: Toward            Yiqi Liu, Kaiyan Chang, Yujie Wang, Mengdi Wang,
+  an open-source digital flow: First learnings from the     Huawei Li, Yinhe Han, and Ying Wang. 2025. Au-
+  openroad project. In 2019 56th ACM/IEEE Design            tosilicon: Scaling up rtl design generation capability
+  Automation Conference (DAC), pages 1–4.                   of large language models. ACM Trans. Des. Autom.
+                                                            Electron. Syst., 30(6).
+Kaiyan Chang, Zhirong Chen, Yunhao Zhou, Wenlong
+  Zhu, Kun Wang, Haobo Xu, Cangyuan Li, Mengdi            Mingjie Liu, Yun-Da Tsai, Wenfei Zhou, and Haoxing
+  Wang, Shengwen Liang, Huawei Li, Yinhe Han, and           Ren. 2025. CraftRTL: High-quality synthetic data
+  Ying Wang. 2025. Natural language is not enough:          generation for verilog code models with correct-by-
+  Benchmarking multi-modal generative ai for verilog        construction non-textual representations and targeted
+  generation. In Proceedings of the 43rd IEEE/ACM           code repair. Preprint, arXiv:2409.12993.
+  International Conference on Computer-Aided Design,
+  ICCAD ’24, New York, NY, USA. Association for           Shang Liu, Wenji Fang, Yao Lu, Jing Wang, Qijun
+  Computing Machinery.                                      Zhang, Hongce Zhang, and Zhiyao Xie. 2024a. Rtl-
+                                                            coder: Fully open-source and efficient llm-assisted
+Kaiyan Chang, Kun Wang, Nan Yang, Ying Wang, Dan-           rtl code generation technique. IEEE Transactions on
+  tong Jin, Wenlong Zhu, Zhirong Chen, Cangyuan             Computer-Aided Design of Integrated Circuits and
+  Li, Hao Yan, Yunhao Zhou, Zhuoliang Zhao, Yuan            Systems.
+  Cheng, Yudong Pan, Yiqi Liu, Mengdi Wang, Sheng-
+  wen Liang, Yinhe Han, Huawei Li, and Xiaowei Li.        Shang Liu, Yao Lu, Wenji Fang, Mengming Li, and
+  2024. Data is all you need: Finetuning llms for chip      Zhiyao Xie. 2024b. Openllm-rtl: Open dataset
+  design via an automated design-data augmentation          and benchmark for llm-aided design rtl genera-
+  framework. In Proceedings of the 61st ACM/IEEE            tion(invited). In Proceedings of 2024 IEEE/ACM
+  Design Automation Conference, DAC ’24, page 1–6.          International Conference on Computer-Aided Design
+  ACM.                                                      (ICCAD). ACM.
+Zehua Pei, Hui-Ling Zhen, Mingxuan Yuan, Yu Huang,          Zhiqi Lin, Bole Ma, Guangming Sheng, Yuxuan
+  and Bei Yu. 2024. Betterv: controlled verilog genera-     Tong, Chi Zhang, Mofan Zhang, Wang Zhang, and
+  tion with discriminative guidance. In Proceedings of      16 others. 2025a. Dapo: An open-source llm re-
+  the 41st International Conference on Machine Learn-       inforcement learning system at scale. Preprint,
+  ing, ICML’24. JMLR.org.                                   arXiv:2503.14476.
+Haiyan Qin, Zhiwei Xie, Jingjing Li, Liangchen Li,        Zhongzhi Yu, Mingjie Liu, Michael Zimmer,
+  Xiaotong Feng, Junzhan Liu, and Wang Kang.                Yingyan Celine Lin, Yong Liu, and Haoxing Ren.
+  2025. ReasoningV: Efficient verilog code genera-          2025b. Spec2rtl-agent: Automated hardware code
+  tion with adaptive hybrid reasoning model. Preprint,      generation from complex specifications using llm
+  arXiv:2504.14560.                                         agent systems. Preprint, arXiv:2506.13905.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu,           Yang Zhao, Di Huang, Chongxiao Li, Pengwei Jin,
+  Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan            Ziyuan Nan, Tianyun Ma, Lei Qi, Yansong Pan,
+  Zhang, Y. K. Li, Y. Wu, and Daya Guo. 2024.               Zhenxing Zhang, Rui Zhang, Xishan Zhang, Zi-
+  Deepseekmath: Pushing the limits of mathemati-            dong Du, Qi Guo, Xing Hu, and Yunji Chen.
+  cal reasoning in open language models. Preprint,          2024. Codev: Empowering llms for verilog gener-
+  arXiv:2402.03300.                                         ation through multi-level summarization. Preprint,
+                                                            arXiv:2407.10424.
+Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin
+  Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin
+  Lin, and Chuan Wu. 2025. Hybridflow: A flexible
+  and efficient rlhf framework. In Proceedings of the
+  Twentieth European Conference on Computer Sys-
+  tems, EuroSys ’25, page 1279–1297, New York, NY,
+  USA. Association for Computing Machinery.
+Shailja Thakur, Baleegh Ahmad, Hammond Pearce,
+  Benjamin Tan, Brendan Dolan-Gavitt, Ramesh Karri,
+  and Siddharth Garg. 2023. VeriGen: A large lan-
+  guage model for verilog code generation. Preprint,
+  arXiv:2308.00708.
+Yunda Tsai, Mingjie Liu, and Haoxing Ren. 2024. Rtl-
+  fixer: Automatically fixing rtl syntax errors with
+  large language model. In Proceedings of the 61st
+  ACM/IEEE Design Automation Conference, DAC ’24,
+  New York, NY, USA. Association for Computing Ma-
+  chinery.
+Yiting Wang, Wanghao Ye, Ping Guo, Yexiao He, Ziyao
+  Wang, Yexiao He, Bowei Tian, Shwai He, Guoheng
+   Sun, Zheyu Shen, Sihan Chen, Ankur Srivastava,
+   Qingfu Zhang, Gang Qu, and Ang Li. 2025. Sym-
+   RTLO: Enhancing rtl code optimization with llms
+   and neuron-inspired symbolic reasoning. Preprint,
+   arXiv:2504.10369.
+Clifford Wolf, Johann Glaser, and Johannes Kepler.
+  2013. Yosys-a free verilog synthesis suite.
+Xufeng Yao, Haoyang Li, Tsz Ho Chan, Wenyi Xiao,
+  Mingxuan Yuan, Yu Huang, Lei Chen, and Bei
+  Yu. 2024a. Hdldebugger: Streamlining hdl de-
+  bugging with large language models. Preprint,
+  arXiv:2403.11671.
+Xufeng Yao, Yiwen Wang, Xing Li, Yingzhao Lian,
+  Ran Chen, Lei Chen, Mingxuan Yuan, Hong Xu,
+  and Bei Yu. 2024b. Rtlrewriter: Methodologies for
+  large models aided rtl code optimization. Preprint,
+  arXiv:2409.11414.
+Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan,
+  Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan,
+  Gaohong Liu, Lingjun Liu, Xin Liu, Haibin Lin,
+A     CDPO Algorithm                                           synthesis feasibility, and PPA performance metrics.
+                                                               The system incorporates several critical training
+Algorithm 1 CDPO (Curriculum-Guided Dynamic                    speed optimizations including DeepSpeed ZeRO-2
+Policy Optimization)                                           acceleration strategy for efficient distributed train-
+                                                               ing and vLLM for high-throughput inference gen-
+Require: Policy πθ , behavior policy πθold ; batch
+                                                               eration.
+    size B, group size G; process rewards Rpro ,
+                                                                  The functional correctness evaluation phase uti-
+    objective rewards Rcor = {func, P, D, A};
+                                                               lizes Icarus Verilog simulation within containerized
+    EMA factor β, ϵ, clip bounds εlow , εhigh ,
+                                                               environments to assess both syntactic validity and
+    wf unc ; curriculum weights {αk }k∈Rpro
+                                                               behavioral correctness of generated designs. Each
+Ensure: Updated θ and {αk }
+                                                               Verilog code snippet is compiled with comprehen-
+ 1: for training step s = 1, 2, . . . do
+                                                               sive warning flags and executed against provided
+ 2:    Sample prompts {qj }B j=1
+                                                               testbenches to determine functional accuracy. This
+ 3:    for each prompt qj do
+                                                               phase produces binary rewards for compilation suc-
+ 4:       p(qj ) ← E XTRACT P REF(qj )
+                                                               cess and testbench passage, establishing a foun-
+ 5:       Sample {oj,i }G
+                        i=1 ∼ πθold (· | qj )
+             (k)                                               dational requirement that designs must be func-
+ 6:       {rj,i } ← E VALT OOLCHAIN(qj , oj,i )                tionally correct before proceeding to performance
+ 7:       {Ab(k) } ← A DVANTAGE({r(k) }G , ϵ)                  evaluation. To optimize training efficiency, the sys-
+              j,i                        j,i i=1
+ 8:    end for                                                 tem implements intelligent filtering mechanisms
+ 9:    for each k ∈ Rpro do                                    that remove training samples where all generated
+            (s)     1 PB PG            (k)
+10:       µ̄k ← BG       j=1    i=1 rj,i
+                                                               responses have identical reward values, thereby
+             (s)                      (s)                      focusing computational resources on diverse and
+11:       α̂k ← max(0, 1 − µ̄k )
+            (s)       (s−1)                     (s)            informative examples.
+12:       αk ← β αk            + (1 − β) α̂k                      For designs that pass functional verification, the
+13:     end for                                                system performs comprehensive PPA analysis us-
+14:     L←0                                                    ing Yosys (Wolf et al., 2013) and OpenROAD
+15:     for each token oj,i,t in all rollouts do               (Ajayi et al., 2019) in a secondary evaluation phase.
+                                    (s) b(k)
+          Apro ← k∈Rpro αk A
+                    P
+16:                                         j,i                The synthesis process extracts detailed power con-
+17:       A  cor       ←               wf unc A b(f unc)   +   sumption, area utilization, and timing performance
+                                                 j,i
+          P                             (m)                    metrics from the generated designs. A key inno-
+              m∈{P,D,A} pm (qj )Aj,i
+                                      b
+             total                                             vation lies in the dynamic preference-based eval-
+18:       A        ← Apro + Acor
+                    π (o      |qj ,oj,i,<t )                   uation mechanism, where user-specified prefer-
+19:       r(θ) ← πθ θ (oj,i,t
+                         j,i,t |qj ,oj,i,<t )
+                        old                                    ence vectors allow flexible weighting of different
+20:        r̃ ← C LIP(r, 1 − εlow , 1 + εhigh)                PPA objectives, enabling the system to optimize
+21:        L ← L − min rAtotal , r̃Atotal                      for power-efficient, area-efficient, or performance-
+22:     end for                                                optimized designs based on application require-
+23:     Update θ by minimizing L; set θold ← θ (RL             ments. The reward manager implements efficient
+        step)                                                  parallel processing with ThreadPoolExecutor to
+24:   end for                                                  handle batch evaluation of multiple design candi-
+                                                               dates simultaneously, significantly reducing eval-
+                                                               uation time during training. All third-party bench-
+B     Implementation Details
+                                                               marks/tools are used in accordance with their orig-
+ChipSeek implements a comprehensive multi-stage                inal licenses, and we will release our code and
+reward evaluation system specifically designed for             scripts under an open-source license.
+Verilog code generation with PPA (Power, Perfor-                  The training configuration employs carefully
+mance, Area) optimization using Dynamic Prefer-                tuned hyperparameters optimized for Verilog
+ence Policy Optimization (CDPO). The reinforce-                code generation tasks. The system uses asym-
+ment learning algorithm is built upon VeRL (Sheng              metric clipping ratios with clip_ratio_low=0.2
+et al., 2025). The core architecture consists of a             and clip_ratio_high=0.28 to provide more flexi-
+specialized reward manager that orchestrates the               bility for positive policy updates while maintain-
+evaluation of generated Verilog designs across mul-            ing strict constraints on negative updates. Train-
+tiple dimensions including functional correctness,             ing operates with a batch size of 32 prompts,
+                            VerilogEval-Machine(%)                        VerilogEval-Human(%)
+Model
+                       pass@1        pass@5         pass@10         pass@1         pass@5           pass@10
+CodeLlama                43.1          47.1            47.7           18.2             22.7             24.3
++SFT                     48.1          60.2            69.9           27.8             53.6             58.9
++SFT+CDPO                85.7          88.8            89.5           63.4             70.1             72.4
+DeepSeek-Coder           52.2          55.4            56.8           30.2             33.9             34.9
++SFT                     55.7          75.4            78.1           33.8             45.8             52.3
++SFT+CDPO                83.3          88.9            90.2           64.3             71.1             73.7
+CodeQwen                 46.5          54.9            56.4           22.5             26.1             28.0
++SFT                     51.5          78.9            82.3           31.9             49.5             53.8
++SFT+CDPO                87.2          90.3            90.9           63.8             69.4             70.5
+Qwen2.5-Coder            51.3          76.3            81.8           27.8             43.6             48.7
++SFT                     57.3          75.4            79.0           34.7             49.9             54.5
++SFT+CDPO                84.1          90.6            92.3           62.2             73.7             76.9
+
+                        Table 6: An ablation study of Training Stage on VerilogEval.
+
+
+generating 8 responses per prompt, and uses             comprehensive score that guides the CDPO train-
+a conservative learning rate of 1e-6 with 10            ing process. This multi-faceted approach enables
+warmup steps and weight decay of 0.1. The               ChipSeek to learn nuanced trade-offs between dif-
+generation process employs high diversity set-          ferent design objectives while maintaining compu-
+tings with temperature=1.0 and top_p=1.0 during         tational efficiency through strategic filtering and
+training, while validation uses more conservative       acceleration techniques.
+top_p=0.7 for stable evaluation. Sequence lengths
+are configured for max_prompt_length=2048 and           C     Evaluation Details
+max_response_length=8192 tokens to accommo-
+                                                        For functionality evaluation, we use the unbiased
+date complex Verilog design descriptions.
+                                                        pass@k metrics to evaluate the functional correct-
+   Memory and computational efficiency optimiza-        ness of the generated designs, calculated as Equa-
+tions include FSDP (Fully Sharded Data Parallel)        tion 11. This metric estimates the probability that
+with parameter and optimizer offloading enabled,        at least one functionally correct design is generated
+sequence parallelism with sp_size=2, and dynamic        out of k attempts. n represents the total number of
+batch sizing to maximize GPU utilization. The sys-      generations and c represents the number of success-
+tem uses vLLM (Kwon et al., 2023) with tensor           fully generated code.
+model parallelism (gen_tp=2) for inference accel-
+eration, chunked prefill for memory efficiency, and
+                                                                                    "          #
+                                                                                              n−c
+                                                                                               k
+gradient checkpointing to reduce memory footprint                 pass@k := Etask 1 −          n    ,      (11)
+during training. Additionally, an overlong buffer                                              k
+
+mechanism with penalty_factor=1.0 discourages
+                                                           For performance evaluation of a design, we use
+excessively long responses that could impact train-
+                                                        fine-grained metrics including Delay, Area, Power
+ing stability. We use 13 x 4 A100 GPU hours to
+                                                        and comprehensive metrics including ADP (Area-
+fully train our models.
+                                                        Delay-Product), EDP (Energy-Delay-Product) and
+   Response format enforcement is integrated            EDAP (Energy-Delay-Area Product), calculated as
+through structured output validation, requiring gen-    Equation 12, 13, 14.
+erated content to follow a reasoning-then-answer
+format with explicit thinking and solution sections.               ADPgen = areagen × delaygen             (12)
+The final reward signal combines compilation fea-
+sibility, functional correctness, PPA improvement                 EDPgen = delaygen × powergen             (13)
+ratios relative to reference implementations, syn-
+thesis feasibility, and format compliance into a          EDAPgen = areagen × delaygen × powergen (14)
+                      RTLLM v2.0-Func (%)                             RTLLM v2.0-Performance
+Model
+                      Syntax             pass@5        Power        Area     Delay       ADP        EDP    EDAP
+CodeLlama                36.4             34.1             0.93      0.92     0.99          0.95    0.96   0.94
++SFT                     78.2             62.3             1.20      1.02     1.04          1.09    1.25   1.47
++SFT+CDPO                89.5             77.3             0.87      0.91     0.91          0.83    0.80   0.76
+DeepSeek-Coder           67.5             50.1             1.13      1.13     1.00          1.17    1.17   2.65
++SFT                     80.2             64.0             1.05      1.04     1.00          1.06    1.08   1.51
++SFT+CDPO                88.6             75.0             0.91      0.93     0.83          0.90    0.88   0.84
+CodeQwen                 33.8             33.8             1.18      1.18     0.95          1.20    1.21   2.56
++SFT                     81.6             69.1             1.05      1.06     1.02          1.10    1.10   1.42
++SFT+CDPO                87.3             72.7             0.89      0.92     0.94          0.88    0.86   0.82
+Qwen2.5-Coder            67.0             53.1             0.96      0.95     1.03          1.01    1.01   1.04
++SFT                     79.5             68.5             1.07      1.03     1.05          1.10    1.15   1.31
++SFT+CDPO                91.4             84.1             0.93      0.92     0.95          0.91    0.92   0.88
+
+Table 7: An ablation study of Training Stage on RTLLM-v2.0. Energy, Delay, Area, ADP, EDP, EDAP are all
+normalized to the benchmark baseline.
+
+Method           Syntax         Pass@5     Synthesis       Power     Area     Delay         ADP     EDP    EDAP
+ChipSeek          91.4           84.1       70.91          0.93       0.92     0.95         0.91    0.92   0.88
+-AdvAgg           88.7           78.1       68.8           0.95       0.94     0.96         0.93    0.94   0.92
+-Curriculum       90.8           72.5        63.2          0.96       0.95     0.95         0.94    0.94   0.93
+-PreVec           91.2           84.0       70.1           0.95       0.93     0.96         0.94    0.95   0.93
+
+Table 8: Ablation study on the effectiveness of key components in ChipSeek. AdvAgg denotes Advantage-Level
+Aggregation, Curriculum denotes the Curriculum Weight Schedule, and PreVec denotes the Preference Vector.
+
+
+   For an overall performance evaluation of a                performance range on that specific task. The scores
+model, we first filter the entire set of generated de-       for each task d are calculated as follows:
+signs for each task, Gd , to retain only those that are
+functionally correct and pass the testbench. This                   Scorebest (d) = min {Perfnorm (s)}       (18)
+                                                                                     s∈Sd
+creates a filtered set of valid designs, shown in
+                                                                                       1 X
+Equation 15.                                                        Scoreavg (d) =          Perfnorm (s)     (19)
+                                                                                      |Sd |
+                                                                                             s∈Sd
+   Sd = {s ∈ Gd | s passes the testbench}           (15)           Scoreworst (d) = max{Perfnorm (s)}        (20)
+                                                                                     s∈Sd
+   For each valid design s ∈ Sd , we then normalize
+its performance metric, Perf(s), against the refer-          Finally, the overall evaluation score for the model
+ence design’s performance, Perfref (d), for that task,       is determined by averaging these individual task
+calculating the normalized score as Equation 16.             scores across all successfully generated tasks T
+                                                             in the benchmark. This provides a comprehensive
+          Perfnorm (s) = Perf(s)/Perfref (d)        (16)     view of the model’s capabilities, captured in the
+                                                             final metric:
+  where
+                                                                                   1 X
+                                                                   Perfmethod =        Scoremethod (d)       (21)
+ Perf ∈ {Delay, Area, Power, ADP, EDP, EDAP}                                      |T |
+                                                                                       d∈T
+                                              (17)
+  From this set of normalized scores for each task,          where the subscript method can be substituted with
+we select the best (minimum), average, and worst             best, avg, or worst to obtain the corresponding over-
+(maximum) candidates to characterize the model’s             all performance score.
+                                  PDK                           Synthesis Opt           Synthesis Tool
+Model
+                 Sky130        gf180       ihp_sg13g2         Timing        Area       Yosys        DC
+RTLCoder           2.33         2.11           2.30            2.72         2.66        2.43        0.97
+CodeV              2.52         2.21           2.50            2.91         3.00        2.53        1.78
+Origen             1.46         1.37           1.41            1.52         1.59        1.45        0.97
+GPT-4              0.97         0.97           0.97            0.99         0.97        1.02        0.99
+GPT-o1             1.03         1.04           1.01            1.00         1.07        1.06        1.00
+ChipSeek           0.77         0.78           0.81            0.82         0.78        0.76        0.81
+
+Table 9: Results under different PDKs and synthesis configurations. Values are normalized to the benchmark
+baseline.
+
+
+D    Detailed Results and More Ablation                 -P RE V EC (removing the preference vector, ppa re-
+     Study                                              wards are assigned with the constant weights). All
+                                                        settings use the same training setup, EDA toolchain,
+To comprehensively evaluate the effectiveness of        and evaluation pipeline.
+our proposed training pipeline, we conduct a series
+                                                           We report two types of results. (i) No-preference
+of ablation studies. We begin by analyzing the im-
+                                                        evaluation: Syntax, Pass@5, Synthesis, and EDAP
+pact of each training stage on functional correctness
+                                                        are measured on prompts without any PPA pref-
+using the VerilogEval benchmark. The results, pre-
+                                                        erence, reflecting overall correctness and synthe-
+sented in Table 6, demonstrate the contribution of
+                                                        sizability. (ii) Preference-conditioned evaluation:
+Supervised Fine-Tuning (SFT) and the subsequent
+                                                        Power, Area, and Delay (and their composites AD-
+reinforcement learning stage (CDPO). Across all
+                                                        P/EDP/EDAP) are measured under the correspond-
+four base models, the application of SFT provides
+                                                        ing preference prompts (e.g., Power under power
+an improvement in ‘pass@k‘ metrics. The intro-
+                                                        prompts). All PPA metrics are normalized to the
+duction of the CDPO stage further elevates perfor-
+                                                        reference, where lower is better.
+mance, leading to significant gains in functional
+correctness.                                               The full ChipSeek achieves the best overall per-
+   We then extend our ablation study to assess the      formance. Removing AdvAgg reduces both cor-
+impact of the training stages on PPA metrics. As        rectness and PPA quality (e.g., Pass@5 84.1→78.1
+shown in Table 7, while the SFT stage contin-           and EDAP 0.88→0.92), indicating that advantage-
+ues to improve functional metrics (‘Syntax’ and         space aggregation helps stabilize multi-objective
+‘pass@5’), it sometimes leads to a degradation in       optimization. Removing Curriculum causes the
+performance metrics. This observation underscores       largest drop in end-to-end success (Pass@5
+a critical challenge: optimizing for functionality      84.1→72.5 and Synthesis 70.91→63.2) and also
+does not guarantee optimization for PPA. However,       worsens EDAP (0.88→0.93), showing the curricu-
+the subsequent CDPO stage effectively addresses         lum is important for transitioning from process
+this issue. The results clearly indicate that CDPO      compliance to PPA optimization. Finally, removing
+not only enhances functional correctness further but    PreVec keeps syntax-level capability similar but
+also significantly improves all PPA metrics, bring-     weakens preference-following and PPA outcomes
+ing most values below the 1.0 baseline. This demon-     (e.g., Power 0.93→0.95 and EDAP 0.88→0.93),
+strates the crucial role of our reinforcement learn-    confirming that explicit preference conditioning is
+ing approach in optimizing for real-world hardware      necessary for controllable PPA optimization.
+design constraints.                                        Next, we present a detailed case-by-case EDAP
+   Table 8 presents an ablation study of ChipSeek       comparison against the original benchmark designs
+built on the Qwen2.5-7B base model. We compare          in Table 11. This table provides raw PPA metrics
+the full system with three variants: -A DVAGG (re-      for a diverse set of hardware modules. The results
+moving advantage-level aggregation, signals are         marked in bold indicate instances where ChipSeek
+aggregated in reward level), -C URRICULUM (re-          generated a design with superior PPA performance
+moving the curriculum weight schedule, process re-      compared to the benchmark. As the data shows,
+wards are assigned with the constant weights), and      our model successfully optimizes a wide variety of
+designs, often achieving significant improvements             Model        Pass@5     Avg Normalized EDAP
+in one or more PPA metrics.                                   RTLCoder      5.6%               1.34
+                                                              CodeV         8.9%               1.27
+E    Sensitivity Study                                        Origen        6.7%               1.03
+                                                              GPT-4        27.8%               0.99
+                                                              GPT-o1       34.4%               1.01
+We conduct a sensitivity study to assess whether              ChipSeek     53.3%               0.86
+our PPA gains generalize beyond a single toolchain
+setting. Concretely, we evaluate average normal-         Table 10: Scalability results on large-scale designs from
+ized EDAP on the RTLLM benchmark while vary-             AutoSilicon (e.g., CPU/NPU blocks, avg. ∼560 LoC).
+ing three production-level factors: (i) standard-cell
+libraries (PDKs), (ii) synthesis tools, and (iii) syn-
+thesis optimization strategies. This analysis probes
+the robustness of ChipSeek to common sources of
+                                                         final reward values. This indicates that CDPO is
+variability in EDA flows.
+                                                         able to allocate optimization capacity to the truly
+   Starting from the same set of RTLLM tasks,
+                                                         performance-critical signals, rather than overfitting
+we keep the evaluation protocol fixed and only
+                                                         to shallow constraints.
+change one component of the synthesis flow at
+a time. We consider three representative PDK li-
+                                                            A key factor behind this behavior is the curricu-
+braries (Sky130, gf180, ihp_sg13g2), two
+                                                         lum weight schedule in CDPO. As visualized in
+synthesis tools (open-source Yosys and commer-
+                                                         Figure 9, the weights of process rewards (format,
+cial Design Compiler (DC)), and two typ-
+                                                         syntax, and synthesis) decay rapidly as training pro-
+ical optimization targets (timing-driven vs. area-
+                                                         gresses, effectively shifting the learning emphasis
+driven synthesis). Following prior RTLLM evalua-
+                                                         from easy-to-satisfy constraints to hard-to-optimize
+tion, EDAP values are normalized to the benchmark
+                                                         core objectives. In the early stage, emphasizing pro-
+baseline, where smaller values indicate better PPA
+                                                         cess rewards helps the policy quickly learn valid
+efficiency.
+                                                         Verilog formatting, syntactic correctness, and ba-
+   Table 9 reports the sensitivity results. Across
+                                                         sic synthesizability, providing a reliable foundation
+all configurations, ChipSeek consistently achieves
+                                                         for downstream EDA evaluation. Once these pre-
+the lowest normalized EDAP among all methods,
+                                                         requisites become consistently achievable, their di-
+while several baselines exhibit substantial degrada-
+                                                         minishing weights prevent them from dominating
+tion under tool or PDK shifts (e.g., larger variance
+                                                         the gradient and allow the policy to focus on im-
+across libraries and more pronounced sensitivity to
+                                                         proving functional correctness and PPA metrics in
+timing/area targets). In contrast, ChipSeek main-
+                                                         later stages. This “easy-to-hard” curriculum makes
+tains stable improvements across all tested PDKs,
+                                                         the reinforcement learning process more progres-
+synthesis tools, and optimization strategies, indi-
+                                                         sive and better aligned with the ultimate goal of
+cating that the model is not overfitting to a single
+                                                         producing high-quality hardware designs.
+library or a particular synthesis recipe.
+   These results suggest that ChipSeek learns a ro-
+                                                            In contrast, DAPO lacks an explicit curriculum
+bust Verilog generation style that transfers across
+                                                         mechanism to down-weight process-level feedback.
+realistic EDA settings. The consistent EDAP gains
+                                                         As a result, even in later training, relatively sim-
+under different PDK libraries, synthesis tools, and
+                                                         ple rewards (e.g., format or syntax compliance)
+optimization objectives provide evidence that our
+                                                         can still contribute non-trivially to the overall op-
+improvements stem from better structural and
+                                                         timization signal, introducing interference and re-
+micro-architectural coding patterns, rather than ar-
+                                                         ducing the effective learning signal for core objec-
+tifacts of a specific toolchain configuration.
+                                                         tives. This can lead the policy to become overly
+F   Training Analysis                                    satisfied with meeting superficial constraints, slow-
+                                                         ing down further specialization toward function-
+Figure 8 compares the training trajectories of core      ally correct and PPA-optimized Verilog genera-
+rewards between CDPO and the DAPO baseline,              tion. Overall, Figures 8 and 9 together support
+including the function reward and the three PPA re-      that curriculum-guided reweighting is essential for
+wards. Across all objectives, CDPO exhibits more         CDPO to achieve stronger and more stable opti-
+stable convergence and reaches consistently higher       mization on the most challenging objectives.
+                Function Reward                                  Power Reward                                         Area Reward                                    Delay Reward
+     0.85                                                       CDPO                                             CDPO                                           CDPO
+                                                     0.9                                              0.9
+     0.80                                                       DAPO                                             DAPO                                0.8        DAPO
+     0.75                                            0.8                                              0.8
+                                                                                                                                                     0.7
+     0.70                                            0.7                                              0.7
+Reward
+
+
+
+
+                                                Reward
+
+
+
+
+                                                                                                 Reward
+
+
+
+
+                                                                                                                                                Reward
+     0.65                                                                                                                                            0.6
+                                                     0.6                                              0.6
+     0.60                                                                                                                                            0.5
+     0.55                                            0.5                                              0.5
+                                         CDPO                                                                                                        0.4
+     0.50                                            0.4                                              0.4
+                                         DAPO                                                                                                        0.3
+     0.45
+            0   50   100         150    200   250          0    50     100         150    200   250         0    50     100      150     200   250         0    50      100   150   200   250
+                       Steps                                             Steps                                            Steps                                          Steps
+
+ Figure 8: Core reward trajectories comparison between the proposed CDPO and DAPO. CDPO demonstrates
+ superior convergence stability and achieves higher final reward values across all optimization objectives compared to
+ the DAPO baseline. Training steps are mismatched because of the filtering mechanism that omits the equal-reward
+ samples in the training.
+
+                                      Format Reward Weight                              Syntax Reward Weight                            Synth Reward Weight
+                           1.0
+                                                                             0.8                                              0.9
+                           0.8
+                                                                                                                              0.8
+                           0.6                                               0.6
+                                                                                                                              0.7
+                     Weight
+
+
+
+
+                                                                       Weight
+
+
+
+
+                                                                                                                        Weight
+                           0.4                                               0.4                                              0.6
+
+                           0.2                                               0.2                                              0.5
+                                                                                                                              0.4
+                           0.0                                               0.0
+                                  0     50    100        150   200   250            0     50    100       150   200    250          0     50   100       150   200     250
+                                                Steps                                            Steps                                          Steps
+
+                                        Figure 9: Visualization of the curriculum weight schedule in CDPO.
+
+
+ G          Scalability Analysis                                                                      performance systems. Unlike a conventional shifter,
+                                                                                                      it can perform multi-bit shifts within a single clock
+ To evaluate scalability on more complex RTL gen-                                                     cycle. A common textbook implementation uses a
+ eration tasks, we conduct experiments on large-                                                      hierarchy of multiplexers, where each stage shifts
+ scale designs from AutoSilicon (Li et al., 2025)                                                     by a power-of-two offset (e.g., 1, 2, or 4 bits), as
+ (e.g., CPU and NPU blocks, avg. ∼560 LoC). As                                                        shown in the golden solution in Figure 11. In this
+ shown in Table 10, ChipSeek achieves a substan-                                                      task, the human-provided specification highlights
+ tially higher Pass@5 (53.3%) than the strongest                                                      a mux2X1-based construction as a clear structural
+ baseline (34.4%), indicating improved functional                                                     reference.
+ reliability as program length and structural com-
+                                                                                                          Importantly, while preserving the required I/O
+ plexity increase. Meanwhile, ChipSeek also attains
+                                                                                                      behavior and functional semantics, our model iden-
+ the best Avg. Normalized EDAP (0.86), outper-
+                                                                                                      tifies a more synthesis-friendly realization: it ex-
+ forming prior methods and large general-purpose
+                                                                                                      presses the same shifting logic using a concise be-
+ LMs (e.g., GPT-4 at 0.99), which suggests that
+                                                                                                      havioral description rather than explicitly instanti-
+ our EDA-integrated optimization remains effective
+                                                                                                      ating a MUX hierarchy. This formulation exposes
+ in steering generation toward better PPA even un-
+                                                                                                      the underlying logic more directly to the synthe-
+ der a much larger design space. Overall, these re-
+                                                                                                      sis engine, enabling the backend EDA toolchain to
+ sults confirm that ChipSeek scales favorably to
+                                                                                                      explore a larger optimization space and select the
+ production-level RTL designs, improving both cor-
+                                                                                                      most efficient gate-level mapping under the target
+ rectness and hardware quality on long and complex
+                                                                                                      library and constraints.
+ modules.
+                                                                                                          As a result, compared to a literal mux2X1-
+ H          Detailed Case Study                                                                       instantiated implementation, the model’s final de-
+                                                                                                      sign achieves a 13.3% reduction in area and a
+ In this section, we illustrate the model’s reasoning                                                 63.9% reduction in code size, as shown in Figure
+ trajectory and show how it improves the design in                                                    12. This case study highlights the model’s ability to
+ both functional correctness and PPA.                                                                 satisfy human intent (functional requirements and
+    A barrel shifter is a key building block in high-                                                 design constraints) while producing implementa-
+      Barrel Shifter Design Description
+
+      Solve the following coding problem using the programming language Verilog. Output the code
+      between ```verilog and ```.
+      Please act as a professional verilog designer.
+      Module name: barrel_shifter
+      Function:
+      A barrel shifter for rotating bits efficiently. This 8-bit barrel shifter takes an 8-bit input and shifts
+      or rotates the bits based on a 3-bit control signal.
+      Input ports:
+      in [7:0]: 8-bit input to be shifted.
+      ctrl [2:0]: 3-bit control signal that determines how many positions to shift. The control signal
+      specifies the amount of shift, where each bit indicates a shift by 1, 2, or 4 positions.
+      Output ports:
+      out [7:0]: 8-bit shifted output.
+      Implementation:
+      The barrel shifter shifts the input ‘in‘ based on the value of the ‘ctrl‘ signal. The shifting happens
+      in stages, where each stage shifts by 4, 2, or 1 position, as controlled by ‘ctrl[2]‘, ‘ctrl[1]‘, and
+      ‘ctrl[0]‘, respectively.
+      The shifts are achieved using a series of 2-to-1 multiplexers (‘mux2X1‘) that select between the
+      shifted input and the original input. Each stage of multiplexers performs the shift, and the result is
+      passed to the next stage for further shifting if required.
+      - When ‘ctrl[2]‘ is high, the input is shifted by 4 positions.
+      - When ‘ctrl[1]‘ is high, the intermediate result is shifted by 2 positions.
+      - When ‘ctrl[0]‘ is high, the intermediate result is shifted by 1 position.
+      The ‘mux2X1‘ submodule is used to select between two input values based on the ‘sel‘ signal,
+      determining which bit is used in the shifted output at each stage.
+      Please generate the Verilog code optimized for area.
+
+
+                                    Figure 10: Barrel Shifter Design Description
+
+
+tions that better align with downstream synthesis           as a Verilog testbench engineer, create a sufficient
+optimization, ultimately improving hardware met-            number of test cases based on design complexity,
+rics.                                                       report the outcome, and terminate the simulation
+                                                            correctly.
+I     Prompt Templates used in Automatic
+      Data Augmentation
+This section outlines the structured prompt engi-
+neering methodology used in the automatic data
+augmentation. The approach leverages a series of
+specialized prompt templates to guide the language
+model toward specific objectives, including com-
+prehensive function verification and design opti-
+mization across various metrics such as delay, area,
+and power.
+
+I.1     Testbench Generation Prompt
+The generation of testbench data for function ver-
+ification is initiated using the following prompt
+template. This template instructs the model to act
+      Testbench Generation Prompt Template                     Code Guiding Prompt
+
+      You are a professional Verilog testbench                 Solve the following coding problem using
+      engineer. You should use at least 10 test                the programming language Verilog. Output
+      cases to verify the design. The number of                the code between ```verilog and ```.
+      test cases should be based on the difficulty
+      of the design. If the design passes all the test
+                                                         I.3     Design Optimization Prompts
+      cases, please display “Design passed". If the
+      design does not pass all the test cases, please    For hardware design generation, the data augmenta-
+      display “Design failed with <error count>          tion system incorporates prompts targeting specific
+      errors out of <total count> test cases". Re-       optimization goals. Each data sample is augmented
+      member to use the $finish instruction in the       with one prompt randomly selected from a pool
+      end.                                               corresponding to one of five optimization priori-
+      Please generate the testbench code for the         ties.
+      Verilog code below:
+      Verilog description: {instruction}                 I.3.1    Timing/Delay Priority
+      Verilog code: {output}                             When timing performance is the primary opti-
+      Please generate the testbench code below:          mization objective, one of the following prompts is
+                                                         used:
+
+I.2     System and Code Formatting Prompts                     Prompt Templates with Delay as the De-
+                                                               sign Priority
+To enhance the quality and utility of the model’s
+output, two key prompts are prepended to the main              1. Please generate the Verilog code opti-
+task.                                                          mized for timing performance.
+                                                               2. Focus on minimizing delay and maximiz-
+I.2.1     Thinking System Prompt                               ing speed in your Verilog implementation.
+                                                               3. Optimize your Verilog design for high-
+To encourage a detailed and well-reasoned gener-               speed operation.
+ation process, a "thinking" system prompt is em-               4. Please implement the Verilog code with
+ployed. This prompt instructs the model to first               timing performance as the primary goal.
+articulate its reasoning as an internal monologue
+before providing the final answer, ensuring a more
+                                                         I.3.2    Area Priority
+transparent and logical workflow.
+                                                         When area efficiency is the priority, one of the
+      Thinking System Prompt                             following prompts is selected:
+
+      You are a helpful AI Assistant that provides             Prompt Templates with Area as the De-
+      well-reasoned and detailed responses. You                sign Priority
+      first think about the reasoning process as
+                                                               1. Please generate the Verilog code opti-
+      an internal monologue and then provide the
+                                                               mized for area.
+      user with the answer. Respond in the follow-
+                                                               2. Focus on minimizing the hardware area
+      ing format:
+                                                               in your Verilog implementation.
+      <think>\n...\n</think>
+                                                               3. Optimize your Verilog design for mini-
+      <answer>\n...\n</answer>
+                                                               mal silicon area usage.
+                                                               4. Please implement the Verilog code with
+I.2.2     Code Guiding Prompt                                  area efficiency as the primary goal.
+
+To ensure the generated Verilog code can be pro-
+grammatically extracted and parsed, the following        I.3.3    Power Priority
+code-guiding prompt is used. It specifies a clear        For low-power design, the model is guided by one
+demarcation for the code block.                          of the following prompts:
+      Prompt Templates with Power as the De-               • Ssys : The Thinking System Prompt.
+      sign Priority
+                                                           First, the user-facing prompt, Puser , is con-
+      1. Please generate the Verilog code opti-         structed by concatenating the guiding prompt, the
+      mized for power consumption.                      design description, and the optimization prompt.
+      2. Focus on minimizing power consumption          Let ⊕ denote the string concatenation operation.
+      in your Verilog implementation.
+      3. Optimize your Verilog design for low                      Puser = Pguide ⊕ Ddesc ⊕ Popt
+      power operation.
+                                                          Next, the final prompt, Pfinal , is assembled by
+      4. Please implement the Verilog code with
+                                                        prepending the system prompt and its associated
+      power efficiency as the primary goal.
+                                                        keywords to the user-facing prompt.
+I.3.4 Delay and Power Priority                          Pfinal = “system_prompt:"⊕Ssys ⊕“user_prompt:"⊕Puser
+To address trade-offs between delay and power,
+the following prompts are utilized:                     This structured composition ensures that the model
+                                                        receives clear, multi-faceted instructions tailored to
+      Prompt Templates with Delay and Power             the specific generation task.
+      as the Design Priorities
+
+      1. Please generate the Verilog code opti-
+      mized for both delay and power efficiency.
+      2. Focus on balancing delay and power con-
+      sumption in your Verilog implementation.
+      3. Optimize your Verilog design for efficient
+      power usage and high performance.
+
+I.3.5 Delay and Area Priority
+Similarly, for balancing delay and area, the fol-
+lowing prompts are used:
+
+      Prompt Templates with Delay and Area
+      as the Design Priority
+
+      1. Please generate the Verilog code opti-
+      mized for both area efficiency and timing
+      performance.
+      2. Focus on balancing area usage and speed
+      in your Verilog implementation.
+      3. Optimize your Verilog design for efficient
+      area usage and high performance.
+
+I.4     Final Prompt Composition
+The final prompt submitted to the model is con-
+structed by systematically concatenating the afore-
+mentioned components. Let the primary compo-
+nents be defined as:
+      • Pguide : The Code Guiding Prompt.
+      • Ddesc : The Verilog Design Description (i.e.,
+        the instruction).
+      • Popt : The Design Priority Prompt, selected
+        from one of the optimization pools.
+                                  Original Benchmark                           ChipSeek
+ Name
+                                     (ns, µm2 , W)                           (ns, µm2 , W)
+ asyn_fifo                     0.72/1397.032/7.67e-05                             N/A
+ LFSR                            0.14/25.004/2.45e-06                    0.14/25.004/2.45e-06
+ right_shifter                   0.08/36.176/4.32e-06                    0.08/36.176/4.32e-06
+ barrel_shifter                  0.17/44.688/1.41e-05                    0.17/39.368/1.41e-05
+ LIFObuffer                       0.38/226.1/0.00027                    0.36/216.79/0.000137
+ RAM                             0.25/635.74/5.56e-05                   0.19/475.076/3.92e-05
+ ROM                              0.14/6.65/8.85e-07                      0.14/6.65/8.85e-07
+ alu                            1.92/1573.39/0.000751                  1.75/1286.908/0.000433
+ pe                            1.27/3651.382/0.000224                  1.27/3651.382/0.000224
+ instr_reg                       0.14/117.04/1.03e-05                    0.14/117.04/1.03e-05
+ signal_generator                 0.37/93.1/7.54e-06                     0.38/74.214/6.08e-06
+ square_wave                    0.41/100.282/8.39e-06                   0.41/100.282/8.39e-06
+ calendar                        0.44/164.92/1.44e-05                    0.44/164.92/1.44e-05
+ parallel2serial                  0.2/48.678/4.5e-06                     0.19/47.082/4.36e-06
+ pulse_detect                    0.18/17.556/1.52e-06                    0.17/16.226/1.47e-06
+ serial2parallel                  0.4/156.142/1.4e-05                   0.28/157.738/1.39e-05
+ width_8to16                    0.24/186.732/1.67e-05                   0.21/173.698/1.62e-05
+ traffic_light                  0.37/149.758/1.31e-05                   0.36/148.162/1.25e-05
+ edge_detect                     0.12/18.354/1.79e-06                     0.1/17.822/1.75e-06
+ freq_divbyfrac                   0.2/48.678/4.67e-06                             N/A
+ freq_divbyeven                  0.25/40.166/3.63e-06                             N/A
+ freq_divbyodd                   5.17/59.052/6.63e-06                     7.82/82.642/1.33e-6
+ sequence_detector               0.15/36.442/3.35e-06                     0.19/25.27/2.27e-06
+ ring_counter                     0.1/46.816/4.7e-06                      0.1/40.964/4.01e-06
+ JC_counter                       0.1/340.48/3.54e-05                     0.1/340.48/3.54e-05
+ counter_12                       0.25/36.176/3.1e-06                     0.25/36.176/3.1e-06
+ up_down_counter                 0.7/217.854/1.74e-05                    0.67/188.86/1.61e-05
+ adder_bcd                       0.34/46.018/3.85e-05                    0.34/46.018/3.84e-05
+ adder_pipe_64bit              0.75/2534.182/0.000235                    0.15/886.964/6.49e-5
+ adder_32bit                     0.76/472.15/0.000325                   1.13/191.786/0.00012
+ adder_16bit                     0.84/89.376/6.49e-05                    0.84/93.632/4.44e-05
+ adder_8bit                      0.35/51.072/3.14e-05                    0.35/46.816/2.22e-05
+ fixed_point_adder              1.69/606.214/0.000565                   1.42/512.313/0.000482
+ fixed_point_subtractor         1.09/477.736/0.000381                    0.93/466.8/0.000367
+ multi_pipe_4bit                0.34/174.762/1.51e-05                    0.1/154.546/1.28e-05
+ multi_pipe_8bit                 0.8/874.608/7.52e-05                             N/A
+ multi_16bit                    2.03/933.394/7.36e-05                   1.97/935.522/7.36e-05
+ multi_8bit                      1.5/483.854/0.00085                    0.79/373.996/0.000545
+ comparator_4bit                 0.16/18.886/8.91e-06                     0.13/17.29/7.6e-06
+ comparator_3bit                  0.1/11.704/5.26e-06                     0.1/11.704/5.25e-06
+ radix2_div                     0.59/414.162/3.39e-05                             N/A
+ div_16bit                        5.18/760.228/0.027                     5.57/745.332/0.0234
+ accu                           0.47/150.822/1.23e-05                   0.46/210.672/1.83e-05
+ sub_64bit                       2.3/404.586/0.000268                   2.08/400.862/0.000271
+
+Table 11: Comparison of PPA metrics on RTLLM v2.0 between ChipSeek and benchmark. N/A means generated
+code are not functionally correct or can’t pass the scripts of the EDA tools.
+Golden Solution
+
+ module barrel_shifter (
+     input [7:0] in,
+     input [2:0] ctrl,
+     output [7:0] out
+ );
+
+ wire [7:0] x;
+ wire [7:0] y;
+
+ // 4bit   shift right
+ mux2X1    ins_17 (.in0(in[7]),   .in1(1'b0), .sel(ctrl[2]), .out(x[7]));
+ mux2X1    ins_16 (.in0(in[6]),   .in1(1'b0), .sel(ctrl[2]), .out(x[6]));
+ mux2X1    ins_15 (.in0(in[5]),   .in1(1'b0), .sel(ctrl[2]), .out(x[5]));
+ mux2X1    ins_14 (.in0(in[4]),   .in1(1'b0), .sel(ctrl[2]), .out(x[4]));
+ mux2X1    ins_13 (.in0(in[3]),   .in1(in[7]), .sel(ctrl[2]), .out(x[3]));
+ mux2X1    ins_12 (.in0(in[2]),   .in1(in[6]), .sel(ctrl[2]), .out(x[2]));
+ mux2X1    ins_11 (.in0(in[1]),   .in1(in[5]), .sel(ctrl[2]), .out(x[1]));
+ mux2X1    ins_10 (.in0(in[0]),   .in1(in[4]), .sel(ctrl[2]), .out(x[0]));
+
+ // 2 bit shift   right
+ mux2X1 ins_27    (.in0(x[7]),   .in1(1'b0),    .sel(ctrl[1]),       .out(y[7]));
+ mux2X1 ins_26    (.in0(x[6]),   .in1(1'b0),    .sel(ctrl[1]),       .out(y[6]));
+ mux2X1 ins_25    (.in0(x[5]),   .in1(x[7]),    .sel(ctrl[1]),       .out(y[5]));
+ mux2X1 ins_24    (.in0(x[4]),   .in1(x[6]),    .sel(ctrl[1]),       .out(y[4]));
+ mux2X1 ins_23    (.in0(x[3]),   .in1(x[5]),    .sel(ctrl[1]),       .out(y[3]));
+ mux2X1 ins_22    (.in0(x[2]),   .in1(x[4]),    .sel(ctrl[1]),       .out(y[2]));
+ mux2X1 ins_21    (.in0(x[1]),   .in1(x[3]),    .sel(ctrl[1]),       .out(y[1]));
+ mux2X1 ins_20    (.in0(x[0]),   .in1(x[2]),    .sel(ctrl[1]),       .out(y[0]));
+
+ // 1 bit shift   right
+ mux2X1 ins_07    (.in0(y[7]),   .in1(1'b0),    .sel(ctrl[0]),       .out(out[7]));
+ mux2X1 ins_06    (.in0(y[6]),   .in1(y[7]),    .sel(ctrl[0]),       .out(out[6]));
+ mux2X1 ins_05    (.in0(y[5]),   .in1(y[6]),    .sel(ctrl[0]),       .out(out[5]));
+ mux2X1 ins_04    (.in0(y[4]),   .in1(y[5]),    .sel(ctrl[0]),       .out(out[4]));
+ mux2X1 ins_03    (.in0(y[3]),   .in1(y[4]),    .sel(ctrl[0]),       .out(out[3]));
+ mux2X1 ins_02    (.in0(y[2]),   .in1(y[3]),    .sel(ctrl[0]),       .out(out[2]));
+ mux2X1 ins_01    (.in0(y[1]),   .in1(y[2]),    .sel(ctrl[0]),       .out(out[1]));
+ mux2X1 ins_00    (.in0(y[0]),   .in1(y[1]),    .sel(ctrl[0]),       .out(out[0]));
+
+ endmodule
+
+ module mux2X1 (
+     input in0,
+     input in1,
+     input sel,
+     output out
+ );
+
+ assign out = (sel) ? in1 : in0;
+
+ endmodule
+
+
+
+
+                         Figure 11: Barrel Shifter Golden Solution
+ChipSeek Solution
+
+<think>
+The implementation prioritizes hardware efficiency by using a logarithmic approach with three
+cascaded shift stages. Each stage conditionally applies a power-of-two shift based on the corre-
+sponding control bit while minimizing area through direct hardware translation without complex
+multiplexers. This approach eliminates area-intensive components like AND gates and optimizes
+for area usage.
+</think>
+<answer>
+  module barrel_shifter (
+     input [7:0] in,
+     input [2:0] ctrl,
+     output [7:0] out
+  );
+
+  // Intermediate wires for shift stages
+  wire [7:0] shift_4, shift_2, shift_1;
+
+  // 4-bit shift stage (controlled by ctrl[2])
+  assign shift_4 = ctrl[2] ? (in >> 4) : in;
+
+  // 2-bit shift stage (controlled by ctrl[1])
+  assign shift_2 = ctrl[1] ? (shift_4 >> 2) : shift_4;
+
+  // 1-bit shift stage (controlled by ctrl[0])
+  assign shift_1 = ctrl[0] ? (shift_2 >> 1) : shift_2;
+
+  assign out = shift_1;
+
+  endmodule
+
+</answer>
+
+
+                            Figure 12: Barrel Shifter ChipSeek Solution
+

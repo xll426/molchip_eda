@@ -1,0 +1,462 @@
+                                             VFlow: Discovering Optimal Agentic Workflows
+                                                        for Verilog Generation
+                                                       Yangbo Wei       1,2 ,   Zhen Huang   3,2 ,   Huang Li   1,2 ,   Wei W. Xing4 , Ting-Jung Lin2 , Lei He                                  ∗2
+                                                                                    1
+                                                                                    Shanghai Jiao Tong University, Shanghai, China
+                                                                2
+                                                                    Ningbo Institute of Digital Twin, Eastern Institute of Technology, Ningbo, China
+                                                                           3
+                                                                             University of Science and Technology of China, Hefei, China
+                                                                                                4
+                                                                                                  University of Sheffield
+
+
+                                            Abstract—Hardware design automation faces challenges in                requirements of hardware design and synthesis verification
+                                         generating high-quality Verilog code efficiently. This paper in-          paths.
+arXiv:2504.03723v2 [cs.AR] 13 Jul 2025
+
+
+
+
+                                         troduces VFlow, an automated framework that optimizes agen-
+                                         tic workflows for Verilog code generation. Unlike traditional
+                                         approaches relying on fixed prompts or manually designed
+                                         flows, VFlow treats workflow discovery as a search over graph-
+                                         structured LLM invocation sequences. It introduces a multi-
+                                         population cooperative evolution (CEPE-MCTS) algorithm that                                                           Improvement
+
+                                         balances multiple hardware objectives—functional correctness,                                                            Vs.
+                                         area, power, timing and token cost—while sharing successful                      Traditional LLM-Based                                         Vflow (OUR)
+                                                                                                                                 Verilog Generation                                    Verilog Generation
+                                         patterns and avoiding repeated failures. Integrated multi-level                                                       +Flexibility
+                                         verification ensures syntactic correctness, functional behavior,                Fixed Model Hyperparameters                         ✓ Code-Represented Workflows
+                                         and synthesizability. Experiments on VerilogEval and RTLLM2.0                     Limited flexibility                                   Flexibility, programmable structure
+
+                                         show VFlow improves pass@1 by 20–30% over prompting base-                                                              +Automation
+                                                                                                                         Manual Workflow                                     ✓ MCTS-Based Optimization
+                                         lines and closely matches designer-level area/power. Remarkably,                  Human trial-and-error process                         Automated discovery of workflows
+                                         VFlow enables small LLMs to outperform larger models with up
+                                                                                                                                                               +Performance
+                                         to 10.9× ROI, offering a cost-effective solution for RTL design.                Multi-objective conflicts                           ✓ Multi-0bjective Optimization
+                                         This work paves the way for intelligent, automated hardware                       Lacks a systematic way to balance                     Specialized populations work in
+                                                                                                                           functionality, area, and timing.                      concert to optimize various designs
+                                         development, advancing LLM applications in EDA.
+                                            Index Terms—Hardware Description Languages, Verilog,
+                                         Large Language Models, Automated Workflow Optimization,                                 Fig. 1. Comparison of Vflow with traditional methods.
+                                         Monte Carlo Tree Search, Digital Circuit Design
+                                                                                                                      To address these challenges, this paper proposes VFlow,
+                                                                                                                   an automated agent workflow optimization framework specif-
+                                                                I. I NTRODUCTION                                   ically designed for Verilog code generation tasks. Unlike
+                                                                                                                   traditional methods as shown in Figure 1, VFlow reformulates
+                                            Recent advances in Large Language Models (LLMs) have                   the workflow optimization problem as a search task on a graph
+                                         demonstrated remarkable potential for Verilog code genera-                of LLM nodes with code-based representations, employing
+                                         tion. Existing research such as VerilogEval and RTLLM series              a Cooperative Evolution with Past Experience MCTS
+                                         [1], [2] has not only provided standardized benchmarks for                (CEPE-MCTS) algorithm. This approach utilizes parallel
+                                         evaluating LLMs’ ability to generate RTL code but also pro-               multi-population groups focusing on different optimization
+                                         moted the automated generation of complex modules ranging                 objectives (such as functionality, area, timing, token cost and
+                                         from combinational circuits to finite state machines.                     balance), combined with fragment migration mechanisms and
+                                            Meanwhile, methods such as VeriSeek, RTLCoder, and                     global failure experience sharing strategies, effectively avoid-
+                                         CodeV [3]–[5] have enhanced models’ adaptability to HDL                   ing repeated failures and promoting the migration of excellent
+                                         syntax structures and parallel characteristics through reinforce-         design patterns between different populations. Additionally,
+                                         ment learning, structured fine-tuning, and reinforcement feed-            VFlow introduces a multi-level verification process, including
+                                         back mechanisms, respectively. Although these methods have                syntax/static checking, functional simulation, and boundary
+                                         further improved the accuracy and generalization capability of            condition testing, ensuring that the generated Verilog code
+                                         Verilog generation, most rely on limited prompt engineering               meets industrial standards in terms of synthesizability and
+                                         or manually designed multi-stage workflows, making it                     timing.
+                                         difficult to efficiently explore the design space or integrate with          Experimental results on public benchmarks such as Verilo-
+                                         hardware verification processes. In contrast, agent-driven auto-          gEval and RTLLM2.0 demonstrate that VFlow achieves an av-
+                                         mated workflow optimization frameworks (such as AFlow) [6]                erage improvement of approximately 20%-30% in functional
+                                         represent LLM-driven processes as graph structures and apply              correctness (pass@1) compared to direct invocation or main-
+                                         MCTS to achieve task-generic optimization. However, these                 stream multi-prompt methods, and significantly approaches or
+                                         approaches have not yet fully incorporated the structured                 even exceeds human design reference values in area and power
+consumption metrics. Simultaneously, through optimized agent        3.1 405B reached 58%, while RTL-Coder (6.7B)—a smaller
+workflows, VFlow enables smaller specialized LLMs to                model specifically trained for hardware design—attained a
+outperform larger general-purpose models in Verilog gen-            pass rate of about 34%. The graph-enhanced model RTL++
+eration tasks, significantly reducing inference overhead and        significantly improved generation correctness by encoding
+costs, exhibiting an excellent return on investment (ROI).          control flow/data flow graphs in textual form [8]. Meanwhile,
+                                                                    CodeV-R1 introduced Reinforcement Learning with Verifiable
+Our main contributions are summarized as follows:
+                                                                    Rewards (RLVR), achieving 68.6% pass@1 on VerilogEval
+ 1) MCTS-driven Hardware LLM Workflow Framework:                    v2 and 72.9% on RTLLM v1.1, outperforming previous best
+    We propose a pioneering automatic discovery framework           models by 12-20 percentage points [5].
+    specifically designed for hardware design tasks using              Furthermore, more research focusing on data-oriented ap-
+    Monte Carlo Tree Search.                                        proaches and hallucination control for RTL generation has
+ 2) Domain-specific Verification Operators: We design               emerged. For example, HaVen [9] significantly reduced hallu-
+    hardware-specific verification operators that systemati-        cination rates in Verilog generation through chain-of-thought
+    cally ensure the syntax correctness, functional validity,       reasoning. RTLLM2.0 and RTLCoder-Data expanded task
+    and synthesizability of generated Verilog code.                 scale and example diversity, providing models with more
+ 3) Multi-objective Optimization Mechanisms: We con-                adequate training and evaluation resources [2], [4].
+    struct multi-population cooperation, experience sharing,           Notably, LLM applications are no longer limited to code
+    and fragment migration mechanisms to accelerate and             generation. Recent research shows that LLMs are also being
+    enhance multi-objective search in the hardware design           used for root cause analysis of simulation/synthesis bugs
+    space.                                                          [10] and demonstrate good results in coverage-driven test
+ 4) Model Efficiency Improvements: We experimentally                stimulus generation (e.g., LLM4DV) [11]. A survey paper on
+    demonstrate that our method enables smaller specialized         hardware design points out that there are now over 70 LLM
+    models to outperform larger general-purpose models, of-         papers specifically focused on hardware, covering scenarios
+    fering significant cost-effectiveness and practical potential   such as synthesis, formal verification, and bug detection, with
+    for real-world hardware design tasks.                           future work urgently needed in domain-specific models, hybrid
+                      II. BACKGROUND                                formal/machine learning systems, and explainability [12].
+                                                                       These advances indicate that as benchmark systems continue
+A. Hardware Description Languages and Verilog                       to improve, and model architectures continue to innovate,
+   HDLs serve as the primary tools for describing digital           LLMs have gradually transitioned from natural language and
+circuits and systems. Unlike software programming languages         software code generation to the hardware domain, becoming
+that execute sequentially, HDLs describe parallel hardware          indispensable intelligent components in RTL design work-
+structures and behaviors.                                           flows. Small to medium-scale hardware-specific models (such
+   Verilog designs center around modules—fundamental build-         as RTL-Coder) demonstrate higher parameter efficiency com-
+ing blocks with defined interfaces. These modules contain port      pared to general-purpose models, further confirming the value
+declarations, internal signal definitions, behavioral descrip-      of targeted training for hardware design.
+tions using always blocks, and data manipulations through
+assign statements. In complex designs, modules can instan-          C. Agentic Workflows
+tiate other modules, creating hierarchical structures that mirror      Agentic workflows have emerged as a powerful paradigm
+physical hardware organization.                                     for extending LLM capabilities through structured sequences
+   Verilog code generation presents unique challenges:              of invocations with detailed instructions. As Zhang et al.
+(1)Hardware Semantics describes concurrent hardware be-             [6] note, these workflows enable LLMs to tackle complex
+havior; (2)Timing Considerations require attention to syn-          tasks across diverse domains, from code generation and data
+chronous and asynchronous behaviors; (3)Synthesizability            analysis to question answering and mathematical reasoning.
+constraints mean not all valid Verilog code can be synthe-             Traditionally, agentic workflows relied on manual design,
+sized into physical hardware; (4)Verification Requirements          requiring significant human effort to create and optimize.
+typically demand simulation-based testbench verification.           Recent research has focused on automating the discovery
+                                                                    and optimization of these workflows, with methods ranging
+B. LLMs for Verilog Code Generation                                 from prompt optimization [13] to comprehensive workflow
+   In recent years, Verilog code generation based on LLMs           automation [14].
+has achieved significant progress, demonstrated by rapid im-           A key innovation in this field is reconceptualizing workflow
+provements in benchmark performance, novel model architec-          optimization as a search problem over code-represented work-
+tures, and gradual expansion to applications across the entire      flows. In this framework, ”LLM-invoking nodes are connected
+hardware design workflow. Pinckney et al. [7] enhanced the          by edges” that define ”the logic, dependencies, and flow
+VerilogEval benchmark by incorporating specification-to-RTL         between these actions” [6]. This representation transforms the
+generation tasks and in-context learning (ICL). In this test,       workflow into a vast search space that can be systematically
+GPT-4o achieved a pass rate of approximately 63%, Llama             explored using techniques such as Monte Carlo Tree Search.
+                Search Space                         0. Initialization                  Cooperative Evolution with Past Experience MCTS
+      Node
+                                                     Node:
+      Prompt= “””
+                                                                                           1. Parallel MCTS
+      Choose the parameter group to optimize next.   Edge:
+      Output the operator to be executed in the
+      next moment. Output format: {F}
+      ”””                                            Workflow
+
+                                                     Population
+      Operators       Eval       Init     Code
+                                                               Func.-first
+
+                                                               Area-first
+      Code Represented Edges
+      def __call__(self, …):                                   Timing-first
+        response = self. Generate(…)
+        if response not satisfy condition: …                   Balanced
+                                                                                            2. Cooperative                         3. Experience
+        else: …
+                                                     Failure repository                      Evolution                      U       Upgrade
+        return final_response
+                                     False
+                                                          𝓕:                                                                                       Pareto optimal
+                                        True
+
+
+
+                                                                             Fig. 2. Workflow of VFlow.
+
+  The automation of agentic workflow discovery represents a                                discovers and optimizes workflows by maintaining multiple
+promising frontier for AI research. By reformulating workflow                              specialized search populations to explore different optimiza-
+design as a search problem, approaches like AFLOW and                                      tion objectives in parallel, while establishing a global failure
+MaAS [15] can systematically discover effective workflows                                  experience sharing mechanism to avoid repetitive errors.
+without extensive human intervention.                                                         1) Multi-population Cooperative Architecture: The core
+                                                                                           concept of CEPE-MCTS is to decompose the traditional single
+                        III. VF LOW F RAMEWORK                                             search process into multiple specialized parallel search popu-
+A. Problem Formulation                                                                     lations. We define a set of K specialized search populations as
+  We formulate Verilog code generation as a search problem                                 P = {P1 , P2 , ..., PK }, where each population Pi focuses on a
+over workflows that transform hardware specifications into                                 specific design objective. Each population can be represented
+correct, efficient code. A Verilog generation workflow W can                               as a triplet Pi = (TiM CT S , fiobj , Fishared ), where TiM CT S is
+be represented as a sequence of LLM-invoking nodes:                                        the MCTS search tree maintained by the population, fiobj is the
+                                                                                           population’s specialized objective function, and Fishared is the
+                                        W = (N, E)                                   (1)   failure experience repository shared with other populations.
+                                                                                              To address the multi-objective nature of Verilog code gen-
+where N = {N1 , N2 , ..., Nk } is the set of nodes and E                                   eration, we design four specialized populations: functionality-
+represents the connections between these nodes. Each node                                  first population optimizing functional correctness f1obj (W ) =
+Ni is characterized by four key parameters:                                                Gf unctional (W ), area optimization population minimizing
+                                                                                           hardware resource consumption f2obj (W ) = Garea (W ),
+                              Ni = (Mi , Pi , τi , Fi )                              (2)   timing optimization population focusing on meeting clock
+                                                                                           constraints f3obj (W ) = Gtiming (W ), and balanced popula-
+where Mi is the language model, Pi is the prompt, τi is the                                                                                        obj
+temperature setting, and Fi is the output format. The edges E                              P3 considering all objectives comprehensively f4 (W ) =
+                                                                                           tion
+define the flow of information between nodes, establishing the                                j=1 wj Gj (W ). This specialization design enables each pop-
+execution sequence of the workflow.                                                        ulation to conduct deep searches within its area of expertise,
+   Given a hardware design task T and an evaluation function                               avoiding the objective conflict issues in traditional multi-
+G that measures performance, VFlow aims to discover the op-                                objective optimization.
+timal workflow W ∗ that produces the highest-quality Verilog                                  2) Fragment Migration Mechanism for Cooperative Evolu-
+code:                                                                                      tion: To achieve knowledge sharing and cooperative optimiza-
+                                                                                           tion among populations, we design an intelligent fragment
+                                                                                           migration mechanism. The core of this mechanism is to
+                           W ∗ = arg max G(W, T )                                    (3)
+                                                 W                                         evaluate the fitness of workflow fragments across different
+The search space encompasses all possible workflow configu-                                populations to determine whether cross-population migration
+rations, including different combinations of models, prompts,                              should occur. We define the fitness evaluation function for
+parameters, and connections.                                                               workflow fragments as follows:
+
+B. Architecture of VFlow
+                                                                                                                   fjobj (Wfrag ⊕ Wbase ) − fjobj (Wbase )
+   This paper proposes the CEPE-MCTS (Cooperative Evolu-                                        ϕ(Wfrag , Pj ) =                                                    (4)
+                                                                                                                                fjobj (Wbase )
+tion with Past Experience Monte Carlo Tree Search) algorithm,
+which is a multi-population cooperative search framework                                     where Wfrag represents the candidate workflow fragment for
+designed for Verilog code generation. The algorithm efficiently                            migration, Wbase is the base workflow in the target popula-
+tion, and Wfrag ⊕ Wbase denotes the operation of integrating            avoiding overlap in the search space. Parameters λ and β
+the fragment into the base workflow. The decision rule for              control the intensity of failure avoidance and diversity incen-
+fragment migration is based on a fitness threshold: when                tivization, respectively, and can be adjusted according to the
+ϕ(Wfrag , Pj ) > θmigrate , the algorithm executes the fragment         specific characteristics of the problem.
+migration operation from the source population to the target               5) Algorithm Execution Flow: The entire process of the
+population. This performance-based migration strategy ensures           CEPE-MCTS algorithm is divided into three core phases:
+that only truly valuable design patterns propagate between              parallel population search, cooperative evolution, and global
+populations, avoiding the negative impact of ineffective mi-            experience update. In the parallel search phase, all populations
+grations on search efficiency. The migration process is exe-            simultaneously execute the standard steps of MCTS, with the
+cuted at fixed time intervals, allowing populations to regularly        key innovation being the failure risk pre-check during the
+exchange excellent design experiences, forming a dynamic                expansion phase: when the similarity risk between a new
+cooperative evolution process.                                          workflow and historical failure cases exceeds the threshold
+   3) Global Failure Experience Sharing Mechanism: To ad-               θrisk , the candidate is rejected in advance, avoiding repetitive
+dress complex failure modes in Verilog code generation, we              errors. The cooperative evolution phase periodically performs
+establish a global failure experience sharing mechanism. This           cross-population knowledge migration, evaluating fragment
+mechanism S   maintains a unified failure experience repository         value through the fitness function ϕ(Wf rag , Pj ), and executing
+               K
+F global = i=1 Filocal , recording failure cases encountered            migration only when the fitness gain exceeds θmigrate , ensur-
+by all populations. Each failure record includes four elements:         ing the effectiveness of knowledge propagation. The global
+the structure of the failed workflow Wi′ , the failure type ei ,        experience update phase maintains a unified failure experience
+the severity of the failure si , and the timestamp when the             repository, applies the time decay mechanism, and updates the
+failure occurred ti . To handle the timeliness of experiences,          Pareto frontier, ultimately outputting multiple Pareto-optimal
+we introduce a time decay mechanism to dynamically adjust               workflow solution sets.
+the influence weight of historical failure experiences. The
+                                                                        C. Domain-Specific Considerations
+failure risk assessment function based on workflow similarity
+is defined as:                                                             1) Multi-Level Simulation Verification: VFlow implements
+                                                                        a progressive verification strategy, achieving a balance be-
+ rk (W ) = max
+            ′
+               sim(W, Wi′ ) · si · exp(−α(tcurrent − ti ) (5)           tween evaluation depth and computational efficiency. This
+            Wi ∈Fk
+                                                                        strategy comprises three verification levels: the syntax and
+where Fk represents the subset of failure cases for a specific          static analysis level performs preliminary filtering based on
+failure type k, and sim(W, Wi′ ) is the workflow structure              Verilog syntax correctness, the functional simulation level
+similarity function, calculated using the Jaccard      similarity co-   uses test vectors to cover key paths for behavioral veri-
+                                    )∩nodes(W ′ )|
+efficient: sim(W, W ′ ) = |nodes(W
+                           |nodes(W )∪nodes(W ′ )| . The time decay     fication, and the boundary case verification level executes
+factor exp(−α(tcurrent − ti )) ensures that recent failure ex-          comprehensive testing including boundary conditions. The
+periences have higher weights, while outdated failure patterns          verification functions are defined respectively as a binary
+gradually reduce their influence.                                       syntax check function V1 (W, T ) ∈ {0, 1}, a test pass rate
+   4) Cooperative Enhanced Selection Strategy: Building                 function V2 (W, T ) = number     of passed tests
+                                                                                                |total number of tests| , and the strictest all-
+upon the traditional MCTS selection strategy, we design                 pass requirement V3 (W, T ) = mint test result(t). This multi-
+an enhanced selection strategy that comprehensively consid-             level approach enables the algorithm to quickly eliminate non-
+ers population-specialized objectives, failure risks, and inter-        functional designs, avoiding wasting computational resources
+population diversity. The selection function for each popula-           on invalid candidates.
+tion is defined as follows:                                                2) Hierarchical Design Pattern Support: Hardware designs
+                                          r                             naturally decompose into hierarchical modules. VFlow incor-
+    (i)                                       ln N                      porates this domain knowledge through specialized patterns
+U CBCEP E (n)     =   fiobj (W̄n )   +C
+                                               nn                       that encourage modularity and reuse:
+                           X
+                      −λ         rk (Wn ) + β · diversity(Wn , P−i )
+                             k                                                                |modules|          |reused modules|
+                                                               (6)        M (W ) = ψ1 ·                   + ψ2 ·
+   The first term fiobj (W̄n ) represents the average performance                           |total logic|            |modules|
+of node n under the                                                                                    − ψ3 · max(0, Dhier − Dmax ) (7)
+                      q population i’s specialized objective,
+the second term C lnnnN is the classical confidence bound                 where Dhier represents the hierarchical depth of the design
+term for P balancing exploration and exploitation, the third            and Dmax is the maximum recommended depth. This metric
+term −λ k rk (Wn ) is the failure risk penalty term, and the            rewards appropriate modularization while penalizing excessive
+fourth term β ·diversity(Wn , P−i ) is the diversity reward term.       hierarchy that might impact synthesis results.
+The diversity    function is defined as diversity(Wn , P−i ) =            3) Verilog-Specific Operator Design: To better support the
+  1                                         ′
+      P
+        j̸=i minW ∈Pj (1 − sim(Wn , W )), used to encourage             special requirements of Verilog code generation, CEPE-MCTS
+                    ′
+K−1
+different populations to explore different search directions,           extends the original set of generic operators by designing and
+                                                                         TABLE I
+                                              D ETAILED P ERFORMANCE M ETRICS WITH B EST VALUES H IGHLIGHTED
+
+                                                                                   Hardware Modules
+Method
+                   mux          serial2parallel   edge detect      adder 16bit     multi 16bit      JC counter            ALU                      PE           parallel2serial
+                                                  Area (µm2 ) / Power (µW ) / Timing (ns), best values highlighted with background colors
+
+Designer Ref.   68/6.5/-0.08     168/16K/-0.30    19/2.6K/-0.14    128/68/-1.21   749/75K/-0.91    380/45K/-0.13     2.4K/36K/-1.03          2.4K/36K/-1.03     35/6.2K/-0.21
+IO               75/8/-0.07      200/18K/-0.28    23/3.3K/-0.12    157/91/-0.33   930/95K/-0.50    410/48K/-0.10      2.6K/39K/-0.90          2.6K/39K/-0.90    42/6.5K/-0.20
+PromptV         70/7.2/-0.08    180/16.5K/-0.29   20/2.9K/-0.13    135/80/-0.37   840/86K/-0.58    390/46K/-0.12    2.48K/36.5K/-0.97       2.48K/36.5K/-0.97   36/6.1K/-0.21
+AFlow            69/7/-0.08     175/16.2K/-0.29   19/2.8K/-0.14    130/76/-0.38   800/83K/-0.60    385/45K/-0.13    2.46K/36.2K/-1.00       2.46K/36.2K/-1.00   35/6.0K/-0.21
+VFlow           68/6.6/-0.09     169/16K/-0.31    19/2.6K/-0.14    126/69/-1.20   750/75K/-0.90    380/45K/-0.13     2.43K/36K/-1.02         2.43K/36K/-1.02    35/6.0K/-0.22
+
+
+
+                            TABLE II                                                    and GPT-4o. All models are accessed via their respective APIs
+      P ERFORMANCE C OMPARISON ON V ERILOG E VAL B ENCHMARK
+                                                                                        with consistent temperature settings. To ensure fair compari-
+                               VerilogEval-machine        VerilogEval-human             son, we implement seven baseline methods: IO (direct LLM
+Method
+                               pass@1        pass@5       pass@1         pass@5         invocation), Chain-of-Thought [18], Self-Consistency CoT
+                                                                                        [19], MultiPersona Debate [20], Self-Refine [21], PromptV
+IO                              56.7%        79.1%         46.6%         60.8%
+COT                             60.5%        81.2%         48.4%         62.9%
+                                                                                        [22] and AFlow [6]. Since VFLow autonomously selects the
+Self-Consistency CoT            62.3%        83.8%         51.5%         64.3%          appropriate LLM, these baselines all use the most powerful
+MultiPersona Debate             64.1%        84.7%         55.2%         66.7%          overall performer, Claude-3.7-Sonnet, to ensure fairness.
+Self-Refine                     61.9%        82.1%         59.8%         73.4%             Implementation Details. For VFlow’s MCTS optimization,
+PromptV                         75.7%        87.9%         79.3%         86.2%          we set the maximum iteration rounds to 20, with early stopping
+AFlow                           80.1%        91.2%         80.6%         88.1%          triggered after 5 rounds without improvement. We instantiate
+VFlow                           84.3%        96.5%         82.8%         91.5%          the simulator interface with Icarus Verilog for functional
+Improvement over IO            +27.6%        +17.4%       +36.1%        +30.7%          verification and Yosys for synthesis metrics, allowing for
+                                                                                        comprehensive evaluation of both behavioral correctness and
+implementing a series of domain-specific operators targeted at                          circuit quality. For simple tasks, we only consider the trade-off
+hardware description languages. These specialized operators                             between pass rate and API cost.
+include the Syntax Validator operator for enforcing Verilog                             B. Experimental Results and Analysis
+language rules and constraints, the Simulation Executor op-
+erator for interfacing with simulators such as Icarus Verilog                              1) Overall Performance Comparison: Table II summarizes
+for functional verification, the Waveform Analyzer operator                             the overall success rates of different methods on the Verilo-
+for evaluating the consistency between simulation results and                           gEval benchmark. Compared to direct invocation (IO) and
+expected behavior, the Circuit Optimizer operator for opti-                             prior prompting strategies, our proposed VFlow framework
+mizing generated code based on area, power consumption, or                              achieves the highest pass@1, pass@5, and pass@10 across
+timing constraints, and the Hierarchical Composer operator                              both evaluations, with an average improvement of +19.6%
+for assembling modular components into complete designs.                                (machine) and +30.9% (human) over IO. This clearly demon-
+The introduction of these specialized operators enables CEPE-                           strates VFlow’s effectiveness in consistently generating func-
+MCTS to more precisely address various technical challenges                             tionally correct Verilog code across a wide range of tasks.
+in the Verilog code generation process.                                                    Table I provides a fine-grained comparison on nine repre-
+                                                                                        sentative hardware modules, reporting area, power, and timing
+                               IV. E XPERIMENTS                                         metrics. We observe that VFlow either matches or surpasses
+                                                                                        the best baselines in most cases, achieving minimal area
+A. Experimental Setup                                                                   and power in several modules (e.g., mux, adder 16bit, se-
+   Datasets. We evaluate VFlow’s performance across a di-                               rial2parallel), while also maintaining competitive timing slack
+verse range of hardware design tasks drawn from the Verilo-                             close to the designer reference. This performance gain can
+gEval [1] benchmark suite, which consists of 156 problems                               be attributed to VFlow’s cooperative multi-population search
+spanning simple combinational circuits to complex finite state                          framework, which allows different specialized populations to
+machines. Additionally, we select 9 representative modules                              deeply explore distinct objectives (such as minimizing area
+from the RTLLM2.0 [2] dataset, covering arithmetic opera-                               or power) without conflicting trade-offs. Moreover, the frag-
+tors, memory structures, and control logic, to further assess                           ment migration and global failure sharing mechanisms enable
+VFlow’s capability on more realistic and medium-scale RTL                               VFlow to effectively propagate promising design patterns and
+designs.                                                                                systematically avoid recurring inefficiencies across different
+   Baselines. For model selection, we employ four LLMs                                  search threads. These results demonstrate that beyond gener-
+spanning different sizes and capabilities: GPT-4o-mini,                                 ating functionally correct code, VFlow consistently produces
+DeepSeek-V3 [16], DeepSeek-R1 [17], Claude-3.7-Sonnet,                                  RTL designs with superior implementation quality, striking
+                                 Fig. 3. VFlow’s MCTS-Based Workflow Evolution for Verilog Code Generation.
+
+                                                                       global failure experience sharing, and multi-level verification.
+                                                                       As shown in Fig. 4, removing MCTS results in the most
+                                                                       significant performance drop (over 20%), followed by the
+                                                                       absence of domain-specific operators (around 10%). Eliminat-
+                                                                       ing cooperative evolution or global failure sharing leads to
+                                                                       moderate degradations (approximately 5–7%), while skipping
+                                                                       multi-level verification causes a minor decline (about 3–4%).
+                                                                       These results confirm that each component synergistically
+                                                                       enhances VFlow’s effectiveness in generating high-quality
+                                                                       Verilog code.
+                                                                          4) Discovered Workflow Analysis: The MCTS-based op-
+ Fig. 4. Ablation Studies on VFlow Components (pass@1 performance).
+                                                                       timization in VFlow demonstrates a significant evolutionary
+                          TABLE III
+                                                                       progression from a simplistic implementation to a sophisti-
+  C OST-P ERFORMANCE A NALYSIS : VF LOW VS . BASELINE M ETHODS         cated multi-step workflow as shown in Figure 3. Beginning
+                                                                       with a basic single-step approach (score: 0.56), the system
+                          Performance           Efficiency
+Model                                                           ROI    progressively discovers more effective strategies through key
+                       pass@1     Relative   Tokens     Cost           modifications: generating multiple implementations (round 1,
+GPT-4o (IO)             57.0%      100%       1.0×     1.00×   1.00×   0.63), incorporating Claude as the code generation agent
+DeepSeek-V3 (VFlow)     80.5%     +41.2%      0.4×     0.13×   10.9×   (round 4, 0.71), introducing comprehensive test cases (round
+GPT-4o-mini (VFlow)     76.7%     +34.7%      0.7×     0.42×   3.2×    6, 0.81), and ultimately optimizing prompts (round 11, 0.84).
+                                                                       The discovered optimal workflow establishes a robust five-
+a robust balance among hardware resource efficiency, power             step process of problem analysis, multiple implementation
+consumption, and timing closure.                                       generation, ensemble integration, comprehensive testing, and
+                                                                       targeted refinement - effectively transforming Verilog code
+   2) Cost-Performance Analysis: Table III presents a com-
+                                                                       generation from a straightforward task into a verification-
+parative cost-performance analysis, highlighting both effec-
+                                                                       integrated process with continuous improvement capabilities.
+tiveness and efficiency across different configurations. We
+observe that VFlow, when applied on DeepSeek-V3, achieves                                       V. C ONCLUSION
+a substantial pass@1 improvement of +41.2% over the GPT-                  We presented VFlow, an automated framework that dis-
+4o baseline, while simultaneously reducing token consump-              covers optimized agentic workflows for Verilog code gen-
+tion and cost to just 0.4× and 0.13× respectively, yielding            eration. By integrating MCTS-based search, domain-specific
+an impressive 10.9× return on investment (ROI). Similarly,             operators, and multi-level verification, VFlow achieves higher
+integrating VFlow with GPT-4o-mini delivers a notable 34.7%            code quality and efficiency compared to existing methods.
+higher pass@1 at less than half the cost. These results                Our experiments demonstrate its strong potential for advancing
+demonstrate that VFlow not only enhances design quality,               hardware design automation.
+but also significantly lowers the generation overhead, making
+it a highly cost-effective solution for large-scale RTL code
+generation.
+   3) Ablation Studies: To evaluate the contribution of each
+component in VFlow, we conduct a series of ablation studies
+by selectively removing key modules, including MCTS op-
+timization, domain-specific operators, cooperative evolution,
+                              R EFERENCES                                              ative refinement with self-feedback,” Advances in Neural Information
+                                                                                       Processing Systems, vol. 36, pp. 46 534–46 594, 2023.
+ [1] M. Liu, N. Pinckney, B. Khailany, and H. Ren, “VerilogEval: Evaluating       [22] Z. Mi, R. Zheng, H. Zhong, Y. Sun, and S. Huang, “PromptV: Lever-
+     large language models for Verilog code generation,” in 2023 IEEE/ACM              aging LLM-powered Multi-Agent Prompting for High-quality Verilog
+     International Conference on Computer Aided Design (ICCAD). IEEE,                  Generation,” arXiv preprint arXiv:2412.11014, 2024.
+     2023, pp. 1–8.
+ [2] Y. Lu, S. Liu, Q. Zhang, and Z. Xie, “RTLLM: An open-source
+     benchmark for design RTL generation with large language model,” in
+     2024 29th Asia and South Pacific Design Automation Conference (ASP-
+     DAC). IEEE, 2024, pp. 722–727.
+ [3] N. Wang, B. Yao, J. Zhou, X. Wang, Z. Jiang, and N. Guan, “Large
+     language model for verilog generation with golden code feedback,”
+     arXiv preprint arXiv:2407.18271, 2024.
+ [4] S. Liu, W. Fang, Y. Lu, J. Wang, Q. Zhang, H. Zhang, and Z. Xie,
+     “RTLCoder: Fully open-source and efficient LLM-assisted RTL code
+     generation technique,” IEEE Transactions on Computer-Aided Design
+     of Integrated Circuits and Systems, 2024.
+ [5] Y. Zhu, D. Huang, H. Lyu, X. Zhang, C. Li, W. Shi, Y. Wu, J. Mu,
+     J. Wang, Y. Zhao et al., “Codev-r1: Reasoning-enhanced verilog gener-
+     ation,” arXiv preprint arXiv:2505.24183, 2025.
+ [6] J. Zhang, J. Xiang, Z. Yu, F. Teng, X. Chen, J. Chen, M. Zhuge,
+     X. Cheng, S. Hong, J. Wang et al., “AFLOW: Automating agentic
+     workflow generation,” arXiv preprint arXiv:2410.10762, 2024.
+ [7] N. Pinckney, C. Batten, M. Liu, H. Ren, and B. Khailany, “Revisiting
+     VerilogEval: A Year of Improvements in Large-Language Models for
+     Hardware Code Generation,” ACM Transactions on Design Automation
+     of Electronic Systems, 2025.
+ [8] M. Akyash, K. Azar, and H. Kamali, “Rtl++: Graph-enhanced llm for
+     rtl code generation,” arXiv preprint arXiv:2505.13479, 2025.
+ [9] Y. Yang, F. Teng, P. Liu, M. Qi, C. Lv, J. Li, X. Zhang, and Z. He,
+     “Haven: Hallucination-mitigated llm for verilog code generation aligned
+     with hdl engineers,” arXiv preprint arXiv:2501.04908, 2025.
+[10] S. Qiu, M. Wang, R. Afsharmazayejani, M. M. Shahmiri, B. Tan, and
+     H. Pearce, “Towards llm-based root cause analysis of hardware design
+     failures,” 2025. [Online]. Available: https://arxiv.org/abs/2507.06512
+[11] Z. Zhang, B. Szekely, P. Gimenes, G. Chadwick, H. McNally, J. Cheng,
+     R. Mullins, and Y. Zhao, “Llm4dv: Using large language models for
+     hardware test stimuli generation,” in 2025 IEEE 33rd Annual Interna-
+     tional Symposium on Field-Programmable Custom Computing Machines
+     (FCCM). IEEE, 2025, pp. 133–137.
+[12] M. Abdollahi, S. F. Yeganli, M. A. Baharloo, and A. Baniasadi, “Hard-
+     ware design and verification with large language models: A scoping
+     review, challenges, and open issues,” Electronics, vol. 14, no. 1, p. 120,
+     2025.
+[13] O. Khattab, A. Singhvi, P. Maheshwari, Z. Zhang, K. Santhanam,
+     S. Vardhamanan, S. Haq, A. Sharma, T. T. Joshi, H. Moazam et al.,
+     “Dspy: Compiling declarative language model calls into self-improving
+     pipelines,” arXiv preprint arXiv:2310.03714, 2023.
+[14] S. Hu, C. Lu, and J. Clune, “Automated design of agentic systems,”
+     arXiv preprint arXiv:2408.08435, 2024.
+[15] G. Zhang, L. Niu, J. Fang, K. Wang, L. Bai, and X. Wang,
+     “Multi-agent Architecture Search via Agentic Supernet,” arXiv preprint
+     arXiv:2502.04180, 2025.
+[16] A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng,
+     C. Zhang, C. Ruan et al., “Deepseek-v3 technical report,” arXiv preprint
+     arXiv:2412.19437, 2024.
+[17] D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma,
+     P. Wang, X. Bi et al., “Deepseek-r1: Incentivizing reasoning capability
+     in llms via reinforcement learning,” arXiv preprint arXiv:2501.12948,
+     2025.
+[18] J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le,
+     D. Zhou et al., “Chain-of-thought prompting elicits reasoning in large
+     language models,” Advances in neural information processing systems,
+     vol. 35, pp. 24 824–24 837, 2022.
+[19] X. Wang, J. Wei, D. Schuurmans, Q. Le, E. Chi, S. Narang, A. Chowdh-
+     ery, and D. Zhou, “Self-consistency improves chain of thought reasoning
+     in language models,” arXiv preprint arXiv:2203.11171, 2022.
+[20] Z. Wang, S. Mao, W. Wu, T. Ge, F. Wei, and H. Ji, “Unleashing
+     the emergent cognitive synergy in large language models: A task-
+     solving agent through multi-persona self-collaboration,” arXiv preprint
+     arXiv:2307.05300, 2023.
+[21] A. Madaan, N. Tandon, P. Gupta, S. Hallinan, L. Gao, S. Wiegreffe,
+     U. Alon, N. Dziri, S. Prabhumoye, Y. Yang et al., “Self-refine: Iter-
+

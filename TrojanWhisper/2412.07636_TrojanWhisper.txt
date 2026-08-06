@@ -1,0 +1,691 @@
+                                              TrojanWhisper: Evaluating Pre-trained LLMs to
+                                                  Detect and Localize Hardware Trojans
+                                                       Md Omar Faruque∗ , Peter Jamieson† , Ahmad Patooghy‡ , and Abdel-Hameed A. Badawy∗
+                                                             ∗ Klipsch School of ECE, New Mexico State University, Las Cruces, NM 88003, USA
+                                                           † Department of Electrical and Computer Engineering, Miami University, Oxford, OH, USA
+                                                         ‡ Computer Systems Technology, North Carolina A&T State University, Greensboro, NC, USA
+
+                                                            Emails: ∗ {faruque, badawy}@nmsu.edu, † jamiespa@miamioh.edu, ‡ apatooghy@ncat.edu
+
+
+
+                                             Abstract—Existing Hardware Trojans (HT) detection methods           Early detection of HTs in Soft RTL IPs is crucial, as
+arXiv:2412.07636v1 [cs.CR] 10 Dec 2024
+
+
+
+
+                                         face several critical limitations: logic testing struggles with      remediation becomes exponentially costlier in later design
+                                         scalability and coverage for large designs, side-channel anal-       stages. This issue is challenging in commercial IP cores,
+                                         ysis requires golden reference chips, and formal verification
+                                         methods suffer from state-space explosion. The emergence of          where identifying malicious modifications within thousands
+                                         Large Language Models (LLMs) offers a promising new di-              of lines of RTL code is formidable [2]. Manual inspection is
+                                         rection for HT detection by leveraging their natural language        inadequate for large-scale designs, as RTL HTs blend with le-
+                                         understanding and reasoning capabilities. For the first time,        gitimate functionality and can evade conventional verification
+                                         this paper explores the potential of general-purpose LLMs in         through carefully crafted activation conditions. The taxonomy
+                                         detecting various HTs inserted in Register Transfer Level (RTL)
+                                         designs, including SRAM, AES, and UART modules. We propose           of Shakya et. al. [1] highlights the spectrum of RTL HTs, from
+                                         a novel tool for this goal that systematically assesses state-of-    simple to highly sophisticated mechanisms with extremely low
+                                         the-art LLMs (GPT-4o, Gemini 1.5 pro, and Llama 3.1) in              activation probabilities (6.4271e-23), emphasizing the need for
+                                         detecting HTs without prior fine-tuning. To address potential        automated and scalable detection methods.
+                                         training data bias, the tool implements perturbation techniques,        HT detection methods before this can be categorized into
+                                         i.e., variable name obfuscation, and design restructuring, that
+                                         make the cases more sophisticated for the used LLMs. Our             four main approaches. Test pattern generation methods [3] at-
+                                         experimental evaluation demonstrates perfect detection rates by      tempt to expose HTs through test vectors but cannot guarantee
+                                         GPT-4o and Gemini 1.5 pro in baseline scenarios (100%/100%           the detection of stealthily triggered HTs. Formal verification
+                                         precision/recall), with both models achieving better trigger line    approaches [4], [5] convert designs into proof-checking for-
+                                         coverage (TLC: 0.82-0.98) than payload line coverage (PLC:           mats but suffer from state explosion and limited detection
+                                         0.32-0.46). Under code perturbation, while Gemini 1.5 pro
+                                         maintains perfect detection performance (100%/100%), GPT-            scope due to predefined properties. Code analysis techniques
+                                         4o (100%/85.7%) and Llama 3.1 (66.7%/85.7%) show some                like FANCI [6] and VeriTrust [7] examine RTL code using
+                                         degradation in detection rates, and all models experience de-        coverage metrics but require manual analysis and can be
+                                         creased accuracy in localizing both triggers and payloads. This      bypassed by sophisticated HTs, as DeTrust [8] demonstrated.
+                                         paper validates the potential of LLM approaches for hardware         Machine learning (ML) and graph matching approaches have
+                                         security applications, highlighting areas for future improvement.
+                                         TrojanWhisper’s HT detection results will be available here          shown promise, with methods ranging from graph similar-
+                                         https://github.com/HSTRG1/TrojanWhisper.git.                         ity [9] and control-flow matching [10] to neural networks [11]
+                                             Index Terms—Hardware Trojans, Detection, LLMs, Security          and gradient boosting [12]. However, these approaches typi-
+                                                                                                              cally require golden references, extensive feature engineering,
+                                                               I. I NTRODUCTION                               or suffer from limited generalization to new RTL designs
+                                                                                                              and HT types. Graph Neural Network (GNN) approaches like
+                                            The globalization of the semiconductor supply chain has           GNN4TJ [2] have improved detection capabilities but still face
+                                         created significant security vulnerabilities through the potential   scalability and novel HT detection challenges.
+                                         insertion of Hardware Trojans (HTs) - malicious modifications           The limitations of existing approaches motivate our inves-
+                                         inserted by rouge threat actors or rouge Computer-aided de-          tigation of Large Language Models (LLMs) for more robust
+                                         sign (CAD) tools to integrated circuits (ICs) that can leak          and automated HT detection. Given the scarcity of labeled
+                                         information, alter functionality, degrade performance, or deny       HT datasets, their ability to reason about hardware security
+                                         service [1]. This security challenge is particularly acute for       implications without extensive domain-specific training data
+                                         System-on-Chip (SoC) designers who, faced with time-to-              or golden reference designs is crucial [13].
+                                         market pressures and resource constraints, increasingly rely on         In this paper, we present TrojanWhisper, a novel LLM ap-
+                                         third-party Intellectual Property (3PIP) cores and outsourced        proach for HT detection in RTL designs (to the line-level gran-
+                                         design services. These 3PIPs come in three distinct forms:           ularity) that leverages state-of-the-art LLMs (GPT-4o, Gemini
+                                         Soft IPs (RTL code in Verilog/VHDL), Firm IPs (synthesized           1.5 pro, and Llama 3.1) through carefully crafted prompts
+                                         netlists and placed RTL blocks), and Hard IPs (GDSII files           encoding hardware security domain knowledge. According
+                                         and physical layouts).                                               to our assessments, LLMs offer unique advantages in HT
+detection: 1) They can process RTL code in its native form; 2)          instead of the requested address (lines 11-15), creating a covert
+Understand structural and semantic properties without explicit          channel to leak the SRAM contents.
+feature engineering. Our key contributions include: 1 To                    3 Denial of Service HT (Type 3): These HTs aim to
+the best of our knowledge, it is one of the first systematic            degrade or disable hardware functionality, making it partially
+evaluations of LLMs for HT detection; 2 A novel LLM HT                  or entirely unusable.
+signature generation engine for HT detection; 3 Comprehen-               1    always @(posedge clk)
+sive evaluation metrics for assessing LLM HT detection; 4 A              2        if (reset)
+                                                                         3            pq <= 8’h00;
+novel perturbation engine that validates detection robustness            4        else if (state[7:0] == 8’hAA && key[7:0] == 8’h55)
+through code transformations while maintaining functional                5            pq <= pq + 1;
+                                                                         6        else
+equivalence and synthesizability; 5 Empirical comparison                 7            pq <= 8’h00;
+                                                                         8
+with existing detection methods.                                         9    always @ (posedge clk)
+                                                                        10        if (reset) begin
+                  II. BACKGROUND ON RTL HT                              11            s0 <= 128’h0;
+                                                                        12            k0 <= 128’h0;
+                                                                        13        end else if (pq != 8’hFF) begin
+   HTs at the RTL level represent malicious modifications to            14            s0 <= state ˆ key;
+the behavioral hardware description that define a circuit’s oper-       15            k0 <= key;
+                                                                        16        end
+ation and data flow [1]. Unlike gate- or layout-level HTs that
+manipulate physical circuit elements, RTL HTs operate at a                   Listing 2. Denial of Service HT (AES-T220) in AES-128 encryption.
+higher abstraction level by altering the behavioral specification          As shown in the code snippet in Listing 2, the Denial of
+of the design using Hardware Description Languages (HDL)                Service HT (example taken from [14]) triggers when it detects
+like Verilog or VHDL.                                                   a specific pattern in the input ‘state’ (plaintext) and ‘key’ (lines
+   As defined by Shakya et. al. [1], these modifications man-           3-9). When the counter ‘pq’ reaches 0xFF, the payload blocks
+ifest themselves in two fundamental components: a trigger               the initial XOR operation of the AES encryption (lines 11-18),
+mechanism and a payload. The trigger can be implemented                 effectively denying the encryption service.
+through conditional statements that activate under specific
+circumstances (e.g., when certain internal states or input                           III. P ROPOSED M ETHODOLOGY
+patterns occur). These time-based counters activate after a               Our research methodology consists of three main compo-
+predetermined number of cycles or always-on conditions. The             nents: A HT Signature Generation Engine, B Pertur-
+payload, embedded within the RTL code, can manipulate                   bation Generation Engine, and C LLM HT Detection
+control signals, modify data paths, or introduce unintended             Engine, which will be discussed in the following subsection.
+state transitions, potentially leading to three primary malicious       A. HT Signature Generation Engine
+effects identified in their comprehensive HT taxonomy:
+    1 Functionality Change HT (Type 1): Once triggered,                    We propose an iterative HT signature generation and rank-
+these HTs modify the circuit’s intended behavior by altering            ing methodology that systematically learns detection patterns
+or corrupting outputs or computations.                                  from the Trust-Hub [15] dataset D = {(Ci , Ti , Mi )}, compris-
+                                                                        ing clean RTL code Ci , HT-infected code Ti , and metadata Mi .
+1    always @(posedge clk) begin
+2        if(!resetn)
+                                                                        Our multi-stage pipeline employs an LLM through function
+3            pc <= 8’b0;                                                L(Ci , Ti , Mi ) to extract HT signatures P = {p1 , p2 , ..., pm }
+4        else if (received_data == 8’hAB)
+5            pc[0] <= 1’b1;
+                                                                        for both trigger mechanisms and payload patterns. These
+6                                                                       signatures undergo refinement R(P ) → S ′ using similarity
+     always @(posedge clk)
+7
+8        if (fsm_state == FSM_STOP)
+                                                                        metric δ(px , py ) > θ, where similar signatures are merged
+9            if (pc[0])                                                 and generalized to improve cross-variant detection.
+10
+11           else
+                  uart_rx_data <= received_data ˆ 8’hFF;
+                                                                           Each signature s′j undergoes validation through V (s′j )
+12                uart_rx_data <= received_data;                        against a separate validation set Dval , producing performance
+     Listing 1. Functionality Change HT (UART-T200) in UART receiver.   vectors vj = [αj , βj , γj ] that capture detection rate, false
+                                                                        positive rate, and generalization capability. A ranking system
+In this Functionality change HT code snippet [14] in Listing 1,         W (vj ) assigns weights wj based on these metrics, creating
+the HT triggers when it detects the specific byte pattern               an ordered set S = {(s1 , w1 ), ..., (sq , wq )}. The system im-
+0xAB (lines 3-9). Once triggered, the payload inverts all               plements continuous improvement through an iterative process
+subsequently received data until the module is rested (lines            I(S, F ), analyzing failure cases to refine existing signatures.
+12-13), thus corrupting the UART receiver’s functionality.                 To address emerging threats, our system incorporates a zero-
+    2 Information Leakage HT (Type 2): These HTs create                 day detection mechanism N (Z) that analyzes novel HT pat-
+covert channels to leak sensitive data. An example case of              terns Z and generates corresponding signatures snew , where
+Information Leakage HT [14] is shown in Fig. 1 (b), the HT              St+1 = St ∪ {snew }. This creates a dynamic, hierarchical
+activates when address ‘ADDR’ (0xAA) is read repeatedly                 signature database that continuously adapts to new threats
+(lines 2-8). The payload leaks memory contents by returning             while maintaining high detection reliability through systematic
+data from sequential memory locations (indexed by ‘mn’)                 validation and ranking.
+B. Perturbation Generation Engine                                    evaluation, as most of the codebase represents clean design
+   Our perturbation engine powered by an LLM agent ad-               code, creating a “negative” class for detection. The following
+dresses a challenge in LLM HT detection: the potential over-         subsections describe these metrics.
+lap between open-source HT RTL designs and the models’
+training data. This overlap could lead to unreliable detection       A. HT Detection Metrics
+results based on memorization rather than understanding hard-           HT detection metrics are based on classification methods
+ware security principles. The engine implements a systematic         to evaluate the agent’s ability to detect HTs at the RTL
+approach to code transformation while maintaining functional         IP core level (Verilog file). Therefore, we call these broad
+equivalence and synthesizability. At its core, the framework         metrics to determine whether an agent detects hidden HTs.
+applies three key transformation strategies.                         We will describe the True Positives, False Positives, and False
+ 1 Variable name obfuscation: First, it performs comprehen-          Negatives for these metrics from the perspective of how good
+sive variable name obfuscation, replacing meaningful identi-         the agent is classifying the existence of an HT where the
+fiers with arbitrary combinations of letters while preserving        number of HTs in a design is set to the parameter k.
+module interfaces and port names. This tests the LLMs’ un-           1) True Positives (TP): Count of successfully detected (either
+derstanding of circuit functionality independent of descriptive      trigger or payload signatures Fig. 1 (a)) HTs. For example, if
+naming conventions.                                                  a module contains 4 HTs (k = 4) and the agent detects all 4,
+ 2 Addition of synthesizable redundant logic: It then intro-         T P = 4. TP requires correct identification of triggers (such
+duces additional synthesizable logic structures, including re-       as specific signals or states for activation) or payloads (like
+dundant registers and alternative combinational implemen-            malicious modifications to signals or information flows).
+tations, which challenge the models to maintain accurate             2) False Positives (FP): Instances where clean RTL code is
+detection despite these variations.                                  mistakenly flagged as containing HTs. For example, if the
+ 3 Restructuring: Lastly, it restructures state machines and         agent claims to find 6 HTs in code with a k = 4 in the actual
+control logic while preserving original functionality, testing the   design, F P = 2 (indicating two false alarms). Lowering FP
+models’ comprehension of behavioral equivalence. Critically,         reduces unnecessary investigations, enhancing efficiency.
+all transformations adhere to strict synthesizability constraints,   3) False Negatives (FN): HTs that are present in the RTL
+ensuring modified designs remain implementable in hardware.          but missed by the agent. If there are 4 HTs and only two are
+C. LLM HT Detection Engine                                           identified, F N = 2, indicating missed detections that can lead
+                                                                     to security risks.
+   The LLM detection engine combines HT signature-based                 We provide these factors as a tuple {k, #TP, #FP, #FN}
+identification with in-context learning for HT analysis. The         such that the closer the 2nd number is to k and the lower
+engine first applies the detected HT signatures derived from         #FP and #FN suggest the tool is better. Note that there is no
+our HT Signature Generation Engine to identify potential             true negative classification at this granularity level since the
+trigger mechanisms and payload patterns in the RTL code.             benchmarks entirely consist of HT-infected RTL designs.
+These detection HT signatures, generated through systematic
+analysis of HT characteristics, help pinpoint suspicious circuit     B. Localization Precision Metrics
+elements and behavioral patterns. The engine employs an in-
+context learning approach for HT classification by providing            Localization precision provides a line-by-line analysis of the
+type-specific examples and attributes for each HT category           agent’s ability to classify Verilog RTL Lines-of-Code (LoC).
+(functionality modification, information leakage, and denial         These metrics describe how accurately the agent identifies
+of service). The system processes RTL designs through this           specific HT lines (which include a distinction between the
+two-stage analysis: first applying detection HT signatures to        payload and trigger) in the code. In this regard, we note
+identify the presence of HTs and locate suspicious compo-            that when compared to the structural netlist implementations,
+nents, then using contextual understanding to classify the type      RTL behavioral designs do not have a simple one-to-one
+of identified HTs. Results are structured as XML outputs             relationship. A single line of RTL code can correspond to
+detailing the number of potential detected HTs, their identified     many nodes within the structural netlist. Similarly, inferred
+trigger/payload components, and HT categorization.                   structures such as Finite State Machines (FSMs) and inferred
+                                                                     memories in synthesizable Verilog might result in non-obvious
+                 IV. E VALUATION M ETRICS                            LoC mappings. Because of these, this classification approach
+   Our evaluation framework employs a set of metrics to              describes an agent’s capability of detection but is pinpoint
+assess three aspects of HT detection in RTL IP cores: 1              accurate as an identification of HTs.
+core detection capabilities, 2 line localization precision, and         Our confusion matrix for this purpose is defined by TRUE-
+ 3 HT category classification accuracy. These metrics pro-           NESS reflecting the correct classification and POSITIVENESS
+vide a detailed, multi-dimensional evaluation of agent per-          indicating whether a line has the presence of an HT or not.
+formance across various levels. Our test dataset consists ex-           • LoCT Ppayload : This parameter is a numerical count of the
+clusively of HT-infected RTL modules with no HT-free de-                   number of lines identified correctly as the payload of an
+signs. However, our line-level approach allows for an effective            HT.
+  •   LoCT Ptrigger : This parameter is a numerical count of the                              TABLE I
+      number of lines identified correctly as the trigger of an              H ARDWARE T ROJAN B ENCHMARK D ISTRIBUTION
+      HT.                                                               HT Type   Count   Benchmark IDs
+  •   LoCT Pclean : This parameter is a numerical count of the          Type-1            SRAM-HT100, UART-HT100,
+      number of lines identified correctly as clean RTL code.                       4
+                                                                                          AES-HT100, AES-HT110
+  •   LoC: This parameter is a numerical count of the number            Type-2            SRAM-HT220, AES-HT210,
+                                                                                    4
+      of lines of RTL code in the design.                                                 AES-HT220, UART-HT200
+                                                                        Type-3            SRAM-HT120, SRAM-HT320, AES-HT120,
+  •   Trigger Line Coverage (TLC): Assesses how accurately                          6
+                                                                                          UART-HT110, UART-HT220, SRAM-HT110
+      the agent identifies the precise RTL lines of code related
+      to the HT trigger. TLC is a percentage calculated by
+                               LoCT Ptrigger                          Our framework leverages multiple LLM backends. Table II
+               T LC =                                        (1)   presents the detailed configuration parameters for each model.
+                        LoCT Ptrigger + LoCF Ptrigger
+                                                                   Our experimental dataset [14] consists of 14 HT benchmarks,
+  •   Payload Line Coverage (PLC): Measures the agent’s            which have been derived from three clean hardware designs
+      accuracy in identifying specific LoC related to HT pay-      sourced from GitHub repositories: an SRAM controller (52
+      loads, calculated similarly to TLC.                          lines), UART communication module (430 lines), and AES-
+                                                                   128 cryptographic core (768 lines). These clean designs were
+                               LoCT Ppayload
+              P LC =                                         (2)   modified to incorporate HTs, creating 14 distinct HT-infected
+                        LoCT Ppayload + LoCF Ppayload              variants. These HT-inserted designs were uploaded to GitHub
+  •   Accuracy of Classification (AC) is a measure of how          after the knowledge cutoff date of the evaluated LLM agents,
+      accurate the agent is and is calculated as                   ensuring they were not part of the model’s training data. As
+                                                                   shown in Table I, the dataset comprises a distribution of three
+              LoCT Ppayload + LoCT Ptrigger + LoCT Pclean
+        AC =                                                       different HT types, with 4 Type-1, 4 Type-2, and 6 Type-3
+                                 LoC                               HTs.
+                                                         (3)
+                                                                      We used these 14 HT-infected designs as our baseline
+  The final metric, AC, provides a summary value, allowing
+                                                                   dataset to create our test cases. Additionally, we applied our
+us to compare the quality of LLM detection between systems.
+                                                                   perturbation engine to each of these 14 designs to generate
+C. HT Category Classification Accuracy Metric                      corresponding obfuscated versions while maintaining func-
+                                                                   tional equivalence, resulting in a complementary dataset for
+   Our last metric evaluates how effective the agent is at         evaluating detection robustness under code transformations.
+providing a deeper understanding of what the HT is doing              The case study shown in Fig.1 demonstrates the com-
+based on the known taxonomy of HTs.                                plete workflow of TrojanWhisper through its key components.
+   HT Category Classification Accuracy (TCCA) measures             Fig.1(a) shows the top HT signatures generated by our HT
+the LLM’s ability to classify an HT correctly. Taking Type-2       Signature Generation Engine. These signatures are organized
+(Information Leakage) HTs as an example, TCCA evaluates            into two categories: trigger patterns (suspicious signals, reg-
+both correctly classified Type-2 HTs and false positives where     isters, counters, state machines, rare conditions, and unusual
+non-Type-2 HTs or legitimate components are incorrectly            comparisons) and payload patterns (modified output logic,
+classified as Type-2. In a design with six Type-2 HTs (k = 6),     malicious code, unexpected transitions, abnormal assignments,
+if the LLM detects and correctly classifies 4 Type-2 HTs but       and suspicious flows). When applied to an SRAM information
+also incorrectly flags 2 (either other HT types or legitimate      leakage HT from our test benchmark shown in Fig.1(b), these
+circuits) as Type-2, the TCCA Type2 would be 4/(4+2) =             signatures effectively identify both the counter-based trigger
+66.7%.                                                             mechanism using the variable “mn” and the payload that
+                 V. E XPERIMENTAL R ESULTS                         manipulates memory access patterns. To validate detection
+                                                                   robustness, our Perturbation Generation Engine transformed
+   We use Icarus Verilog (version 11.0) to ensure functional       the code as shown in Fig.1(c), applying variable name obfus-
+equivalence of the obfuscation designs with the original imple-    cation (e.g., “mn” to “uvw”, “mem” to “qrst”). Fig.1(d) shows
+mentation, confirming that our obfuscation techniques preserve     our detection engine’s analysis output, which successfully
+the intended circuit behavior. Our main system components          identifies this as a Type-2 information leakage HT by detecting
+are built in a Python 3.10.14 environment with the core            both the suspicious counter-based trigger and the abnormal
+LLM interactions handled through multiple API interfaces:          memory access pattern in the payload, despite the obfuscation
+OpenAI’s GPT-4o API, Google’s Generative AI SDK (ver-              attempts.
+sion 0.8.3) for Gemini 1.5 Pro, and the Groq Client library
+for LLama3.1. Environment management uses python-dotenv            A. Performance Evaluation
+(1.0.1) for secure API key handling, while XML processing             Our experimental results are presented in two tables: Ta-
+relies on the ElementTree library from Python’s standard           ble III shows detection performance without obfuscation/per-
+library.                                                           turbation, and Table IV presents results with these techniques
+ules                                    (a) Detection Rules HT Implementation
+                                                (b) Original                                                  (b) Original HT(c)
+                                                                                                                               Implementation
+                                                                                                                                 Obfuscated Implementation                             (c) Obfuscated Implementation
+                                                                                                                                                                                                         (d) Detection Results
+ (a) Detection (a) Detection Rules
+               Rules                                              (b) Original HT(b)Implementation
+                                                                                      Original HT Implementation                             (c) Obfuscated(c)     Obfuscated Implementation
+                                                                                                                                                                Implementation                                                                   (d) Detection R
+                                                                                                                                                                                                                                (d) Detection Results
+                 {                 1      always @(posedge clk0) begin                      1       always @(posedge
+                                                                                                             1         clk0)
+                                                                                                                   always     begin clk0) begin
+                                                                                                                           @(posedge                                    1      always @(posedge clk0) begin                                       {
+                                                                                                        if (mn                                                                          {
+                   "signatures": {2           if (mn == 32) begin                           2                2 == 32) ifbegin
+                                                                                                                           (uvw == 32) begin                            2           if (uvw   == 32) begin                                            "summary":
+                                                                            always   @(posedge    clk0) begin                                           always   @(posedge    clk0) begin  "summary":   {"trojans_found": 1},
+                      "trigger": 3[                mn 1<= 0; always @(posedge
+                                                                     1          clk0)   begin
+                                                                                            3               mn
+                                                                                                             3 <= 0;        uvw1 <= 0;always @(posedge
+                                                                                                                                                1            clk0)  begin
+                                                                                                                                                                        3                uvw <= 0;
+                                                                                                                                                                                           "trojan":  {    {                {                         "trojan": {
+rules": {                          4          end     2          if (mn
+                                                                     2   == 32) if  (mn
+                                                                                 begin   == 4 32)  beginend 4          end     2           if  (uvw
+                                                                                                                                                2    ==  32) if  (uvw
+                                                                                                                                                               begin   ==
+                                                                                                                                                                        4 32)   begin
+                                                                                                                                                                                    end                       "summary":      "summary":
+                                                                                                                                                                                                                           {"trojans_found":{"trojans_found":
+                                                                                                                                                                                                                                                  1},
+                         "suspicious_signals",                                                                                                                                                                                                           "type": 2
+ "trigger": [                      5
+                         "suspicious_registers",
+                                                                     mn
+                                                                     3 <= 0;
+                                              else if3 (addr0 == ADDR)    begin      mn <= 50;          else 5if (addr0else  if3 (addr0
+                                                                                                                         == ADDR)               uvw
+                                                                                                                                                3
+                                                                                                                                    begin== ADDR)    <=  0;
+                                                                                                                                                      begin       uvw <=5 0;        else if "type":   2, ADDR) begin
+                                                                                                                                                                                              (addr0 ==       "trojan": { "trojan": {                    "trigger"
+                                                                                end                                                                          end                             "trigger":
+    "suspicious_signals",
+s_signals",                        6
+                         "suspicious_counters",    mn 4<= mn + 1;end 4                      6               mn                 4
+                                                                                                             6 <= mn + 1; uvw <= uvw + 1;
+                                                                                                                                           end 4                        6                uvw <= uvw + 1;         "type":  2,
+                                                                                                                                                                                               "always @(posedge clk0) begin     "type":   2,              "always
+                                                      5          else5 if (addr0else   if (addr0
+                                                                                  == ADDR)  7 begin == ADDR)
+                                                                                                        end 7 begin            5           else5 if (addr0else     if (addr0
+                                                                                                                                                               == ADDR) 7 begin== ADDR)
+                                                                                                                                                                                    end begin
+", "suspicious_registers",
+s_registers",                      7          end
+                         "suspicious_state_machines", 6              6 <= mn + 1; mn <= 8mn + 1;
+                                                                     mn
+                                                                                                                       end
+                                                                                                                               6                uvw
+                                                                                                                                                6    <= uvw + 1;  uvw <=8 uvw +   1;             if  (uvw  ==    "trigger":
+                                                                                                                                                                                                                32) begin        "trigger":                  if (u
+    "suspicious_counters",
+s_counters",                       8      end
+                         "rare_conditions",                                                         end      8     end                                                         end                                 "always         "always
+                                                                                                                                                                                                                             @(posedge        @(posedge
+                                                                                                                                                                                                                                          clk0)  begin     clk0)
+                                                                                                                                                                                                                                                               uvwb
+                                                      7          end begin
+                                                                     7          end                                            7           end begin
+                                                                                                                                                7            end                                    uvw <= 0;
+    "suspicious_state_machines",
+s_state_machines",                 9      always @(negedge
+                         "unusual_comparisons"                clk0)                         9       always @(negedge
+                                                                                                             9         clk0)
+                                                                                                                   always     begin
+                                                                                                                           @(posedge    clk0)                           9      always @(posedge clk0) begin          if (uvw == 32)ifbegin(uvw == 32) begin  end
+                                                      8      end     8      end                                                8       end      8       end                                      end
+    "rare_conditions",
+itions",              ],          10          if  (!csb0_reg   && web0_reg  &&             10           if (!csb0_reg
+                                                                                                            10          &&
+                                                                                                                       if  web0_reg
+                                                                                                                           (!abcd   && &&
+                                                                                                                                        efgh  &&                       10           if  (!abcd  && efgh   &&           uvw   <= 0;      uvw   <= 0;          else
+                                                             always         always
+                                                                     @(negedge  clk0)@(negedge
+                                                                                        begin     clk0) begin                                           always   @(posedge    clk0) begin        else if (addr0 == ADDR) begin
+    "unusual_comparisons"
+omparisons"           "payload":11[
+                                                      9
+                                                   (addr0_reg        9
+                                                                == ADDR))                  11               (addr0_reg == (ijkl
+                                                                                                            11
+                                                                                                                               9
+                                                                                                                            ADDR)) == always
+                                                                                                                                       ADDR)) @(posedge
+                                                                                                                                                9            clk0)  begin
+                                                                                                                                                                       11                (ijkl == ADDR))
+                                                                                                                                                                                                    uvw <= uvw + 1;  end              end                      uvw
+ ],                               12
+                                                     10
+                                                   dout0            (!csb0_reg if
+                                                                 if 10
+                                                          <= mem[mn];            && (!csb0_reg
+                                                                                     web0_reg
+                                                                                           12    &&&& web0_reg
+                                                                                                            dout0
+                                                                                                            12
+                                                                                                                 &&<= mem[mn];10
+                                                                                                                            zabc           if 10
+                                                                                                                                  <= qrst[uvw];(!abcd && efghif (!abcd
+                                                                                                                                                                   && 12 && efgh && zabc <= qrst[uvw];               else if (addr0else      if (addr0
+                                                                                                                                                                                                                                        == ADDR)    begin== end
+                                                                                                                                                                                                                                                             ADDR)
+                         "modified_output_logic",    11              (addr0_reg
+                                                                    11            == (addr0_reg
+                                                                                      ADDR))        == ADDR))                 11                (ijkl
+                                                                                                                                               11       ==  ADDR))(ijkl  ==  ADDR))              end
+ "payload": [                     13
+                         "malicious_code",    else if (!csb0_reg && web0_reg)              13           else13if (!csb0_reg
+                                                                                                                       else if&& (!abcd
+                                                                                                                                  web0_reg)
+                                                                                                                                          && efgh)                     13           else if (!abcd && efgh)            uvw   <= uvw  +  uvw
+                                                                                                                                                                                                                                        1;    <= uvw    + 1; xy  <=
+                                                     12             12               dout014<= mem[mn]; 14
+                                                                     dout0 <= mem[mn];                                        12                zabc <= qrst[uvw];
+                                                                                                                                               12                 zabc 14
+                                                                                                                                                                        <= qrst[uvw]; zabc <=  end",
+    "modified_output_logic",
+output_logic",                    14
+                         "unexpected_transitions", dout0  <= mem[addr0_reg];                                dout0 <= mem[addr0_reg];
+                                                                                                                            zabc  <= qrst[ijkl];                                                  qrst[ijkl];        end              end                  end",
+    "malicious_code", "abnormal_assignments",
+_code",                           15      end        13          else           else if
+                                                                    13 if (!csb0_reg    && (!csb0_reg
+                                                                                           15       end && 15
+                                                                                            web0_reg)       web0_reg)
+                                                                                                                   end        13           else13 if (!abcdelse    if 15
+                                                                                                                                                               && efgh)(!abcd end
+                                                                                                                                                                                && efgh)                             xy  <=  xy +  1; xy  <=  xy +   1;
+                                                     14             14               dout0 <= mem[addr0_reg];
+                                                                     dout0 <= mem[addr0_reg];                                 14                                  zabc <= qrst[ijkl];
+                                                                                                                                                zabc <= qrst[ijkl];
+                                                                                                                                               14                                            "payload":                                                  "payload"
+    "unexpected_transitions",
+d_transitions",          "suspicious_flows"                                                                                                                                                    "always @(posedge     clk0) begin end",
+                                                                                                                                                                                                                   end",                                   "always
+    "abnormal_assignments",
+assignments",                                        15      end    15      end                                               15       end     15       end                                                                      "payload":
+                      ],                                                                                                                                                                         if (!abcd &&"payload":
+                                                                                                                                                                                                                  efgh &&                                    if (!
+    "suspicious_flows"
+s_flows"
+load"                 "success criteria": "trigger OR payload" (b) Original implementation of the HT in Verilog               (c) Obfuscated HT in Verilog                                           (ijkl   ==                    "always
+                                                                                                                                                                                                                   "always @(posedge
+                                                                                                                                                                                                                 ADDR))                       @(posedge
+                                                                                                                                                                                                                                          clk0)  begin clk0)(i    b
+ ],                }                                                                                                                                                                                                 if (!abcd && efgh
+                                                                                                                                                                                                    zabc <= qrst[uvw];                if (!abcd
+                                                                                                                                                                                                                                            &&     && efgh &&zab
+ "condition":
+ "trigger      "trigger
+           OR payload"    OR payload"                                                                                                                                                                                    (ijkl  ==  ADDR))(ijkl  ==   ADDR))
+                 }           (a) HT signatures                                                                                                            (d) HT detection results of            else if (!abcd && efgh)                                     else
+                                                                                                                                                                                                                                         zabc <= qrst[uvw];zab
+                                                                                                                                                                                                                        zabc <= qrst[uvw];
+                                                                                                                                                                                                    zabc <= qrst[ijkl];
+                                                                                                                                                                        TrojanWhisper          end"                  else if (!abcdelse      if (!abcd &&
+                                                                                                                                                                                                                                        && efgh)             efgh)
+                                                                                                                                                                                                                                                           end"
+                                                                                                                                                                                           }                                             zabc <= qrst[ijkl];
+                                                                                                                                                                                                                        zabc <= qrst[ijkl];           }
+                                                                                                                                                                                        }                          end"            end"            }
+                                                                                                                                                                                                              }               }
+                   Fig. 1. TrojanWhisper detection of an information leakage HT in SRAM design (SRAM-T110 [14]): HT signatures (a), original                                                               }       HT (SRAM-T110)
+                                                                                                                                                                                                                            }
+                     implementation
+                          Figure 4: (b), obfuscated HT
+                                    TrojanWhisper       (c), andofdetection
+                                                     detection      anFigureresults
+                                                                       information  (d).
+                                                                              4: TrojanWhisper   detection
+                                                                                     leakage HT in  SRAM of  an information
+                                                                                                           design:            leakage
+                                                                                                                   detection rules    HT in SRAM
+                                                                                                                                   (leftmost),        design:
+                                                                                                                                               original       detection rules
+                                                                                                                                                        implementation    (left (leftmost), original i
+                                                                                                                                                                                 middle), obfuscated
+                                                    Figure  4: IITrojanWhisper
+                                         Figure 4: TrojanWhisper
+                                                     TABLE           detection ofdetection of an information
+                                                                                   an information leakage HTleakage
+                                                                                                              in SRAMHTdesign:
+                                                                                                                          in SRAM    design:rules
+                                                                                                                                 detection   detection  rules original
+                                                                                                                                                  (leftmost), (leftmost), original implementation
+                                                                                                                                                                       implementation    (left middl
+                                       LLM C ONFIGURATION PARAMETERS                                                                   TABLE IV
+                                                                                                           HT D ETECTION R ESULTS W ITH O BFUSCATION /P ERTURBATION
+                             Parameter                GPT-4o              Gemini 1.5                 Llama 3.1
+                                                                            Pro                       Versatile                                                   Detection Performance Localization Precision        Type Classification
+                                                                                                                                       Model      Test Category
+                             Model Version            GPT-4o      Gemini-1.5-pro-latest llama-3.1-70b-versatile                                                      {k, TP, FP, FN}       TLC PLC            AC     TCCA Type Analysis
+                             Temperature                 1.0                 1.0                        1.0                           GPT-4o       HT1 Cases            {4, 4, 0, 0}        0.87   0.24       0.93   1.000     4/4 Type-1
+                                                                                                                                                   HT2 Cases            {4, 2, 0, 2}        0.71   0.33       0.81   1.000     2/2 Type-2
+                             Top-p                       1.0                 0.95                       1.0                                        HT3 Cases            {6, 6, 0, 0}        0.90   0.14       0.90   0.500     3/6 Type-3
+                                                                                                                                                                                       2                                                      2
+                             Max Input Tokens           128K                ˜200k                      128k                          Aggregate                        {14, 12, 0, 2}        0.86   0.20       0.88   0.750         —
+                                                                                                                                                                         (-2 TP)             ↓      ↓     2    ↓       ↑2
+                             Max Output Tokens          ˜16K                 8K                        ˜32k
+                                                                                                                                    Gemini 1.5     HT1 Cases            {4, 4, 0, 0}        0.69   0.29       0.93   0.750     3/4 Type-1
+                             Knowledge Cutoff         Oct 2023            Nov 2023                   Dec 2023                                      HT2 Cases            {4, 4, 0, 0}        0.78   0.89       0.87   0.750     3/4 Type-2
+                                                                                                                                                   HT3 Cases            {6, 6, 0, 0}        0.73   0.23       0.86   0.667     4/6 Type-3
+                                                   TABLE III                                                                         Aggregate                        {14, 14, 0, 0}        0.73   0.33       0.89   0.643         —
+                          HT D ETECTION R ESULTS W ITHOUT O BFUSCATION /P ERTURBATION                                                                                      (→)               ↓      ↓          →       ↑
+
+                                                                                                                                     Llama 3.1     HT1 Cases            {4, 4, 2, 0}        0.67   0.17       0.91   0.333     2/6 Type-1
+                                                     Detection Performance Localization Precision         Type Classification                      HT2 Cases            {4, 2, 1, 2}        0.67   0.33       0.81   0.333     1/3 Type-2
+                         Model       Test Category
+                                                       {k, TP, FP, FN}         TLC PLC        AC        TCCA Type Analysis                         HT3 Cases            {6, 6, 3, 0}        0.79   0.33       0.88   0.111     1/9 Type-3
+                                      HT1 Cases           {4, 4, 0, 0}          1.00 0.29     0.96       1.000    4/4 Type-1         Aggregate                        {14, 12, 6, 2}        0.72   0.25       0.87   0.222         —
+                        GPT-4o                                                                                                                                        (+2 FP, +2 FN)         →      ↓          →       ↓
+                                      HT2 Cases           {4, 4, 0, 0}          0.94 0.62     0.89       0.750    3/4 Type-2
+                                      HT3 Cases           {6, 6, 0, 0}         1.000 0.19     0.90       0.500    3/6 Type-3             Legend: ↑ Increase from baseline, ↓ Decrease from baseline, → No
+                       Aggregate                         {14, 14, 0, 0}        0.98    0.32   0.92       0.714        —                                         significant change
+                       Gemini 1.5     HT1 Cases           {4, 4, 0, 0}         1.00    0.40   0.93       0.750    3/4 Type-1
+                                      HT2 Cases           {4, 4, 0, 0}         0.75    1.00   0.87       0.750    3/4 Type-2
+                                      HT3 Cases           {6, 6, 0, 0}         0.84    0.34   0.88       0.333    2/6 Type-3       detecting all true HTs, generated four FPs in HT2 test cases,
+                       Aggregate                         {14, 14, 0, 0}        0.82    0.46   0.89       0.571        —
+                                                                                                                                   resulting in a performance tuple of {14, 14, 4, 0}. For local-
+                       Llama 3.1      HT1 Cases           {4, 4, 0, 0}         0.57    0.23   0.90       0.750    3/4 Type-1
+                                      HT2 Cases           {4, 4, 4, 0}         0.65    0.30   0.81       0.375    3/8 Type-2       ization precision, GPT-4o achieved the highest trigger line
+                                      HT3 Cases           {6, 6, 0, 0}         1.00    0.67   0.89       0.333    2/6 Type-3
+                       Aggregate                         {14, 14, 4, 0}        0.72    0.33   0.87       0.444        —
+                                                                                                                                   coverage (TLC) of 0.98, though its payload line coverage
+                                                                                                                                   (PLP) was lower at 0.32. Gemini 1.5 showed more balanced
+                                                                                                                                   but slightly lower localization metrics with TLC of 0.82 and
+                     applied. We first calculated the individual row metrics (HT1,                                                 PLP of 0.46. The AC is strong across all models, with GPT-4o
+                     HT2, HT3 Cases) using only the samples of that particular HT                                                  achieving 0.92, Gemini 1.5 at 0.89, and Llama 3.1 maintaining
+                     type - for instance, HT1 cases consider only the 4 Type-1 HTs,                                                0.87, indicating robust performance in correctly identifying
+                     with their detection performance tuple {k = 4, TP, FP, FN}                                                    clean versus HT-infected code. However, the HT classification
+                     and corresponding TLC, PLC, AC, and TCCA metrics com-                                                         accuracy (TCCA) varied significantly across models, with
+                     puted for just these samples. We then considered all HT                                                       GPT-4o achieving 0.714, followed by Gemini 1.5 at 0.571,
+                     samples together rather than averaging across HT types for                                                    and Llama 3.1 at 0.444, suggesting that while overall detec-
+                     the aggregate metrics. For the detection performance tuple k,                                                 tion and classification accuracy (line) was robust and precise
+                     TP, FP, FN, we summed the total number of HTs (k=14) across                                                   categorization of HT types remains challenging.
+                     all samples, along with the total number of true positives (TP),                                               2 Perturbed Case: The introduction of obfuscation tech-
+                     false positives (FP), and false negatives (FN) identified across                                              niques (Table IV) provides a more reliable assessment of
+                     all samples. Similarly, for metrics like TLC, PLC, AC, and                                                    true detection capabilities by mitigating potential training data
+                     TCCA, we considered the total correctly identified lines or                                                   advantages. Here, we see different performance across models.
+                     HT-type classifications across all 14 samples divided by the                                                  Gemini 1.5 maintained a perfect detection rate with an ideal
+                     total number of relevant lines or HT-type classifications, rather                                             performance tuple of {14, 14, 0, 0} even under obfuscation. In
+                     than taking the average of the three category-specific metrics.                                               contrast, Llama 3.1’s and GPT-4o’s performance showed some
+                      1 Baseline Case: In the baseline evaluation shown in Ta-                                                     degradation, particularly in HT2 cases where both the agents
+                     ble III, GPT-4o and Gemini 1.5 demonstrate perfect detection                                                  missed two HTs (FN=2). All models experienced decreased
+                     rates, successfully identifying all 14 HTs without any FPs                                                    trigger line coverage (TLC), with GPT-4o dropping to 0.86
+                     or FNs in their aggregate performance. Llama 3.1, while                                                       from 0.98, Gemini 1.5 to 0.73 from 0.82, and Llama 3.1
+                           TABLE V                                                  the memorized golden reference design.
+      C OMPUTATIONAL C OST A NALYSIS ACROSS LLM M ODELS                             Detection-Localization Gap: While models maintain good
+     Parameter              GPT-4o Gemini 1.5 Pro Llama 3.1 Versatile
+                                                                                    line detection capabilities (high AC scores of 0.87-0.89), their
+     Avg Time/Sample (s)      6.01           10.91                 2.63
+                                                                                    ability to precisely locate HTs (TLC/PLC) degrades under
+     Input Tokens/Sample     1437.2           N/A               2499.9
+                                                                                    obfuscation. This suggests LLMs are better at identifying the
+     Output Tokens/Sample 1406.36             N/A              3985.14
+                                                                                    presence of threat comparisons than pinpointing their exact
+     Cost/Sample ($)         0.0079         free-tier          free-tier
+                                                                                    location.
+  Note: N/A indicates token counts are unavailable.
+                                                                                    Viability for Security Applications: The consistently high
+                                                                                    detection rates and stable accuracy classification (AC) scores
+remained stable at 0.72. Payload line coverage (PLC) similarly
+                                                                                    across obfuscated scenarios validate LLM approaches as a
+declined across models. Notably, the accuracy of classification
+                                                                                    promising complement to existing HT detection methods.
+(AC) remained stable under perturbation (GPT-4o: 0.88, Gem-
+ini 1.5: 0.89, Llama 3.1: 0.87), though Trojan categorization                       B. Comparison with other Detection Methods
+accuracy (TCCA) varied significantly, with Llama 3.1 showing
+                                                                                       Compared to existing approaches in the literature, as
+the most degradation (0.222 from 0.444) while GPT-4o slightly
+                                                                                    shown in Table VI, our LLM-based method using Gem-
+improved (0.750 from 0.714). These results suggest that while
+                                                                                    ini 1.5 pro achieves superior performance with 100/100%
+code obfuscation impacts the models’ ability to precisely
+                                                                                    (Precision/Recall) detection rate while providing HT lo-
+locate HTs (as shown by decreased TLC and PLC), their
+                                                                                    calization capabilities. Among neural network-based ap-
+overall ability to distinguish between clean and infected code
+                                                                                    proaches, GNN variants show strong but varying perfor-
+(AC) remains robust. However, accurate categorization of HT
+                                                                                    mance - GCN [18] achieves 98.9/88.4% with localization
+types becomes more challenging for some models.
+                                                                                    support, while Topology-GNN [19] and basic GNN [2]
+   Our evaluation measured LLM inference costs across the
+                                                                                    achieve 93.35/91.38% and 92/97% respectively without lo-
+three LLM agents for the HT detection task using the ob-
+                                                                                    calization capabilities. Language-based methods and recent
+fuscated benchmarks, as shown in Table V. The results show
+                                                                                    gradient boosting approaches demonstrate high effectiveness,
+revealing tradeoffs: Gemini 1.5 Pro achieved perfect detection
+                                                                                    with NLP-based methods [17] reaching 97.94/97.77% and
+using the free tier but needed 10.91s per sample. Llama 3.1
+                                                                                    decision-tree gradient boosting [16] achieving 99/98%, both
+was fastest (2.63s) and free but dropped to 66.7% precision,
+                                                                                    supporting localization. Graph-theoretical approaches show
+85.7% recall. GPT-4o struck balance - 6.01s and $0.0079
+                                                                                    mixed results - network analysis [20] achieves 98/98% with
+per sample while maintaining 100% precision, 85.7% recall.
+                                                                                    localization support, while graph matching [10] and graph
+All times include API latency and execution times for results
+                                                                                    isomorphism [23] report 100% recall but lack localization ca-
+extraction python scripts.
+                                                                                    pabilities. Traditional machine learning methods like gradient
+ 3 Key Takeaways: These results, shown in Tables III
+                                                                                    boosting [12] and ML-Immune [21] show varying performance
+and IV, underscore the promise and limitations of LLM
+                                                                                    (100% and 87/85% respectively), while flow analysis [22]
+approaches for HT detection.
+                                                                                    achieves perfect recall but with significantly longer processing
+Generalization vs. Memorization: Gemini 1.5 pro’s ability                           time (292.85s). While our LLM approach has a relatively
+to maintain perfect detection performance even under obfus-                         higher processing time of 10.91s compared to some newer
+cation (while other models degraded) demonstrates that LLMs                         techniques, it offers a better balance of detection accuracy and
+can perform HT detection beyond a simple comparison with                            localization capability.
+                              TABLE VI
+                C OMPARISON OF HT D ETECTION M ETHODS
+                                                                                    C. Limitations
+     Work                  Method/               Detection     HT     Time/            Most of the limitations of this work have to do with
+     [Venue, Year]         Technique             Rate (%)     Local. Sample
+                                                                                    those imposed by using LLMs. These issues include token
+     Our work              LLM                    100/100      ✓          10.91s
+                                                                                    count impacting scalability, which limits the handling of larger
+     MLCAD’24 [16]         GBDT                      99/98     ✓          0.045s
+                                                                                    designs (a possible workaround could be partitioning larger
+     ITCA’24 [17]          NLP-Based            97.94/97.77    ✓            –
+                                                                                    designs). The probabilistic behavior of LLMs imposes non-
+     TVLSI’22 [18]         GCN                    98.9/88.4    ✓          10.2ms
+                                                                                    determinism, HT signatures leaking out, and potential circum-
+     TCAD’23 [19]          Topology-GNN         93.35/91.38    ✗           0.38s
+                                                                                    vention. The perturbation engine is implementing basic code
+     DATE’21 [2]           GNN                       92/97     ✗          21.1ms
+                                                                                    transformations. A small sample of benchmark RTL designs
+     ISCAS’19 [12]         Gradient Boost            –/100     ✗           1.36s
+                                                                                    to test our ideas on. The cost for running locally vs. the risks
+     ICCIT’19 [20]         Network Analysis          98/98     ✓            –
+                                                                                    of using the cloud and risk privacy for critical designs.
+     AsianHOST’18 [21] ML-Immune                     87/85     ✗            –
+     TECS’17 [10]          Graph Match               –/100     ✗           5.02s               VI. C ONCLUSION AND F UTURE W ORK
+     ITC’17 [22]           Flow Analysis             –/100     ✗          292.85s
+     HLDVT’17 [23]         ML/Graph Iso              –/100     ✗           1.15s
+                                                                                       This work represents one of the first systematic inves-
+ 1) Detection Rate: Shown as Precision/Recall where available; ‘–’                  tigations into leveraging LLMs for HT detection in RTL
+ indicates not reported; 2) HT Local.: ✓: Supports localization, ✗: No              designs. Our experimental results reveal three critical findings.
+ localization support                                                               First, Gemini 1.5’s perfect precision/recall (100%/100%), even
+under obfuscation, demonstrates LLMs’ ability to detect HTs                        [13] D. Saha, S. Tarek, K. Yahyaei, S. K. Saha, J. Zhou, M. Tehranipoor, and
+beyond simple historical HT design memorization. Second, we                             F. Farahmandi, “Llm for soc security: A paradigm shift,” IEEE Access,
+                                                                                        2024.
+identified a detection-localization gap: models maintain good                      [14] https://github.com/HSTRG1/GHOST benchmarks.git.
+precision/recall in detecting HT presence (Gemini 1.5 pro:                         [15] Trust-HUB. (2024) Chip-level trojan benchmarks. Accessed: Aug.
+100%/100%, GPT-4o: 100%/85.7%, Llama 3.1: 66.7%/85.7%)                                  26, 2024. [Online]. Available: https://trust-hub.org/#/benchmarks/
+                                                                                        chip-level-trojan
+but struggle with precise localization under obfuscation (TLC:                     [16] R. Fan, Y. Tang, H. Sun, J. Liu, and H. Li, “An efficient ml-based
+0.72-0.86, PLC: 0.20-0.33). Finally, the consistently high                              hardware trojan localization framework for rtl security analysis,” in Pro-
+detection rates (especially of Gemini 1.5 pro and GPT-4o)                               ceedings of the 2024 ACM/IEEE International Symposium on Machine
+                                                                                        Learning for CAD, 2024, pp. 1–7.
+validate LLM approaches as a promising complement to                               [17] Y. Li, W. Hu, H. Su, X. Zhang, Y. Zhao, P. Wang, and L. Wu, “Pinpoint-
+existing HT detection methods while highlighting areas for                              ing hardware trojans through semantic feature extraction and natural
+improvement in localization precision and HT categorization.                            language processing,” in 2024 IEEE International Test Conference in
+                                                                                        Asia (ITC-Asia). IEEE, 2024, pp. 1–6.
+   Future work will focus on increasing the dataset to include                     [18] R. Yasaei, S. Faezi, and M. A. Al Faruque, “Golden reference-free
+more designs and either better obfuscate or include designs                             hardware trojan localization using graph convolutional network,” IEEE
+outside the scope of a trained LLM. This will help clarify                              Transactions on Very Large Scale Integration (VLSI) Systems, vol. 30,
+                                                                                        no. 10, pp. 1401–1411, 2022.
+whether the agents themselves provide the measured capabili-                       [19] R. Hassan, X. Meng, K. Basu, and S. M. P. Dinakarrao, “Circuit
+ties as emergent skills or the transformer focuses on variations                        topology-aware vaccination-based hardware trojan detection,” IEEE
+from statistical HDL designs.                                                           Transactions on Computer-Aided Design of Integrated Circuits and
+                                                                                        Systems, vol. 42, no. 9, pp. 2852–2862, 2023.
+                                                                                   [20] S. A. Islam, F. I. Mime, S. Asaduzzaman, and F. Islam, “Socio-network
+                               R EFERENCES                                              analysis of rtl designs for hardware trojan localization,” in 2019 22nd
+                                                                                        International Conference on Computer and Information Technology
+                                                                                        (ICCIT). IEEE, 2019, pp. 1–6.
+ [1] B. Shakya, T. He, H. Salmani, D. Forte, S. Bhunia, and M. Tehranipoor,        [21] F. Zareen and R. Karam, “Detecting rtl trojans using artificial immune
+     “Benchmarking of hardware trojans and maliciously affected circuits,”              systems and high level behavior classification,” in 2018 Asian Hardware
+     Journal of Hardware and Systems Security, vol. 1, pp. 85–102, 2017.                Oriented Security and Trust Symposium (AsianHOST). IEEE, 2018, pp.
+ [2] R. Yasaei, S.-Y. Yu, and M. A. Al Faruque, “Gnn4tj: Graph neural                   68–73.
+     networks for hardware trojan detection at register transfer level,” in 2021   [22] A. Nahiyan, M. Sadi, R. Vittal, G. Contreras, D. Forte, and M. Tehra-
+     Design, Automation & Test in Europe Conference & Exhibition (DATE).                nipoor, “Hardware trojan detection through information flow security
+     IEEE, 2021, pp. 1504–1509.                                                         verification,” in 2017 IEEE International Test Conference (ITC). IEEE,
+ [3] S. Saha, R. S. Chakraborty, S. S. Nuthakki, Anshul, and D. Mukhopad-               2017, pp. 1–10.
+     hyay, “Improved test pattern generation for hardware trojan detection         [23] F. Demrozi, R. Zucchelli, and G. Pravadelli, “Exploiting sub-graph
+     using genetic algorithm and boolean satisfiability,” in Cryptographic              isomorphism and probabilistic neural networks for the detection of
+     Hardware and Embedded Systems–CHES 2015: 17th International                        hardware trojans at rtl,” in 2017 IEEE International High Level Design
+     Workshop, Saint-Malo, France, September 13-16, 2015, Proceedings 17.               Validation and Test Workshop (HLDVT). IEEE, 2017, pp. 67–73.
+     Springer, 2015, pp. 577–596.
+ [4] P. Subramanyan and D. Arora, “Formal verification of taint-propagation
+     security properties in a commercial soc design,” in 2014 Design,
+     Automation & Test in Europe Conference & Exhibition (DATE). IEEE,
+     2014, pp. 1–2.
+ [5] J. Rajendran, A. M. Dhandayuthapany, V. Vedula, and R. Karri, “Formal
+     security verification of third party intellectual property cores for infor-
+     mation leakage,” in 2016 29th International conference on VLSI design
+     and 2016 15th international conference on embedded systems (VLSID).
+     IEEE, 2016, pp. 547–552.
+ [6] A. Waksman, M. Suozzo, and S. Sethumadhavan, “Fanci: identifica-
+     tion of stealthy malicious logic using boolean functional analysis,” in
+     Proceedings of the 2013 ACM SIGSAC conference on Computer &
+     communications security, 2013, pp. 697–708.
+ [7] J. Zhang, F. Yuan, L. Wei, Z. Sun, and Q. Xu, “Veritrust: Verification for
+     hardware trust,” in Proceedings of the 50th Annual Design Automation
+     Conference, 2013, pp. 1–8.
+ [8] J. Zhang, F. Yuan, and Q. Xu, “Detrust: Defeating hardware trust
+     verification with stealthy implicitly-triggered hardware trojans,” in Pro-
+     ceedings of the 2014 ACM SIGSAC conference on computer and
+     communications security, 2014, pp. 153–166.
+ [9] M. Fyrbiak, S. Wallat, S. Reinhard, N. Bissantz, and C. Paar, “Graph
+     similarity and its applications to hardware security,” IEEE Transactions
+     on Computers, vol. 69, no. 4, pp. 505–519, 2019.
+[10] L. Piccolboni, A. Menon, and G. Pravadelli, “Efficient control-flow
+     subgraph matching for detecting hardware trojans in rtl models,” ACM
+     Transactions on Embedded Computing Systems (TECS), vol. 16, no. 5s,
+     pp. 1–19, 2017.
+[11] K. Hasegawa, M. Yanagisawa, and N. Togawa, “Hardware trojans
+     classification for gate-level netlists using multi-layer neural networks,”
+     in 2017 IEEE 23rd International Symposium on On-Line Testing and
+     Robust System Design (IOLTS). IEEE, 2017, pp. 227–232.
+[12] T. Han, Y. Wang, and P. Liu, “Hardware trojans detection at register
+     transfer level based on machine learning,” in 2019 IEEE International
+     Symposium on Circuits and Systems (ISCAS). IEEE, 2019, pp. 1–5.
+

@@ -1,0 +1,521 @@
+                                         VerilogEval: Evaluating Large Language Models for
+                                                      Verilog Code Generation
+                                                                  Mingjie Liu, Nathaniel Pinckney, Brucek Khailany, and Haoxing Ren
+                                                                                             NVIDIA Corporation
+                                                                            {mingjiel, npinckney, bkhailany, haoxingr}@nvidia.com
+
+
+                                            Abstract—The increasing popularity of large language models
+                                         (LLMs) has paved the way for their application in diverse do-
+                                         mains. This paper proposes a benchmarking framework tailored
+arXiv:2309.07544v2 [cs.LG] 10 Dec 2023
+
+
+
+
+                                         specifically for evaluating LLM performance in the context of
+                                         Verilog code generation for hardware design and verification.
+                                         We present a comprehensive evaluation dataset consisting of
+                                         156 problems from the Verilog instructional website HDLBits.
+                                         The evaluation set consists of a diverse set of Verilog code
+                                         generation tasks, ranging from simple combinational circuits to
+                                         complex finite state machines. The Verilog code completions can
+                                         be automatically tested for functional correctness by comparing
+                                         the transient simulation outputs of the generated design with
+                                         a golden solution. We also demonstrate that the Verilog code
+                                         generation capability of pretrained language models could be
+                                         improved with supervised fine-tuning by bootstrapping with
+                                         LLM generated synthetic problem-code pairs.
+                                                                                                           Fig. 1 VerilogEval uses a sandbox environment for simple
+                                                              I. I NTRODUCTION                             and reproducible evaluation of LLM Verilog code generation
+                                            The escalating popularity of Large Language Models
+                                         (LLMs), characterized by their remarkable capacity to com-
+                                         prehend and generate human-like text, has opened up a realm       task-specific data to adapt to requirements. Ensuring model
+                                         of possibilities across diverse domains [1]–[3]. LLMs tailored    alignment is imperative for achieving improved performance,
+                                         for specific domains have garnered significant attention owing    driving the investigation of increasingly computationally de-
+                                         to their impressive performance on both general-purpose           manding techniques, such as reinforcement learning with
+                                         benchmarks and specialized tasks within domains like finan-       human feedback [15], [16]. The cost associated with acquiring
+                                         cial engineering [4], biomedical studies [5], [6], and general    labeled data also remains a barrier, prompting a growing
+                                         scientific research [7]. When it comes to coding, LLMs can as-    interest in alternative annotation-free alignment techniques.
+                                         sist developers by suggesting code snippets, offering solutions   Self-Instruct [17] starts with a seed task, using LLMs to
+                                         to common programming challenges, and even explaining             create more instructions and instances. WizardLM’s Evol-
+                                         complex concepts in a more accessible manner [8], [9].            Instruct [18] evolves instructions for a diverse dataset, which
+                                            In the realm of Electronic Design Automation, LLMs             is further applied to code generation [19]. Additionally, a
+                                         provide the potential to aid engineers in designing and           recent study utilized GPT-4 to generate a high-quality syn-
+                                         verifying digital systems, providing insights into Verilog        thetic textbook dataset, achieving superior coding capabilities
+                                         coding, optimizing circuits, and automating time-consuming        at 1/100th of the cost of other models [20]. Within the realm of
+                                         tasks [10], [11]. A number of studies have initiated the          Verilog coding, there remains a notable gap in the exploration
+                                         evaluation of LLMs’ potential in generating Verilog code.         of supervised fine-tuning for model enhancement.
+                                         Thakur et al. [12] fine-tuned CodeGen [9] models which was           Moreover, notwithstanding commendable endeavors, recent
+                                         evaluated on 17 designs. A later follow up work [10] further      research in Verilog code benchmarking has revealed limi-
+                                         demonstrate the ability to design chip-level circuits with        tations concerning its comprehensiveness, quantity, and the
+                                         ChatGPT. RTLLM [13] propose a benchmark framework with            diversity of problems studied. Effective benchmarks should
+                                         30 designs, which focus on increasing the benchmark design        exhibit diversity, encompassing a wide array of topics, to
+                                         scalability. The authors further improved the solution quality    mitigate testing variance. Furthermore, they should offer un-
+                                         with simple and effective prompt engineering techniques.          ambiguous problem descriptions, ensuring that solutions can
+                                            While LLMs have proven to be powerful tools, their             be assessed with clear distinctions regarding correctness. In
+                                         pretraining phase, characterized by unsupervised training loss,   addition, reliability and automation are key factors, enabling
+                                         often lacks alignment with specific tasks. To enhance perfor-     the straightforward evaluation of generated code through
+                                         mance, supervised fine-tuning (SFT) is used [14], involving       robust testing procedures.
+   Our research addresses these gaps through the introduction                  HDLBits is a collection of digital circuit design exercises and
+of VerilogEval1 , a open-source benchmark that encompasses                     an online judge for learning digital logic using the Verilog
+a diverse array of questions, offers clear and unambiguous                     hardware description language. The evalutation set consists
+problem descriptions, and incorporates automated, easily re-                   of diverse Verilog coding tasks, ranging from module imple-
+producible testing procedures. This contribution significantly                 mentation of simple combinational circuits to complex finite
+enhances the robustness and effectiveness of the evaluation                    state machines, code debugging, and testbench construction.
+framework for Verilog code generation and assessment. Our                         We focus on generating self-contained3 Verilog modules
+specific contributions are as follows:                                         from natural language text descriptions. We define a Verilog
+   • We present a comprehensive evaluation dataset compris-                    module as self-contained if the module implementation does
+     ing 156 problems sourced from the HDLBits. These                          not require instantiation of any other modules. We emphasize
+     problems have undergone meticulous curation, ensuring                     the significance of module instantiation as a crucial capability
+     both clarity and diversity.                                               in Verilog, playing an essential role in constructing extensive
+   • We developed a benchmarking framework wherein Ver-                        system-level designs. It’s important to note that our evaluation
+     ilog code completions are subjected to automatic func-                    does not delve into this topic. However, while most problems
+     tional correctness testing.                                               in VerilogEval are intentionally concise, they demand the
+   • We constructed a synthetic supervised fine-tuning dataset                 LLM to possess a comprehension of hardware design along
+     by leveraging LLMs to generate problem descriptions                       with adept problem-solving skills in areas encompassing
+     paired with Verilog code. This dataset is employed in                     circuits, Boolean logic, state transitions, and more.
+     extensive experiments on SFT, further enhancing the                          Fig. 2 shows an example of the problem vectorr. Prob-
+     model’s proficiency in Verilog coding tasks.                              lem Description includes both natural language description
+                                                                               and module header and IO definition. Including the module
+               II. E VALUATION F RAMEWORK
+                                                                               header removes ambiguity such as the bit width of signals.
+   In this section we discuss the details of our evaluation                    The Question Prompt is concatenated with Problem De-
+framework and evaluation dataset collection. Our work closely                  scription and sent to the LLM for inference. Canonical
+follows the widely adopted Python coding benchmark Hu-                         Solution is provided as the golden solution for testing.
+manEval [21] for best practices. VerilogEval is presented
+in Fig. 1 where we develop a sandbox environment for simple                    B. Problem Descriptions
+and reproducible evaluation of LLM Verilog code generation.
+                                                                                  Although HDLBits serves as a valuable resource for Ver-
+                                                                               ilog coding challenges, a significant portion of the website’s
+    System Prompt (Optional):
+    You only complete chats with syntax correct Verilog code. End the
+                                                                               problem descriptions are not readily compatible with text-only
+    Verilog module code completion with ’endmodule’. Do not include            language models. These problem descriptions rely on various
+    module, input and output definitions.
+                                                                               modalities, frequently incorporating circuit schematic images,
+    Question Prompt:                                                           state transition diagram graphs, Boolean logic tables, and
+    Implement the Verilog module based on the following description. As-       Karnaugh maps. We explore with two methods for generating
+    sume that signals are positive clock/clk edge triggered unless otherwise
+    stated.                                                                    text-only problem descriptions for these problem sets.
+                                                                                  1) VerilogEval-machine: We completely disregard the
+    Problem Description:
+    Given an 8-bit input vector [7:0], reverse its bit ordering.               descriptions on the website and opt to utilize LLMs for
+    module top_module (                                                        the automated creation of problem descriptions. We em-
+               input [7:0] in,                                                 ploy the prompt template depicted in Fig. 3, employing
+               output [7:0] out
+    );                                                                         gpt-3.5-turbo. Initially, we create all problem descrip-
+                                                                               tions using zero-shot methods. We validate these descriptions
+    Canonical Solution:                                                        by using the LLM to produce code solutions. Problem descrip-
+      assign {out[0],out[1],out[2],out[3],out[4],                              tions are considered invalid if none of the generated comple-
+      ,→   out[5],out[6],out[7]} = in;
+    endmodule                                                                  tions succeed across 100 samples, and such descriptions are
+                                                                               then discarded. Surprisingly, among the pool of 156 candidate
+                                                                               problems, 108 of them yield successful solutions upon initial
+Fig. 2 Example of vectorr in VerilogEval-human. The                            sampling. Subsequent to this, we consider the valid generated
+Problem Description includes both natural language descrip-                    descriptions as few-shot examples (4-shot) and proceed to
+tion and module header, input, and output definition.                          further sample unsolved problems. In this phase, we itera-
+                                                                               tively sample descriptions along with their corresponding code
+A. VerilogEval Evaluation Set                                                  completions (8 completions per description). Descriptions are
+  We evaluate functional correctness on a selected set of                      labeled as valid as soon as any of the corresponding code
+problems from the Verilog instructional website HDLBits2 .                     completions pass testing. Sampling for each problem is halted
+ 1 https://github.com/NVlabs/verilog-eval                                        3 Example of a removed question that is not self-contained: https://hdlbits.
+ 2 https://hdlbits.01xz.net/wiki/Problem      sets                             01xz.net/wiki/Module cseladd.
+    System Prompt:                                                                    into a text-only structure. We dedicated particular attention
+    Explain the high-level functionality of the Verilog module. Use as many           to addressing ambiguity within the problem descriptions,
+    high-level concepts that are directly applicable to describe the code,
+    say at the level of an undergraduate EECS major, but do not include               particularly when precisely determining attributes such as
+    extraneous details that aren’t immediately applicable. Use text-based truth       the clock’s posedge or negedge triggering, whether reset and
+    tables and state transition graphs when necessary. Speak concisely as if
+    this was a specification for a circuit designer to implement. You should          enable signals are active high or active low, and whether
+    only reply with descriptive natural language and not use any code.                they operate synchronously or asynchronously. Boolean logic
+                                                                                      tables and Karnaugh maps were transformed into textual
+    Few-shot Examples (Optional):
+    Question: Explain the high-level functionality of the Verilog module.             tabular formats. Circuit schematic diagrams were translated
+    module top_module (                                                               into natural language explanations of the connections between
+                input [7:0] in,
+                output [7:0] out                                                      logical gates. For sequential waveforms, we meticulously
+    );                                                                                detailed all signal values at each transition edge of the clock,
+       assign {out[0],out[1],out[2],out[3],out[4],
+       ,→    out[5],out[6],out[7]} = in;                                              presented in a tabular layout with an added column for time
+    endmodule                                                                         steps. One particular challenge we confronted revolved around
+    Answer: This top Verilog module is a 8-bit unidirectional data port. It           the task of converting state transition graphs into a text-
+    takes an 8-bit input in, and outputs an 8-bit signal out. The output of the
+    module is assigned to out based on the value of in. If in = a,b,c,d,e,f,g,h,      based representation. To tackle this, we turned to ChatGPT
+    then out = h,g,f,e,d,c,b,a.                                                       for guidance, as depicted in Fig. 4. We ultimately adopted
+    User Prompt:                                                                      the edge list-based format to depict these state transition
+    Question: Explain the high-level functionality of the Verilog module.             graphs. Examples of manually converted descriptions are
+    module top_module (                                                               shown in Fig. 5. Initial explorations were conducted regarding
+               input [5:0] y,
+               input w,                                                               Verilog code completion by employing the converted formats.
+               output Y1,                                                             Notably, ChatGPT exhibited the capability to generate mean-
+               output Y3
+    );                                                                                ingful code using these formats for simple problems. We
+       assign Y1 = y[0]&w;                                                            manually converted 156 problem descriptions in total.
+       assign Y3 = (y[1]|y[2]|y[4]|y[5]) & ˜w;
+    endmodule                                                                            Comparing the descriptions between machine and human,
+                                                                                      we find that machine descriptions are often more verbose
+    GPT-3.5 Response:                                                                 (vectorr in Figs. 2 and 3). Although the model is di-
+    Answer: This Verilog module is a combinational logic circuit that takes           rected to generate high-level explanations, produced machine
+    in 6-bit input vector y and a single bit input w. The module then outputs
+    two signals Y1 and Y3. Y1 is the logical AND of the first bit of the              descriptions frequently delve into low-level details. These
+    input vector y and the single bit input w. Y3 is the logical AND of the           descriptions tend to mirror the code’s implementation line
+    logical OR of the second, third, fifth and sixth bits of the input vector y
+    and the logical NOT of the single bit input w. In other words, Y1 is true         by line, rather than focusing on the overarching functionality
+    if both the first bit of the input vector y and the single bit input w are        of the circuit (2012_q2b in Figs. 3 and 5). Furthermore,
+    true, and Y3 is true if at least one of the second, third, fifth and sixth bits
+    of the input vector y is true and the single bit input w is false.                despite that we have taken steps to ensure that all ma-
+                                                                                      chine descriptions are capable of producing passing solutions
+                                                                                      through LLMs, we cannot guarantee the absence of ambiguity
+Fig. 3 VerilogEval-machine use gpt-3.5-turbo to gen-
+                                                                                      and errors. Nevertheless, VerilogEval-machine remains a
+erate problem descriptions for 2012_q2b.
+                                                                                      valuable benchmark, particularly for assessing LLM’s compe-
+                                                                                      tence in comprehending low-level instructions and generating
+upon reaching a allocated sampling budget, resulting in an                            syntactically and functionally accurate Verilog code.
+increase of 35 additional solutions. In total we generated 143
+valid problem descriptions.                                                                         Benchmark        Language   Train   Test
+                                                                                                 HumanEval [21]       Python      -      164
+    User Prompt:                                                                                   MBPP [22]          Python     374     500
+    I want you to write Verilog from a state transition diagram. How can I                         APPS [23]          Python    5,000   5,000
+    give you this diagram in a text format?
+                                                                                               VerilogEval-machine    Verilog   8,502   143
+                                                                                               VerilogEval-human      Verilog     -     156
+    GPT-3.5 Response:
+    For a more graphical representation using text, you can specify the states
+    with their output values and the transitions like this:                           TABLE I VerilogEval in comparison with popular (python)
+    StateA (0) --0--> StateA                                                          coding benchmarks.
+    StateA (0) --1--> StateB
+    StateB (1) --0--> StateC
+    StateB (1) --1--> StateB                                                              TABLE I summarizes our VerilogEval benchmark and
+    StateC (0) --0--> StateA                                                          compares with existing popular coding benchmarks in python.
+    StateC (1) --1--> StateB
+                                                                                      We further detail our method of generating synthetic super-
+                                                                                      vised fine-tuning dataset in Section III-A.
+   Fig. 4 ChatGPT guidance on state transition diagrams.
+                                                                                      C. Automated Testing Environment
+  2) VerilogEval-human: We engaged in manual review                                     Unlike software programming languages like Python, the
+and conversion of problem descriptions from the website                               behavior of Verilog modules are typically evaluated through
+    Consider the state machine shown below:                                       test patterns. Randomly generated test patterns may span from
+        A (0) --1--> B                                                            a few hundred clock cycles for simple problems to several
+        A (0) --0--> A                                                            thousand cycles for more complex ones.
+        B (0) --1--> C
+        B (0) --0--> D                                                               We adapted the sandbox environment to safetly run un-
+        C (0) --1--> E                                                            trusted programs from HumanEval [21]. We built and installed
+        C (0) --0--> D
+        D (0) --1--> F                                                            the open-source ICARUS Verilog [24] simulator in a docker
+        D (0) --0--> A                                                            container. We note that our evaluation of Verilog syntax is
+        E (1) --1--> E
+        E (1) --0--> D                                                            limited by the simulator, which might not include all features
+        F (1) --1--> C                                                            of Verilog HDL IEEE-1364 standard. Simulation and testing
+        F (1) --0--> D
+    Assume that a one-hot code is used with the state assignment y[5:0] =         are handled under the hood and results can be produced using
+    000001(A), 000010(B), 000100(C), 001000(D), 010000(E), 100000(F).             just a single line of command.
+    Write a Verilog for the signal Y1, which is the input of state flip-flop
+    y[1], for the signal Y3, which is the input of state flip-flop y[3]. Derive   D. Evaluation Metric
+    the Verilog by inspection assuming a one-hot encoding.
+                                                                                    Early works on code evaluations report on match-based
+                                   (a) 2012_q2b                                   metrics such as BLEU score [25]. However, recent works [21],
+                                                                                  [26] have argued that such metrics does not correlate well with
+    Implement the circuit described by the Karnaugh map below.                    functional correctness. In Fig. 6 we show that Verilog coding
+            ab                                                                    exhibit similar issues, where the distributions of correct versus
+      cd    00 01 11 10                                                           wrong solutions are not clearly seperable based on BLEU
+       00   |0|1|0|        1   |
+       01   |1|0|1|        0   |                                                  score probability densities.
+       11   |0|1|0|        1   |
+       10   |1|0|1|        0   |
+
+
+                                    (b) kmap4
+
+    Given the finite state machine circuit described below, assume that the D
+    flip-flops are initially reset to zero before the machine begins.
+    Build this circuit in Verilog.
+    Input x goes to three different two-input gates: a
+    XOR, an AND, and a OR gate. Each of the three gates
+    is connected to the input of a D flip-flop and then
+    the flip-flop outputs all go to a three-input XNOR,
+    whose output is Z. The second input of the XOR is its
+    corresponding flip-flop’s output, the second input of
+    the AND is its corresponding flip-flop’s complemented                         Fig. 6 BLEU score probability densities for correct and wrong
+    output, and finally the second input of the OR is its                         solutions from codegen-16B-verilog [12] for 2 tasks
+    corresponding flip-flop’s complementary output.
+                                                                                  from VerilogEval-human.
+
+                                                                                     We follow recent work in directly measuring code func-
+                                                                                  tional correctness through pass@k metric [21], [22], [27],
+                                                                                  where a problem is considered solved if any of the k samples
+                                                                                  passes the unit tests. We also suggest using the unbiased
+                                                                                  estimator from [21]:
+                                                                                                                  "          #
+                                                                                                                             n−c
+                                                                                                                              k
+                                                                                               pass@k :=       E        1−    n     ,          (1)
+                                                                                                            P roblems         k
+                          (c) ece241_2014_q4
+                                                                                  where we generate n ≥ k samples per task in which c ≤
+Fig. 5 Examples of VerilogEval-human descriptions. We                             n samples pass testing. In Fig. 7 we show that the number
+show original website descriptions alongside manually con-                        of samples n need to be sufficiently large to produce low
+verted text format.                                                               variance estimates for pass@k.
+                                                                                                III. S UPERVISED F INE -T UNING
+simulations. To enable automated testing, we compare simula-                         This section provides our findings concerning the super-
+tion results between generated code completions with golden                       vised fine-tuning (SFT) of Large Language Models (LLM) for
+reference solutions. We assert for output signal correctness at                   Verilog coding. We elucidate our approach to the generation
+clock (posedge and/or negedge) transition edges for sequential                    of synthetic SFT data, achieved by utilizing LLMs to create
+circuits, while for combinational circuits, we validate them                      problem descriptions, detailed in Section III-A. Subsequently,
+when any input signals changes. Our testbench incorporates                        Section III-B comprises a comprehensive suite of supervised
+two categories of input signals for each problem: manually                        fine-tuning (SFT) experiments, showcasing its potential for
+crafted test patterns of significance, and randomly generated                     improving model performance.
+                                                                    B. Results on Supervised Fine-tuning
+                                                                       We conduct extensive experiments on fine-tuning with
+                                                                    the generated synthetic SFT data. Including both description
+                                                                    and code, our SFT data is 11MB in file size, compared
+                                                                    with ∼700MB of Github Verilog data used in [12]. For the
+                                                                    fine-tuning process, we employed the Adam optimizer with
+                                                                    hyperparameters β1 = 0.9, β2 = 0.999, and ϵ = 10−8 .
+                                                                    We set the learning rate to lr = 2e−5 , effective batch size
+                                                                    as 1M tokens, and opted not to apply weight decay. For
+                                                                    all our experiments, we sample n = 20 code completions
+                                                                    for measuring pass@k = {1, 5, 10} using Equation (1). We
+Fig. 7 Variance in estimating pass@k with n. Samples from           use nucleus sampling [31] with top p = 0.95, temperature
+codegen-16B-verilog [12] for VerilogEval-human.                     temp = 0.8, and context length of 2048. We used a single
+                                                                    NVIDIA DGX node with 8 A100s and 2TB RAM.
+                                                                       Our experimentation primarily focuses on the CodeGen
+                                                                    model series [9] and its Verilog-trained counterparts in [12].
+A. Synthetic SFT Data Generation                                    These experiments encompass model sizes of 350M, 2B, 6B,
+                                                                    and 16B. We use -sft to indicate models fine-tuned with our
+   In this work, we investigate the creation of synthetic
+                                                                    synthetic SFT data. We clarify our notation for base models
+SFT data through a bootstrapping process involving code
+                                                                    as follows:
+descriptions generated by LLMs. To be precise, we undertake
+the task of identifying and refining self-contained Verilog            • codegen-nl [9] : Natural language model. Trained on
+
+modules sourced from Github data [12]. Subsequently, we                   ThePile [32] 825.18GB English text corpus.
+employ the prompt template depicted in Fig. 3 to generate              • codegen-multi [9]: Code model. Initialized from
+
+corresponding descriptive texts for each of these Verilog                 codegen-nl and continue trained on BigQuery multi-
+modules, effectively creating machine descriptions and code               lingual code dataset consisting of C, C++, Go, Java,
+pairs. It’s worth noting that our approach to synthetic data              JavaScript, and Python.
+generation is straightforward in its implementation, and we            • codegen-verilog [12]: Verilog code model. Initial-
+
+acknowledge the potential for more advanced techniques as a               ized from codegen-multi and continue trained on
+promising future direction.                                               ∼300MB of Github Verilog and 400MB of textbook data.
+   We leverage Pyverilog [28] to extract to abstract syntax tree    Furthermore, we conducted comparisons with the
+from Verilog code and employ the following filtering process        gpt-3.5-turbo and gpt-4 models through OpenAI
+to identify self-contained Verilog modules from open-sourced        APIs [33]. Our analysis specifically involved default 4k
+Github Verilog code [12]:                                           context length models from 0613 checkpoints.
+                                                                       1) Training Epochs: Fig. 8 depicts the pass rate on Ver-
+  •   We verify that the filtered code contain the module and
+                                                                    ilogEval with different SFT training epochs. Dashed lines
+      endmodule keywords, positioned at the beginning and
+                                                                    indicate gpt-3.5 results. Results show that machine de-
+      end of the code, respectively.
+                                                                    scriptions correlate well with human, demonstrating that
+  •   We remove Verilog modules more than 200 lines of code
+                                                                    synthetic generated benchmarks could be a good indicator for
+      or exceeding 1024 tokens.
+                                                                    downstream task performance.
+  •   We ascertain that the code includes at least one of the es-
+                                                                       In most cases, we observe that the performance metric
+      sential keywords: always, assign, always_ff,
+                                                                    pass@1 continues to exhibit improvement as the supervised
+      always_comb, always_latch.
+                                                                    fine-tuning (SFT) training epochs progress, whereas the met-
+  •   We ensure extracted modules are self-contained without
+                                                                    rics pass@5 and pass@10 begin to deteriorate. This trend
+      any module instantiation.
+                                                                    suggests that with an increase in training epochs, the model
+   We further perform approximate deduplication based on            tends to overfit to the SFT data, limiting its ability to
+MinHash algorithm [29] using Jaccard similarity threshold of        generate diverse solutions for tackling complex challenges.
+0.8 as in [30]. We used gpt-3.5-turbo to generate code              Interestingly, this overfitting also leads to an increase in the
+descriptions based on the prompt template in Fig. 3, using          model’s confidence and success rate when dealing with sim-
+VerilogEval-human descriptions of shift18, rule110,                 pler problems, highlighting a discernible trade-off between the
+lemmings1, fsm3onehot as few-shot examples. We se-                  pass@1 and pass@10 metrics. Consequently, we encourage
+lected these examples with the aim of encompassing a wide           future research to report on both of these metrics, particularly
+range of design instances and the utilization of natural            for models post-alignment, to provide a more comprehensive
+language descriptions, including those presented in tabular         assessment of their performance.
+formats. In total we generated 8,502 problem description and           Throughout the remainder of this study, we conduct super-
+code pairs.                                                         vised fine-tuning (SFT) using 10 epochs for multi and 5
+                (a) codegen-16B-multi-sft                                                  (a) codegen-multi-sft
+
+
+
+
+              (b) codegen-16B-verilog-sft                                                (b) codegen-verilog-sft
+Fig. 8 SFT training epochs and pass rate on VerilogEval.            Fig. 9 VerilogEval results on different model size. Solid lines
+Dashed lines are gpt-3.5 results.                                   are sft models, dotted lines are corresponding base models
+                                                                    without SFT, dashed lines are gpt-3.5 results.
+epochs for verilog models.
+   2) Model Size and Base Model: Fig. 9 illustrates the pass
+rates for the VerilogEval task using various model sizes            pretraining) data diversity and quality would further lead to
+and base models. The base model denotes the initial model           increased performance.
+checkpoint prior to SFT. It is worth noting that we have
+omitted the results for models with a size of 350M, either                                  VerilogEval-machine           VerilogEval-human
+                                                                          Model
+                                                                                        pass@1 pass@5 pass@10        pass@1 pass@5 pass@10
+due to their unavailability or because their pass rates are             gpt-3.5          46.7      69.1       74.1    26.7       45.8     51.7
+                                                                         gpt-4           60.0      70.6       73.5    43.5       55.8     58.9
+insufficient to demonstrate statistical significance. Our results     verilog-sft        46.2      67.3       73.7    28.8       45.9     52.3
+suggest that more capable and larger models generally result
+in better Verilog coding capabilities.                              TABLE II Results on gpt models, comparing with
+   In most instances, SFT using synthetically generated data        codegen-16B-verilog-sft.
+yields notable enhancements in downstream model perfor-
+mance. These improvements are particularly pronounced, es-             In TABLE II4 we present the results obtained from both
+pecially in the case of multi models, where the original            the gpt-3.5 and gpt-4 models for the VerilogEval task.
+model was not explicitly trained on a substantial corpus of         Additionally, we demonstrate that our top-performing model
+Verilog code. In the case of verilog models, VerilogEval-           codegen-16B-verilog-sft, exhibits performance that
+machine exhibited significant performance gains, whereas            is on par with gpt-3.5.
+the VerilogEval-human approach displayed comparatively                                                          VerilogEval-machine
+                                                                                         Model
+less improvement and, at times, even slight deteriorations.                                                 pass@1    pass@5   pass@10
+                                                                                codegen-16B-nl-sft           33.9      51.9       58.1
+Our SFT data is sourced from the GitHub Verilog corpus,                        codegen-16B-multi-sft         37.1      55.0       61.1
+and thus does not introduce additional Verilog code that the        TABLE III Comparing nl and multi as SFT base models.
+model did not encounter during its training for verilog
+models. However, by providing problem-code pairs, this data            In TABLE III we present a comparison of results be-
+facilitates better alignment of the model, resulting in improved    tween sft models utilizing two distinct base models:
+outcomes for VerilogEval-machine. Despite incorporating             codegen-nl and codegen-multi. The tokenizer of
+few-shot prompting during the generation of SFT data (as            codegen-nl model is inefficient in handling whitespaces,
+discussed in Section III-A), the generated descriptions tend        consequently preventing some of the VerilogEval-human
+to be primarily low-level, lacking the textual diversity found      problems from fitting within the limited context window of
+in human examples, such as state transition graphs, wave-           2048 tokens. Thus we only display results for VerilogEval-
+forms, Karnaugh maps, and similar elements. This “mis-              machine. Despite the fact that multi models undergo pre-
+alignment” between SFT data and VerilogEval-human might             training on an extensive corpus of multi-lingual code data,
+have caused verilog-sft models to degrade slightly in
+performance. We envision that increasing SFT (and Verilog             4 Our   prior version contained errors in numbers reported for gpt-4.
+they exhibit only marginal enhancements of approximately            transistor device, circuit design, and to hardware system
+3% when applied to Verilog coding task. This observation            architecture. This holistic understanding is indispensable, as
+potentially suggests that there is limited positive knowledge       it allows design teams to navigate the intricacies of hardware
+transfer between software programming languages like C++            design effectively. Furthermore, it’s important to highlight that
+and hardware descriptive languages such as Verilog. This            a significant portion of the hardware design process revolves
+highlights the significance of pretraining on substantial Ver-      around optimizing the Power, Performance, and Area (PPA)
+ilog corpora, as it can significantly enhance model perfor-         metrics. These three factors, power consumption, computa-
+mance in Verilog-related tasks.                                     tional performance, and physical chip area, are paramount
+   3) SFT Data Quality: We conducted a comparative ex-              considerations in modern hardware design. Achieving the
+periment aimed at assessing the significance of data qual-          right balance among them is a formidable challenge that re-
+ity in SFT. In this experiment, we introduced a manipu-             quires meticulous planning, advanced simulation, and iterative
+lation by shuffling problem descriptions with incongruous           refinement. Equally critical is the extensive effort invested in
+Verilog code solutions, resulting in the creation of erro-          design verification, aimed at ensuring the reliability and yield
+neous problem-code pairs denoted as sft-error. The                  of the hardware. Verifying that a design functions as intended
+outcomes, as presented in TABLE IV, provide a compari-              under diverse conditions and corner cases is vital to mitigate
+son of the performance results obtained through fine-tuning         the risk of costly errors and to guarantee the final product
+on the codegen-2B-verilog models concerning the                     meets its specifications. In essence, the successful realization
+VerilogEval-machine task. The results clearly demonstrate           of hardware designs hinges on the convergence of domain
+that the inclusion of incorrect problem-code pairs detrimen-        expertise, PPA optimization, and robust verification practices.
+tally impacts model performance, underscoring the critical             Nonetheless, Large Language Models (LLMs) present an
+importance of maintaining high-quality SFT data.                    exciting opportunity for future research to revolutionize the
+                                                                    hardware design process. This transformative potential lies in
+                                         VerilogEval-machine
+                 Model                                              their ability to collaborate with domain experts in formulating
+                                     pass@1    pass@5   pass@10
+         codegen-2B-verilog           20.1      46.0       55.9     novel problems and devising innovative solutions. By leverag-
+       codegen-2B-verilog-sft         35.9      59.0       65.7
+    codegen-2B-verilog-sft-error      21.4      38.8       46.1     ing the vast knowledge and natural language understanding of
+TABLE IV Comparative experiment on SFT data quality.                LLMs, domain experts can work in tandem with these models
+Incorrect low-quality SFT data degrades model performance.          to explore uncharted territories in hardware design, poten-
+                                                                    tially leading to breakthroughs that enhance the efficiency,
+                                                                    reliability, and agility of the design process. The fusion of
+       IV. L IMITATIONS AND F UTURE D IRECTIONS                     human expertise with machine intelligence using LLMs in
+   In VerilogEval, our primary focus centers on harnessing          this collaborative endeavor promises an exhilarating avenue
+Large Language Models (LLMs) to generate self-contained             for future research, one that holds the potential to reshape the
+Verilog modules directly from natural language text descrip-        very fabric of the hardware design research landscape.
+tions. While we incorporate a wide array of hardware design
+                                                                                           V. C ONCLUSION
+topics through human-generated descriptions, it’s important
+to note that our current evaluations are confined to boil-             The growing prominence of Large Language Models
+erplate code generation for relatively small-scale designs.         (LLMs) has ushered in a new era of their application across
+We emphasize the significance of module instantiation as a          various domains. In this paper we introduce a specialized
+crucial capability in Verilog, as it plays a pivotal role in        benchmarking framework meticulously designed to assess
+constructing complex system-level designs, albeit currently         LLM performance within the realm of Verilog code generation
+absent from our benchmark. Recent advancements in LLM-              for hardware design. The cornerstone of this contribution lies
+based coding benchmarking, as seen in [34], are starting to ex-     in the creation of a robust evaluation dataset, comprising of
+plore pragmatic code generation beyond standalone functions.        156 distinct problems sourced from HDLBits. Furthermore,
+It’s worth mentioning that our testing environment solely           we have demonstrated that the Verilog code generation ca-
+assesses functional correctness and does not ensure that the        pabilities of pretrained language models can be enhanced
+generated Verilog code adheres to synthesizable formatting          through supervised fine-tuning, facilitated by the generation
+standards. We do not evaluate the performance of downstream         of synthetic problem-code pairs using LLMs. These findings
+circuit implementations, a gap that is addressed by the work        not only advance the state of the art in Verilog code generation
+presented in [13].                                                  but also underscore the vast potential of LLMs in shaping the
+   Additionally, it’s crucial to recognize that boilerplate Hard-   future of hardware design and verification.
+ware Description Language (HDL) code generation, as cur-                                 ACKNOWLEDGMENT
+rently addressed in our VerilogEval and similar endeavors,
+inherently operates within an exceedingly limited scope within         The authors would like to thank Henry Wong
+the broader landscape of hardware design. Hardware design,          (henry@stuffedcow.net) the creator of HDLBits for his
+in its entirety, necessitates a multidisciplinary approach that     invaluable assistance in providing reference solutions and
+draws on the expertise of domain professionals ranging from         testbenches for the problems used in this paper.
+                              R EFERENCES                                         [23] D. Hendrycks, S. Basart, S. Kadavath, M. Mazeika, A. Arora, E. Guo,
+                                                                                       C. Burns, S. Puranik, H. He, D. Song et al., “Measuring coding
+ [1] T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal,               challenge competence with apps,” arXiv preprint arXiv:2105.09938,
+     A. Neelakantan, P. Shyam, G. Sastry, A. Askell et al., “Language mod-             2021.
+     els are few-shot learners,” Advances in neural information processing        [24] S. Williams. (2023) The ICARUS verilog compilation system. [Online].
+     systems, vol. 33, pp. 1877–1901, 2020.                                            Available: https://github.com/steveicarus/iverilog
+ [2] OpenAI, “Gpt-4 technical report,” 2023.                                      [25] K. Papineni, S. Roukos, T. Ward, and W.-J. Zhu, “Bleu: a method for
+ [3] S. Bubeck, V. Chandrasekaran, R. Eldan, J. Gehrke, E. Horvitz, E. Ka-             automatic evaluation of machine translation,” in Proceedings of the 40th
+     mar, P. Lee, Y. T. Lee, Y. Li, S. Lundberg et al., “Sparks of artificial          annual meeting of the Association for Computational Linguistics, 2002,
+     general intelligence: Early experiments with gpt-4,” arXiv preprint               pp. 311–318.
+     arXiv:2303.12712, 2023.                                                      [26] S. Lu, D. Guo, S. Ren, J. Huang, A. Svyatkovskiy, A. Blanco, C. B.
+ [4] S. Wu, O. Irsoy, S. Lu, V. Dabravolski, M. Dredze, S. Gehrmann,                   Clement, D. Drain, D. Jiang, D. Tang, G. Li, L. Zhou, L. Shou,
+     P. Kambadur, D. Rosenberg, and G. Mann, “Bloomberggpt: A large                    L. Zhou, M. Tufano, M. Gong, M. Zhou, N. Duan, N. Sundaresan,
+     language model for finance,” arXiv preprint arXiv:2303.17564, 2023.               S. K. Deng, S. Fu, and S. Liu, “CodeXGLUE: A machine learning
+ [5] H.-C. Shin, Y. Zhang, E. Bakhturina, R. Puri, M. Patwary, M. Shoeybi,             benchmark dataset for code understanding and generation,” CoRR, vol.
+     and R. Mani, “Biomegatron: Larger biomedical domain language                      abs/2102.04664, 2021.
+     model,” arXiv preprint arXiv:2010.06060, 2020.                               [27] S. Kulal, P. Pasupat, K. Chandra, M. Lee, O. Padon, A. Aiken, and P. S.
+ [6] E. Bolton, D. Hall, M. Yasunaga, T. Lee, C. Manning, and P. Liang,                Liang, “Spoc: Search-based pseudocode to code,” Advances in Neural
+     “BioMedLM.” [Online]. Available: https://crfm.stanford.edu/2022/12/               Information Processing Systems, vol. 32, 2019.
+     15/biomedlm.html                                                             [28] S. Takamaeda-Yamazaki, “Pyverilog: A python-based hardware design
+ [7] R. Taylor, M. Kardas, G. Cucurull, T. Scialom, A. Hartshorn, E. Saravia,          processing toolkit for verilog hdl,” in Applied Reconfigurable Comput-
+     A. Poulton, V. Kerkez, and R. Stojnic, “Galactica: A large language               ing: 11th International Symposium, ARC 2015, Bochum, Germany, April
+     model for science,” arXiv preprint arXiv:2211.09085, 2022.                        13-17, 2015, Proceedings 11. Springer, 2015, pp. 451–460.
+ [8] A. Mastropaolo, L. Pascarella, E. Guglielmi, M. Ciniselli, S. Scalabrino,    [29] A. Z. Broder, “On the resemblance and containment of documents,” in
+     R. Oliveto, and G. Bavota, “On the robustness of code generation                  Proceedings. Compression and Complexity of SEQUENCES 1997 (Cat.
+     techniques: An empirical study on github copilot,” arXiv preprint                 No. 97TB100171). IEEE, 1997, pp. 21–29.
+     arXiv:2302.00438, 2023.                                                      [30] K. Lee, D. Ippolito, A. Nystrom, C. Zhang, D. Eck, C. Callison-Burch,
+ [9] E. Nijkamp, B. Pang, H. Hayashi, L. Tu, H. Wang, Y. Zhou, S. Savarese,            and N. Carlini, “Deduplicating training data makes language models
+     and C. Xiong, “Codegen: An open large language model for code with                better,” arXiv preprint arXiv:2107.06499, 2021.
+     multi-turn program synthesis,” ICLR, 2023.                                   [31] A. Holtzman, J. Buys, L. Du, M. Forbes, and Y. Choi, “The curious case
+[10] J. Blocklove, S. Garg, R. Karri, and H. Pearce, “Chip-chat: Challenges            of neural text degeneration,” arXiv preprint arXiv:1904.09751, 2019.
+     and opportunities in conversational hardware design,” arXiv preprint         [32] L. Gao, S. Biderman, S. Black, L. Golding, T. Hoppe, C. Foster,
+     arXiv:2305.13243, 2023.                                                           J. Phang, H. He, A. Thite, N. Nabeshima et al., “The pile: An
+[11] K. Chang, Y. Wang, H. Ren, M. Wang, S. Liang, Y. Han, H. Li,                      800gb dataset of diverse text for language modeling,” arXiv preprint
+     and X. Li, “Chipgpt: How far are we from natural language hardware                arXiv:2101.00027, 2020.
+     design,” arXiv preprint arXiv:2305.14019, 2023.                              [33] OpenAI. (2023) OpenAI models api. [Online]. Available: https:
+[12] S. Thakur, B. Ahmad, Z. Fan, H. Pearce, B. Tan, R. Karri, B. Dolan-               //platform.openai.com/docs/models
+     Gavitt, and S. Garg, “Benchmarking large language models for auto-           [34] H. Yu, B. Shen, D. Ran, J. Zhang, Q. Zhang, Y. Ma, G. Liang, Y. Li,
+     mated verilog rtl code generation,” in 2023 Design, Automation & Test             T. Xie, and Q. Wang, “Codereval: A benchmark of pragmatic code
+     in Europe Conference & Exhibition (DATE). IEEE, 2023, pp. 1–6.                    generation with generative pre-trained models,” 2023.
+[13] Y. Lu, S. Liu, Q. Zhang, and Z. Xie, “RTLLM: An open-source
+     benchmark for design rtl generation with large language model,” arXiv
+     preprint arXiv:2308.05345, 2023.
+[14] J. Wei, M. Bosma, V. Y. Zhao, K. Guu, A. W. Yu, B. Lester, N. Du,
+     A. M. Dai, and Q. V. Le, “Finetuned language models are zero-shot
+     learners,” arXiv preprint arXiv:2109.01652, 2021.
+[15] L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin,
+     C. Zhang, S. Agarwal, K. Slama, A. Ray et al., “Training language
+     models to follow instructions with human feedback,” Advances in
+     Neural Information Processing Systems, vol. 35, pp. 27 730–27 744,
+     2022.
+[16] Y. Bai, A. Jones, K. Ndousse, A. Askell, A. Chen, N. DasSarma,
+     D. Drain, S. Fort, D. Ganguli, T. Henighan et al., “Training a helpful and
+     harmless assistant with reinforcement learning from human feedback,”
+     arXiv preprint arXiv:2204.05862, 2022.
+[17] Y. Wang, Y. Kordi, S. Mishra, A. Liu, N. A. Smith, D. Khashabi,
+     and H. Hajishirzi, “Self-instruct: Aligning language model with self
+     generated instructions,” arXiv preprint arXiv:2212.10560, 2022.
+[18] C. Xu, Q. Sun, K. Zheng, X. Geng, P. Zhao, J. Feng, C. Tao, and
+     D. Jiang, “Wizardlm: Empowering large language models to follow
+     complex instructions,” arXiv preprint arXiv:2304.12244, 2023.
+[19] Z. Luo, C. Xu, P. Zhao, Q. Sun, X. Geng, W. Hu, C. Tao, J. Ma, Q. Lin,
+     and D. Jiang, “WizardCoder: Empowering code large language models
+     with evol-instruct,” arXiv preprint arXiv:2306.08568, 2023.
+[20] S. Gunasekar, Y. Zhang, J. Aneja, C. C. T. Mendes, A. Del Giorno,
+     S. Gopi, M. Javaheripi, P. Kauffmann, G. de Rosa, O. Saarikivi et al.,
+     “Textbooks are all you need,” arXiv preprint arXiv:2306.11644, 2023.
+[21] M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. de Oliveira Pinto,
+     J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman et al.,
+     “Evaluating large language models trained on code.(2021),” arXiv
+     preprint arXiv:2107.03374, 2021.
+[22] J. Austin, A. Odena, M. Nye, M. Bosma, H. Michalewski, D. Dohan,
+     E. Jiang, C. Cai, M. Terry, Q. Le et al., “Program synthesis with large
+     language models,” arXiv preprint arXiv:2108.07732, 2021.
+

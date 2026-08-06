@@ -1,0 +1,504 @@
+                                             RTLFixer: Automatically Fixing RTL Syntax Errors with Large
+                                                                 Language Models
+                                                                  YunDa Tsai∗                                                  Mingjie Liu∗                                               Haoxing Ren
+                                                            yundat@nvidia.com                                            mingjiel@nvidia.com                                            haoxingr@nvidia.com
+                                                                 NVIDIA                                                        NVIDIA                                                         NVIDIA
+                                         ABSTRACT                                                                                              Benchmark                                                 RTLFixer
+                                                                                                                                          1. Design description
+                                         This paper presents RTLFixer, a novel framework enabling auto-                                   2. Erroneous module code            Prompt                            LLM
+                                                                                                                                                                             Template
+                                         matic syntax errors fixing for Verilog code with Large Language                                  3. Compiler feedback
+arXiv:2311.16543v3 [cs.AR] 20 May 2024
+
+
+
+
+                                                                                                                                                                                                     GTP-3.5         GTP-4
+                                         Models (LLMs). Despite LLM’s promising capabilities, our analysis
+                                         indicates that approximately 55% of errors in LLM-generated Ver-                                                        Feedback Loop
+                                                                                                                                                                                                                               Planning
+                                                                                                                                                                                                            ReAct
+                                         ilog are syntax-related, leading to compilation failures. To tackle                                                             Revised Code
+                                                                                                                                                        Simple                                        Thought
+                                         this issue, we introduce a novel debugging framework that employs                                              Syntax
+                                                                                                                                                         Fixer
+                                                                                                                                                                                                       Action              Intermediate
+                                                                                                                                                                                                                               Steps
+                                         Retrieval-Augmented Generation (RAG) and ReAct prompting, en-                                                                                               Observation
+
+                                         abling LLMs to act as autonomous agents in interactively debugging
+                                                                                                                                                    Compiler                                                   RAG                 Tools
+
+                                         the code with feedback. This framework demonstrates exceptional                                                                ❌Compiler Logs
+                                                                                                                                                                                                            Retriever
+                                         proficiency in resolving syntax errors, successfully correcting about                                                                                                     Retrieve
+
+                                         98.5% of compilation errors in our debugging dataset, comprising                                                                                                   Database
+
+                                         212 erroneous implementations derived from the VerilogEval bench-                                          ✅Passed                                                        Store
+
+                                                                                                                                                                                                        Human Guidance
+                                         mark. Our method leads to 32.3% and 10.1% increase in pass@1
+                                         success rates in the VerilogEval-Machine and VerilogEval-Human
+                                         benchmarks, respectively. The source code and benchmark are                                     Figure 1: Overview of RTLFixer. The Autonomous Language
+                                         available at https://github.com/NVlabs/RTLFixer.                                                Agent fixes the syntax error via a feedback loop. ReAct han-
+                                         ACM Reference Format:                                                                           dles the iterative code refinement with intermediate reason-
+                                         YunDa Tsai, Mingjie Liu, and Haoxing Ren. 2024. RTLFixer: Automatically                         ing and action steps. Human expert guidance is incorporated
+                                         Fixing RTL Syntax Errors with Large Language Models. In 61st ACM/IEEE                           through RAG.
+                                         Design Automation Conference (DAC ’24), June 23–27, 2024, San Francisco, CA,
+                                         USA. ACM, New York, NY, USA, 7 pages. https://doi.org/10.1145/3649329.
+                                         3657353
+                                                                                                                                         code. Surprisingly, our analysis reveals that a substantial 55% of the
+                                         1     INTRODUCTION                                                                              errors generated by LLMs for Verilog code are comprised of syntax
+                                         Large language models (LLMs) present great promise in automating                                errors, surpassing the occurrence of logic errors detected through
+                                         hardware design, especially in their capacity to understand design                              simulation. Rectifying syntax errors not only enhances the overall
+                                         intentions and produce Verilog code from natural language [8].                                  accuracy of LLM-generated code but also holds the potential to
+                                         Recent efforts, such as VeriGen [17] and VerilogEval [9], have pri-                             alleviate manual efforts for human engineers engaged in Verilog
+                                         marily focused on zero-shot code generation. However, akin to                                   coding. The recognition and mitigation of syntax errors stand as
+                                         numerous complex programming tasks, generating flawless code                                    imperative steps, not only for refining LLM capabilities but also
+                                         in a single attempt poses a significant challenge, with a high likeli-                          for streamlining the coding process for human practitioners in the
+                                         hood of errors. Consequently, there exists a clear need for robust                              domain of Verilog development.
+                                         debugging and refinement capabilities in Verilog code generated by                                  Despite such challenges, LLMs have showcased remarkable ca-
+                                         Large Language Models. This need arises from that like human pro-                               pabilities in reasoning and enhancing action plans to address excep-
+                                         grammers, achieving precision often requires multiple iterations.                               tions. The ReAct framework [20] integrates reasoning and action
+                                            Most importantly, it is evident that Large Language Models en-                               synthesis in language models, demonstrating LLM’s capability to
+                                         counter challenges in generating fully syntactically correct Verilog                            engage in reasoning processes and refine decision-making through
+                                                                                                                                         interactive feedback. Similarly, SelfDebug [3] and SelfEvolve [6]
+                                         ∗ equal   contribution                                                                          illustrate the model’s ability to self-identify mistakes by scrutiniz-
+                                                                                                                                         ing execution results and articulating generated code in natural
+                                         Permission to make digital or hard copies of all or part of this work for personal or
+                                         classroom use is granted without fee provided that copies are not made or distributed           language. It is essential to highlight that prior works do not explic-
+                                         for profit or commercial advantage and that copies bear this notice and the full citation       itly address the correction of syntax errors and primarily center on
+                                         on the first page. Copyrights for components of this work owned by others than the              improving the accuracy of generated code, particularly in Python,
+                                         author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or
+                                         republish, to post on servers or to redistribute to lists, requires prior specific permission   where language models excel syntactically.
+                                         and/or a fee. Request permissions from permissions@acm.org.                                         On the other hand, Large Language Models are acknowledged for
+                                         DAC ’24, June 23–27, 2024, San Francisco, CA, USA                                               their inclination to produce factual errors, a phenomenon termed
+                                         © 2024 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+                                         ACM ISBN 979-8-4007-0601-1/24/06. . . $15.00                                                    hallucination [5]. To mitigate this challenge, the Retrieval-Augmented
+                                         https://doi.org/10.1145/3649329.3657353                                                         Generation (RAG) paradigm [7] has been introduced, integrating
+retrieval mechanisms to improve the precision of generated content       the domains of auto-completion and conversational code gener-
+by incorporating information from external knowledge sources.            ation. DAVE [14] emerged as an early study of LLM tailored for
+   In this paper, we introduce RTLFixer, a innovative debugging          hardware design. VeriGen [17] further expanded the dataset scope
+framework that utilizes LLMs as autonomous language agents in            and experimented with open-sourced models. Following suit, Chip-
+conjunction with RAG. We exclusively focus on addressing the chal-       Chat [1], leveraging GPT-4, demonstrated the extensive potential
+lenge of rectifying syntax errors in RTL Verilog code—an essential       of LLMs in collaboratively generating processors and other hard-
+problem with potential benefits for both LLMs and human engi-            ware designs. In parallel, benchmarks such as VerilogEval [9] and
+neers. As shown in Figure 1, our framework combines established          RTLLM [11] played a pivotal role in advancing the application of
+human expertise stored in a retrieval database for correcting syntax     LLMs in Verilog code generation.
+errors while simultaneously harnessing the capabilities of LLMs
+as autonomous agents for reasoning and action planning (ReAct).
+Through incorporating human expertise, our approach provides             2.2    Reasoning and Action Synthesis of LLMs
+explicit guidance and explanations when LLMs face challenges in          Large Language Models (LLMs) have demonstrated proficiency in
+error correction. The stored compiler messages and human expert          both reasoning and planning across various tasks. In terms of rea-
+guidance function as a persistent external non-parametric memory         soning, methods like chain-of-thought [18] empower LLMs to break
+database, enhancing results through RAG. By empowering LLMs              down intricate problems into logical steps, significantly enhanc-
+with ReAct, LLMs serve as autonomous agents adept at strategically       ing their problem-solving abilities. LLMs also excel in interactive
+planning intermediate steps for iterative debugging. We also create      decision-making and formulating action plans, effectively leverag-
+VerilogEval-syntax, a Verilog syntax debugging dataset, derived          ing digital tools, as shown in works such as ToolLLM [15].
+from VerilogEval [9], containing 174 erroneous implementations.             The ReAct [20] framework represents a notable advancement in
+   Our contributions are summarized as follows:                          LLM capabilities by seamlessly integrating reasoning and action
+      • Our framework demonstrates an impressive 98.5% success           planning. This framework enables LLMs to generate both reasoning
+        rate in resolving syntax errors, resulting in a noteworthy       traces and specific actions, facilitating dynamic interaction with
+        32.3% and 10.1% improvement in the pass@1 metrics achieved       external information sources. This integration not only enhances
+        solely by addressing syntax errors in VerilogEval-Machine        LLM’s performance in complex tasks but also renders them more
+        and VerilogEval-Human benchmarks, respectively.                  reliable and versatile as autonomous agents, capable of delivering
+      • Our framework also improves the syntax success rate from         more accurate and context-aware responses.
+        73% to 93% on the RTLLM benchmark [11], demonstrating
+        the generalizability of this approach.                           2.3    Retrieval-Augmented Generation
+      • Compared to One-shot generation, ReAct enhances syntax
+        success rates by 25.7%, 26.4%, and 31.2% with iterative feed-    Retrieval-Augmented Generation (RAG) [7] represents a significant
+        back from Simple, iverilog, and Quartus, respectively.           advancement in addressing the limitations of Large Language Mod-
+      • RAG with human guidance significantly improves syntax            els when handling knowledge-intensive tasks. LLMs despite con-
+        success rates, up to 31.2% and 18.6% with feedback from          taining extensive factual knowledge, often encounter challenges in
+        Quartus for One-shot and ReAct prompting, respectively.          accessing and effectively manipulating this information. RAG lever-
+                                                                         ages a combination of LLMs, which serve as parametric memory,
+   The remainder of this paper is structured as follows. In Section 2,   and an external knowledge base, such as Wikipedia, functioning
+we present preliminary works on LLMs for Verilog code generation,        as non-parametric memory. This unique approach allows RAG to
+ReAct, and RAG. Our debugging framework RTLFixer is elucidated           access and retrieve relevant documents or passages from the exter-
+in Section 3, where we empower LLMs as autonomous agents with            nal knowledge base based on the input query. Consequently, this
+ReAct and innovatively provide human guidance through RAG. Sec-          enriches the context available to the text generator, resulting in out-
+tion 4 details our experimental results, showcasing the effectiveness    puts that exhibit improved accuracy and factual consistency. In the
+of our method in correcting syntax errors and improving the pass         context of code generation, several works such as ReACC [10] and
+rate. Finally, Section 6 summarizes and concludes the paper.             RepoCoder [21] have successfully harnessed the capabilities of RAG
+                                                                         to enhance the code generation proficiency of LLMs, showcasing
+2     PRELIMINARIES                                                      its transformative potential.
+In this section, we begin by briefly exploring the advancements
+and applications of LLMs for Verilog code generation in Section 2.1.
+We then delve into the synthesis of reasoning and action in LLMs,        3     RTLFIXER: RESOLVING SYNTAX ERROR
+elaborated in Section 2.2. Finally, we discuss Retrieval-Augmented             WITH LLM AGENTS AND RETRIEVAL
+Generation in Section 2.3.                                               In this section, we explain the details of RTLFixer, which utilizes
+                                                                         Autonomous Language Agents enhanced with ReAct and Retrieval-
+2.1     LLMs for Verilog Code Generation                                 Augmented Generation (RAG). The framework’s structure is out-
+Large Language Models exhibit the capability to generate code,           lined in Figure 1 (Section 3.1), and the application of ReAct is thor-
+with Codex [2] standing as an early exemplar. GitHub Copilot [4],        oughly discussed in Section 3.2. Furthermore, Section 3.3 explores
+building upon such groundwork, played a crucial role in pioneering       the integration of human expert guidance using RAG. Finally, we ex-
+LLM-based code completion engines, contributing significantly to         plain the curation process for our VerilogEval-syntax error dataset.
+3.1    Overview of RTLFixer                                                  System Prompt:
+                                                                             Implement the Verilog module based on the following description. Assume
+RTLFixer comprises an LLM for code generation, RAG for access-               that signals are positive clock/clk edge triggered unless otherwise stated.
+ing human expert guidance, and ReAct for improved task decompo-
+                                                                             Problem Description:
+sition, tool use, and planning. Our approach starts by formulating           Implement the Verilog module based on the following description. Assume
+an input prompt integrating a benchmark dataset problem into a               that signals are positive clock/clk edge triggered unless otherwise stated.
+template, followed by the agent utilizing RAG and ReAct, revising            Given an 8-bit input vector [7:0], reverse its bit ordering.
+erroneous Verilog code. If syntax errors persist, error logs from the        module top_module (
+                                                                             input [7:0] in,
+compiler as well as retrieved human guidance from the database               output [7:0] out
+are provided as feedback. This interactive debugging loop can be             );
+repeated multiple times until all errors are resolved.
+                                                                             Erroneous Implementation:
+                                                                             assign {out[0],out[1],out[2],out[3],out[4],out[5],out[6],out[8]}
+                                                                             ↩→ = in;
+3.2    Reasoning and Action Planning through                                 endmodule
+       ReAct Iterative Prompting
+                                                                             Feedback:
+We enable Large Language Models to function as autonomous                    main.v:5: error: Index out[8] is out of range.
+agents for reasoning and action planning through the ReAct prompt-           1 error(s) during elaboration.
+ing mechanism [20]. In ReAct, LLMs generate both reasoning traces
+and task-specific actions in an interleaved manner. The input prompt,                           (a) One-shot Prompt Template
+along with the ReAct instruction prompt, is provided to an LLM.              Solve a task with interleaving Thought, Action, Observation steps.
+Subsequently, the LLM initiates the generation of ReAct steps, each          Thought can reason about the current situation, and Action can be the
+                                                                             following types:
+consisting of Thought, Action, and Observation components. An                (1) Compiler[code], which compiles the input code and provide error
+example of a ReAct instruction prompt is depicted in Figure 2b,              message if there is syntax error.
+                                                                             (2) Finish[answer], which returns the answer and finished the task.
+while Figure 2c illustrates the self-prompting process, showcasing           (3) RAG[logs], input the compiler log and retrieve expert solutions to fix
+the intermediate steps within each iteration of ReAct.                       the syntax error.
+   During this process, the LLM prompts itself for thoughts on
+how to address the error and selects the next action. Potential                            (b) ReAct Instruction (System Prompt)
+actions include generating an explanation for the error, searching           Question:
+for a solution in the human expert guidance database, revising               What is the syntax error in the given Verilog module implementation and
+                                                                             how to fix it?
+the code, and submitting the revised code to the compiler, among
+other possibilities. The output of the chosen action becomes the             Thought 1:
+observation in the prompt. The agent continues prompting until               Implement a finite state machine that searches for message boundaries in
+                                                                             a byte stream.
+the compilation is successful, selecting the Finish action to output         Action 1: Compiler
+the final response. If unsuccessful, the process iterates up to n times,         always @ (state or in) begin
+where n is a user-selected hyperparameter. Our objective is to assess            case (state)
+                                                                                  4'b0001: begin
+the effectiveness of a fully automated feedback-driven solution.
+                                                                             Observation 1:
+   We employ One-shot prompting, illustrated in Figure 2a, as the            main.v:15: error: out is not a valid l-value in top_module.
+baseline for comparing with ReAct. One-shot prompting involves               Thought 2:
+                                                                             The code has a syntax error because the "out" signal was declared as a
+only a single-turn of feedback from the compiler message, but it ex-         wire instead of a register. I need to correct this and run the compilation.
+cludes ReAct prompting, which decomposes syntax fixing through               Action 2: RAG[..not a valid l-value..]
+reasoning and action planning, and the iterative multi-round inter-          Use assign statements instead of always block if possible.
+                                                                                                                    ...
+actions with the compiler.                                                   Action n: Finish
+                                                                             The revised code is as follow: ...
+
+3.3    Retrieval Augmented Generation (RAG)                                         (c) ReAct Steps with Thought-Action-Observation.
+We leverage Retrieval-Augmented Generation (RAG), a potent tech-
+nique that notably enhances Large Language Models’ capabilities            Figure 2: Prompts used for ReAct. (a) shows the One-shot
+by incorporating human expert guidance through a retriever. A              prompting template with feedback message. (b)-(c) demon-
+key distinction from traditional RAG lies in our curated database,         strate the example where LLMs serve as autonomous agents
+enriched with human instructions and demonstrations.                       with ReAct to decompose syntax fixing problems with rea-
+   The retrieval database curation process involves a meticulous           soning and planning.
+procedure of categorizing syntax errors and developing instructions
+and demonstrations for syntax error resolution. In the initial step,
+we categorize various syntax errors into groups using error num-           inclusion of clear instructions, and demonstrations of possible so-
+ber tags provided by compilers (such as Quartus) in the compiler           lutions enables the LLM to adeptly address errors. To facilitate this,
+logs. During the manual inspection of LLM’s struggle cases, it be-         human experts offer detailed explanations for compiler logs, serv-
+comes evident that ambiguous error messages present a significant          ing as human expert guidance. An illustrative example of common
+challenge, impeding the model’s error resolution capabilities. The         errors is showcased in Figure 3. Subsequently, all compiler logs,
+                                                                                ensuring a diverse representation of syntax errors. This results in a
+ Compiler Logs:
+ Object ‘clk’ is not declared. Verify the object name is correct. If the name
+                                                                                total of 212 erroneous implementations in the dataset.
+ is correct, declare the object.
+ Human Expert Guidance:                                                         4     EXPERIMENTS
+ Check if ‘clk’ is an input. If not, and if ‘clk’ is used within the module,
+ make sure the name is correct. If it’s meant to trigger an ‘always’ block,     In this section, we first present the evaluation metrics in Section 4.1,
+ replace ‘posedge clk’ with ‘*’.                                                followed by our primary findings showcased in Section 4.2. Within
+                                                                                this section, we show the performance improvements and the im-
+ Compiler Logs:                                                                 pact of ReAct and RAG. Finally, Section 4.3 details ablation studies
+ Index cannot fall outside the declared range for vector
+ Human Expert Guidance:                                                         on the quality feedback message and LLM.
+ Carefully examine the index values to prevent encountering ‘index out of       Setup: We conduct all experiments with GPT-3.5 as the LLM through
+ bound’ errors in your code. When utilizing parameters for indexing, try to     OpenAI APIs [13], except for the ablation experiment on different
+ use binary strings for performing the indexing operation instead.
+                                                                                LLM. We specifically used gpt-3.5-turbo-16k-0613. A simple rule-
+                                                                                based syntax fixer is applied to every LLM-generated verilog code,
+                                                                                which avoids simple errors such as misplaced timescale derivatives.
+Figure 3: Examples of common error categories that LLM
+                                                                                In all experiments, we set the sampling temperature to 0.4. For Re-
+constantly could not solve and the corresponding human
+                                                                                Act prompting, we restrict the LLM to a maximum of 10 iterations
+expert guidance in the retrieval database.
+                                                                                of Thought-Action-Observation, where Action might involve inter-
+                                                                                actions with the compiler. We consider the syntax error resolved if
+                                                                                any of the generated code passes. To limit test variance, we repeat
+error code segments, and corresponding human guidance undergo
+                                                                                each experiment 10 times and report the average.
+systematic storage in the database for future retrieval.
+   We integrate the human guidance and demonstration database
+                                                                                4.1    Evaluation Metric
+with Large Language Models (LLMs) using Retrieval-Augmented
+Generation (RAG). RAG enables the retrieval of pertinent docu-                  Compile Fix rate: To demonstrate the debugging capability of our
+ments or data from a source, utilizing this information as context              method, we calculate the expectation fix rate, with 𝑐 as the number
+for the original input prompt. This approach allows the language                of fixed samples out of all 𝑛 = 10 samples.
+model to access the latest information without the need for retrain-                                                                h𝑐 i
+ing, proving especially valuable in enhancing the model’s capacity                                      fix rate =        E                             (1)
+to generate more accurate and reliable outputs. Leveraging RAG                                                       𝑝𝑟𝑜𝑏𝑙𝑒𝑚𝑠        𝑛
+further ensures that the language model has access to the most cur-             Functional Correctness: We follow recent work in directly mea-
+rent and relevant information, including compiler logs and human                suring code functional correctness with simulation through pass@k
+guidance, facilitating effective error resolution.                              metric [2], where a problem is considered solved if any of the k
+   Figure 3 illustrates two common error categories along with a                samples passes the tests. We use the unbiased estimator as follow
+demonstration of compiler logs and corresponding human guidance.                and ensure 𝑛 = 20 is sufficiently large:
+For this task, common retrievers such as pattern-matching, fuzzy                                                      "    𝑛−𝑐 
+                                                                                                                                 #
+search, or similarity search with a vector database are suitable. In                                 pass@k =        E        1−         𝑘
+                                                                                                                                                        (2)
+                                                                                                                                         𝑛
+our experiments, we opted for an exact match to error tags for                                                  𝑝𝑟𝑜𝑏𝑙𝑒𝑚𝑠                 𝑘
+simplicity, given the limited number of error cases. We collected 7
+common error categories with 30 entries for iverilog and 11 common              4.2    Main Results
+error categories with 45 entries for Qaurtus in total.
+                                                                                          Prompt      RAG   Simple       iverilog     Quartus   GPT-4
+                                                                                          One-shot    w/o    0.414         0.536       0.587     0.91
+3.4    Debugging Dataset                                                                               w/      -           0.800       0.899     0.98
+We created a novel benchmark dataset, VerilogEval-syntax, based                           ReAct       w/o    0.671         0.731       0.799     0.92
+                                                                                                       w/      -           0.820       0.985     0.99
+on the VerilogEval benchmark [9]. This dataset comprises flawed
+                                                                                Table 1: Fix rate for One-shot vs. ReAct, w/ and w/o RAG, ab-
+code implementations sourced from the VerilogEval problem set.
+                                                                                lation on feedback quality and LLMs on VerilogEval-syntax.
+Each entry includes the original problem description and erroneous
+implementation containing syntax errors.
+   The dataset curation includes sampling, filtering, and cluster-
+ing. Code samples were selected from VerilogEval problems using                    The main results in Table 1 show the effectiveness of ReAct and
+One-shot and ReAct prompting methods with gpt-3.5-turbo model,                  RAG which each provided performance gain in a large margin. We
+retaining only error-inducing samples. In the filtering phase, we               note that One-shot generation includes only a single-turn interac-
+focus on code with compile errors and use the following processing              tion with either simple or compiler message as feedback. Table 2
+and filtering criteria: extraction of code from markdown blocks,                showed the improvement of pass@{1,5} on VerilogEval dataset after
+validation of module statements, and removal of samples with ex-                fixing syntax errors with visualizations in Figure 4. The VerilogEval-
+traneous language or empty module bodies. The final step involved               Human benchmark statistics show that syntax errors constitute a
+clustering using DBSCAN [16] with Jaccard distance [12], grouping               significant 55% of errors in GPT-3.5 generated Verilog code, surpass-
+similar implementations to select representative examples while                 ing simulation errors. With just addressing syntax errors using our
+              Dataset                            Set          pass@1                         pass@5
+              VerilogEval                                original fixed                 original fixed
+                                                                                                                                      syntax errors in the code samples, which can skew accuracy. In
+              Human                              All      0.267    0.368                 0.458    0.506                               our study, we evaluate functional correctness using the VerilogEval
+                                                 easy     0.521    0.666                 0.808    0.847                               benchmark, specifically addressing fixes to syntax errors in the
+                                                 hard     0.053    0.120                 0.164    0.221
+              Machine                            All      0.467    0.799                 0.691    0.891
+                                                                                                                                      code samples. The results, displayed in Table 2, show the perfor-
+                                                 easy     0.568    0.833                 0.782    0.892                               mance scores on the VerilogEval dataset and the improvements
+                                                 hard     0.367    0.771                 0.601    0.890                               after rectifying syntax errors, with 32.3% and 10.1% improvement
+Table 2: Pass@k for simulation pass rate on VerilogEval                                                                               on the pass@1 metric for Machine and Human respectively. We
+dataset after fixing syntax errors.                                                                                                   further divided the VerilogEval benchmark into two subsets: easy,
+                                                                                                                                      comprising 71 problems, and hard, consisting of 85 problems. These
+                                                                                                                                      subsets have been delineated based on a pass rate threshold of 0.1
+                                                                                                                                      on Human. For simple problems in Human and low-level descrip-
+approach (shown in the inner circle), the pass rate increases from
+                                                                                                                                      tions in the Machine, the correction of syntax errors significantly
+26.7% to 36.8%. Table 3 shows that our approach can generalize
+                                                                                                                                      enhances the pass rate, reaching around 80% for pass@1. When
+across different benchmarks. We further detail our findings below.
+                                                                                                                                      contrasting the pass rate improvements between easy and hard
+Impact of ReAct: ReAct significantly outperforms One-shot gener-
+                                                                                                                                      problems in the Human descriptions, we observe a greater improve-
+ation. ReAct’s ability to iteratively revise code with reasoning and
+                                                                                                                                      ment for easy problems at 14.5% compared to hard problems at
+planning results in superior performance. Moreover, even without
+                                                                                                                                      6.7% for pass@1. This discrepancy suggests that LLMs still face
+explicit feedback from the compiler (Simple), the intermediate rea-
+                                                                                                                                      challenges when advanced reasoning and problem-solving skills
+soning steps similar to chain-of-thought can still bring considerable
+                                                                                                                                      are required. Discussions on future work to address simulation
+improvements from 41.4% to 67.1%. When compared with One-shot
+                                                                                                                                      errors are presented in Section 5.
+without RAG, ReAct enhances syntax success rates by 25.7%, 26.4%,
+                                                                                                                                      Generalizability: Our method using ReAct and RAG can be gener-
+and 31.2% with iterative feedback from Simple, iverilog, and Quar-
+                                                                                                                                      alized to other benchmark. To account for potential overfitting dur-
+tus, respectively. We also observe consistent improvement from
+                                                                                                                                      ing the design of the retrieval database, we also tested our method
+ReAct, regardless of the compiler and use of RAG.
+                                                                                                                                      on the RTLLM [11] benchmark without deriving new human guid-
+Impact of RAG: Notably, the application of RAG with human
+                                                                                                                                      ance for the retrieval database. As shown in Table 3, our framework
+expert guidance boosts the fix rate considerably and substantially
+                                                                                                                                      improves the syntax success rate from 73% to 93%, demonstrating
+enhances the solution’s reliability. The results with Quartus com-
+                                                                                                                                      its capability to generalize1 .
+piler in Table 1 show that RAG improves the fix rate by 31.2% (58.7%
+to 89.9% ) for One-shot and 18.6% (79.9% to 98.5%) when using ReAct.
+                                                                                                                                      4.3     Ablation Studies
+We observe consistent improvement with RAG, regardless of the
+quality of the compiler feedback message and LLM (GPT-4).                                                                             Our research includes two ablation studies designed to evaluate
+                                                                                                                                      the impact of feedback quality and the selection of LLMs on the
+            VerilogEval-Machine                                                                      VerilogEval-Human                effectiveness of syntax error correction.
+                                  36.2%                                                            7.5%
+                                                                                                                              29.3%
+                                                                                                                                      4.3.1 Impact of Feedback Quality. We study the impact of feedback
+                                                                                            2.2%
+                                                                                         2.6%                                         quality with using different feedback messages detailed below.
+             18.5%           28.2%                                                                        13.4%2.9%                   Simple: We only give an instruct prompt "Correct the syntax error
+                                                                                                                      23.8%
+
+
+           12.9%                                                                                     27.0%                            in the code." without any explicit instruction on what the error is
+                                  14.4%                                              23.5%
+                                                                                                                      24.6%
+   40.3%           17.4%   8.5%
+                                                 11.1%                                                       8.3%                     about and how to fix it.
+                                                              Statistics
+                                                          Passed-easy
+                                                          Passed-hard
+                                                                                                                                      Icarus Verilog (iverilog) [19]: Open-source Verilog simulator.
+                                          7.1%
+                                                          Compilation Error - easy
+                           2.0%3.3%                       Compilation Error - hard
+                                                                                                                          35.0%
+                                                                                                                                      The compiler occasionally encounters edge cases where it fails to
+                                                          Simulation Error - easy
+                                                          Simulation Error - hard                                                     provide informative logs, outputting messages such as "I give up."
+                                                                                                                                      Logs lack clarity, making them challenging to decipher.
+Figure 4: VerilogEval pass@1 results prior (inner) and post                                                                           Quartus2 : Commercial compiler for FPGAs. In contrast with the
+(outer) syntax error fixing with RTLFixer.                                                                                            open-source counterpart, it delivers well-defined and clear logs,
+                                                                                                                                      effectively identifying errors and often offering suggestions and
+                                                                                                                                      validation tips, making it more user-friendly and informative.
+     LLM                  Syntax Success Rate pass@1                                                                                     We deem Simple, iverilog, and Quartus to have increasing level
+     GPT-3.5                      73%            11%                                                                                  of feedback message quality and illustrate the difference of the two
+     GPT-3.5 + RTLFixer           93%            16%                                                                                  compilers with an example in Figure 5. Results depicted in Table 1
+Table 3: Improvements of Syntax Success rate and simulation                                                                           clearly demonstrate that compiler logs give better feedback than
+Pass@1 on RTLLM benchmark using ReAct and RAG with                                                                                    Simple feedback and that the quality of compiler output impacts
+Quartus compiler.                                                                                                                     the performance of LLM debugging. As the quality of the compiler
+                                                                                                                                      message improves (iverilog v.s. Quartus), the success rate of fixing
+                                                                                                                                      1 The syntax success rate we collected is different from the original paper because we
+Simulation Correctness Improvement: Previous research [9, 11]
+                                                                                                                                      used the Verilog code sample provided in the their repo for each problem.
+evaluates the performance of LLM-generated Verilog code using                                                                         2 https://www.intel.com/content/www/us/en/products/details/fpga/development-
+the pass@k metric. However, this approach doesn’t account for                                                                         tools/quartus-prime/resource.html
+syntax errors also increases. Intriguingly, the disparity between                  one of the failure case where it particularly requires arithmetic
+iverilog and Quartus results is more pronounced when using React                   index calculations to solve the index out-of-range error. Some other
+with RAG. This discrepancy potentially suggests that high-quality                  notable failures occurred in cases where LLMs were confident in
+compiler messages enhance the LLM’s ability to more effectively                    incorrect syntax, possibly due to it being accepted in C/C++.
+utilize the retrieved human expert guidance.
+
+
+    Task ID: vector100r                                                             Erroneous Implementation (Partial):
+                                                                                    for (i = 0; i < 16; i = i + 1) begin : ROW
+    Erroneous Implementation                                                           for (j = 0; j < 16; j = j + 1) begin : COLUMN
+    1 module top_module (                                                                  neighbors[0] = q[(i-1)*16 + (j-1)];
+    2 input [99:0] in,                                                                     row_above = q[((i-1) & 15)*16 + j];
+    3 output reg [99:0] out                                                                ...
+    4 );
+    5 always @(posedge clk) begin                                                   Compile Error:
+    6    for (int i = 0; i < 100; i = i +1) begin                                   Error (10232): Verilog HDL error at conwaylife.sv(23): index -17 cannot fall
+    7        out[i] <= in[99 - i];                                                  outside the declared range [255:0] for vector "q"
+    8    end
+    9 end
+    10 endmodule
+                                                                                   Figure 6: An example which the agent failed to fix a syntax
+                                                                                   error. LLM failed to calculate array indices in the for loop
+    iverilog:
+    vector100r.sv:5: error: Unable to bind wire/reg/memory ‘clk’ in ‘top_module’   and does not recognize the out-of-bound error.
+    vector100r.sv:5: error: Failed to evaluate event expression ’posedge clk’.
+    2 error(s) during elaboration.
+
+                                                                                   Iterative Code Refinement: In Figure 7, we analyze the number
+    Quartus:                                                                       of iterations ReAct requires to fix syntax errors. About 90% of
+    Error (10161): Verilog HDL error at vector100r.sv(5): object "clk" is not
+    declared. Verify the object name is correct. If the name is correct, declare
+                                                                                   problems are resolved in a single revision. For the remaining cases,
+    the object. File: /tmp/tmp4u6ib9ig/vector100r.sv Line: 5 Error: Quartus        additional code revisions are necessary, as new errors may surface
+    Prime Analysis & Synthesis was unsuccessful. 1 error, 1 warning                after addressing the initial ones.
+
+
+Figure 5: Example of compiler log from iverilog and Quartus.                                                      Distribution of iterations in ReAct
+Quartus feedback messages are more informative.                                                         102
+                                                                                         # of Samples
+
+
+
+
+                                                                                                        101
+4.3.2 Impact of Different LLMs. In Table 1, we present the results
+obtained when utilizing GPT-4 as the underlying LLM with Quartus
+                                                                                                        100
+as the compiler. A notable improvement in syntax error resolution                                             0      2        4           6     8       10
+is observed when using GPT-4 compared to GPT-3.5, particularly                                                               # of iterations
+with One-shot prompting with RAG, where the success rate in-                       Figure 7: Distribution of iterations required by ReAct to fix
+creased from 89.9% to 98%. When comparing the results of GPT-4                     syntax errors.
+between One-shot and ReAct, we observe minor improvements of
+approximately 1%, suggesting that GPT-4 is already a robust agent
+proficient in fixing syntax errors without the need for reasoning,                 Challenges in Debugging Simulation Errors: While our frame-
+action planning, and iterative refinement.                                         work could be readily adapted to employ LLMs for debugging sim-
+   Nonetheless, it is important to highlight that our approach of                  ulation errors, our preliminary studies revealed limited improve-
+empowering LLMs with ReAct and RAG can significantly narrow                        ments beyond syntax error fixes. Despite our efforts to provide
+the gap between weaker LLMs and stronger ones, especially ben-                     simulation error logs as feedback to LLM agents, including sum-
+eficial for weaker open-source models [9, 17] that may not be as                   maries on output error count and text-formatted waveform-like
+performant as GPT-4 on programming tasks.                                          comparisons of error versus solution output, we observed that LLMs
+                                                                                   had constrained capabilities to comprehend simulation feedback
+5      ANALYSIS AND DISCUSSION                                                     messages. They only exhibited proficiency in fixing logic imple-
+In this section, we delve into a series of analyses and discussions,               mentation errors for simple problems but struggled with more
+extracting valuable insights from our discoveries. Specifically, we                complex questions, especially those involving high-level design
+provide analysis in fail cases and the effect of iterative code re-                functionality descriptions and advanced reasoning. Addressing the
+finement. Additionally, we discuss the challenges associated with                  challenges associated with LLMs fixing erroneous implementations
+applying our method to debugging simulation logic errors.                          in such problems, particularly those requiring advanced reasoning
+Failure due to LLM’s Incapability: Most of the cases where, even                   and problem-solving skills, remains an exciting area for future re-
+with the aid of ReAct and RAG, failed to correct syntax errors is                  search. This also highlights the need to improve LLM’s capabilities
+due to the fundamental incapability of the LLM. Figure 6 illustrates               in reasoning and problem-solving related to hardware design.
+6    CONCLUSION
+Our framework RTLFixer demonstrates the significant impact of
+employing Retrieval Augmented Generation (RAG) and advanced
+prompting methods like ReAct in debugging Verilog code with
+Large Language Models. Key findings indicate that these approaches
+notably enhance syntax error resolution, achieving success rates as
+high as 98.5%. This research not only offers a novel autonomous
+language agent for Verilog code debugging but also introduces
+comprehensive dataset for further exploration.
+
+REFERENCES
+ [1] Jason Blocklove, et al. 2023. Chip-Chat: Challenges and Opportunities in Con-
+     versational Hardware Design. arXiv preprint arXiv:2305.13243 (2023).
+ [2] Mark Chen, et al. 2021. Evaluating large language models trained on code. arXiv
+     preprint arXiv:2107.03374 (2021).
+ [3] Xinyun Chen, et al. 2023. Teaching large language models to self-debug. arXiv
+     preprint arXiv:2304.05128 (2023).
+ [4] Nat Friedman. 2021. Introducing GitHub Copilot: your AI pair program-
+     mer. (2021). https://github.blog/2021-06-29-introducing-github-copilot-ai-
+     pair-programmer
+ [5] Ziwei Ji, et al. 2023. Survey of Hallucination in Natural Language Generation.
+     Comput. Surveys 55, 12 (March 2023), 1–38. https://doi.org/10.1145/3571730
+ [6] Shuyang Jiang, et al. 2023. SelfEvolve: A Code Evolution Framework via Large
+     Language Models. arXiv preprint arXiv:2306.02907 (2023).
+ [7] Patrick Lewis, et al. 2021. Retrieval-Augmented Generation for Knowledge-
+     Intensive NLP Tasks. arXiv:cs.CL/2005.11401
+ [8] Mingjie Liu, et al. 2023. ChipNeMo: Domain-Adapted LLMs for Chip Design.
+     arXiv:cs.CL/2311.00176
+ [9] Mingjie Liu, et al. 2023. VerilogEval: Evaluating Large Language Models for
+     Verilog Code Generation. arXiv preprint arXiv:2309.07544 (2023).
+[10] Shuai Lu, et al. 2022. ReACC: A Retrieval-Augmented Code Completion Frame-
+     work. arXiv:cs.SE/2203.07722
+[11] Yao Lu, et al. 2023. RTLLM: An Open-Source Benchmark for Design RTL Gener-
+     ation with Large Language Model. arXiv preprint arXiv:2308.05345 (2023).
+[12] Suphakit Niwattanakul, et al. 2013. Using of Jaccard coefficient for keywords
+     similarity. In Proceedings of the international multiconference of engineers and
+     computer scientists, Vol. 1. 380–384.
+[13] OpenAI. 2023. OpenAI models api. (2023). https://platform.openai.com/docs/
+     models
+[14] Hammond Pearce, et al. 2020. Dave: Deriving automatically verilog from english.
+     In Proceedings of the 2020 ACM/IEEE Workshop on Machine Learning for CAD.
+     27–32.
+[15] Yujia Qin, et al. 2023. Toolllm: Facilitating large language models to master
+     16000+ real-world apis. arXiv preprint arXiv:2307.16789 (2023).
+[16] Erich Schubert, et al. 2017. DBSCAN revisited, revisited: why and how you
+     should (still) use DBSCAN. ACM Transactions on Database Systems (TODS) 42, 3
+     (2017), 1–21.
+[17] Shailja Thakur, et al. 2023. VeriGen: A Large Language Model for Verilog Code
+     Generation. arXiv preprint arXiv:2308.00708 (2023).
+[18] Jason Wei, et al. 2023. Chain-of-Thought Prompting Elicits Reasoning in Large
+     Language Models. arXiv:cs.CL/2201.11903
+[19] Stephen Williams et al. 2002. Icarus verilog: open-source verilog more than a
+     year later. Linux Journal 2002, 99 (2002), 3.
+[20] Shunyu Yao, et al. 2022. ReAct: Synergizing Reasoning and Acting in Language
+     Models. In The Eleventh International Conference on Learning Representations.
+[21] Fengji Zhang, et al. 2023. Repocoder: Repository-level code completion through
+     iterative retrieval and generation. arXiv preprint arXiv:2303.12570 (2023).
+

@@ -1,0 +1,747 @@
+                                             Interpretable and Verifiable Hardware Generation
+                                                  with LLM-Driven Stepwise Refinement
+                                                             You Li                                  Samuel Mandell                              David Z. Pan
+                                                   you.li@utexas.edu                             shm923@my.utexas.edu                         dpan@utexas.edu
+                                             The University of Texas at Austin               The University of Texas at Austin         The University of Texas at Austin
+                                                           USA                                             USA                                       USA
+                                         Abstract                                                                  For these reasons, the hardware industry is still reluctant to
+                                         Large language models (LLMs) have achieved remarkable                     depend on LLMs for RTL design tasks.
+                                         success in software development. However, they are sus-                      Formal program construction is a classical method for de-
+                                         ceptible to hallucinations, meaning that they can introduce               riving programs with correctness guarantees [6, 16]. Given
+                                         subtle semantic and logical errors. Due to the high stakes in             a set of coarse-grained design requirements, it incrementally
+                                         chip design and manufacturing, hardware engineers are still               constructs an executable program and formally verifies cor-
+                                         reluctant to rely on LLMs for register-transfer level (RTL)               rectness at each step. Nevertheless, this approach relies heav-
+                                         generation. In this paper, we propose a hardware generation               ily on human experts for both design decisions and program
+                                                                                                                   transformations. As a result, it has seen limited adoption
+arXiv:2606.19387v2 [cs.SE] 13 Jul 2026
+
+
+
+
+                                         framework that combines the creativity and broad knowl-
+                                         edge of LLMs with the explainability and mathematical rigor               in practice for developing complex reactive systems, which
+                                         of formal methods. Specifically, we devise a set of transforma-           include integrated circuits.
+                                         tion rules that cover various design decisions and hardware                  In this paper, we propose an automated RTL development
+                                         features. By iteratively applying these rules, an LLM agent               framework that integrates the mathematical rigor of formal
+                                         can convert a design specification into an RTL program with               program construction with the generative capabilities of
+                                         guaranteed correctness. Experimental results demonstrate                  LLMs. In the first stage, the natural language descriptions
+                                         the effectiveness and efficiency of the framework.                        from the user are translated into a formal hardware specifica-
+                                                                                                                   tion. In the second stage, the abstract specification is refined
+                                                                                                                   into concrete code through a sequence of steps. At each step,
+                                         1    Introduction                                                         an LLM is invoked to select a transformation rule from a
+                                         Recent advances in LLMs have reshaped the landscape of                    predefined suite and then applies it to the current version.
+                                         programming. Starting from natural language descriptions,                 Transformation rules serve as the guardrails for LLM-guided
+                                         these models can directly synthesize executable programs                  development: if the application condition is satisfied, the
+                                         for a wide range of software tasks. However, generating                   resulting version is guaranteed to be a valid implementation
+                                         functionally correct RTL designs remains a significant chal-              of the previous version. Each rule contains a design decision
+                                         lenge. First, most of the production-level hardware designs               in plain text and an algebraic transformation procedure in
+                                         are proprietary. The scarcity of high-quality training data has           formal language. The stepwise development strategy and
+                                         limited the effectiveness of LLMs in the hardware domain.                 the decoupling of planning from actions enable more effec-
+                                         Second, even a single functional discrepancy in the hardware              tive context management for LLMs. The design process is
+                                         can lead to catastrophic consequences. In contrast, LLMs are              successful when the specification is completely replaced by
+                                         prone to subtle logical and functional errors, especially when            concrete code. However, it is still possible that the develop-
+                                         dealing with time, concurrency, and signal dependencies.                  ment reaches a dead end, i.e., it is infeasible to refine further
+                                         Third, hardware comprises concurrent components synchro-                  from the current version. In this scenario, the LLM can revert
+                                         nized by a clock signal. There is a fundamental mismatch                  the last few steps and explore a new direction. In the third
+                                         between this parallel nature of hardware and the sequential               stage, the generated code is converted to a synthesizable
+                                         generation pattern of LLMs. Fourth, existing methods gener-               RTL program. Overall, our framework leverages the comple-
+                                         ate the entire hardware design in a single pass (Section 2).              mentary strengths of formal methods and LLMs to address
+                                         The lack of intermediate steps poses challenges for perfor-               the hallucination and monolithic generation problems in
+                                         mance optimization, debugging, and context management.                    existing methods. It also showcases the potential to build a
+                                                                                                                   data flywheel with verifiable rewards for hardware genera-
+                                         Authors’ Contact Information: You Li, you.li@utexas.edu, The University   tion. The main contributions of this paper are summarized
+                                         of Texas at Austin, USA; Samuel Mandell, shm923@my.utexas.edu, The        as follows:
+                                         University of Texas at Austin, USA; David Z. Pan, dpan@utexas.edu, The
+                                         University of Texas at Austin, USA.
+• A general and practical formalism for hardware modules.             for HLS with techniques such as refactoring and enrich-
+Design requirements in human language can be automati-                ment [13, 47]. However, introducing an additional level of
+cally translated into formal specifications in this representa-       abstraction is undesirable, as it restricts control over hard-
+tion.                                                                 ware characteristics and increases verification complexity.
+• A set of LLM-compatible refinement rules for hardware               Program Refinement. Refinement is a top-down approach
+design. A sound RTL implementation of the original specifi-           that progressively transforms abstract requirements into ex-
+cation can be derived by iteratively applying these rules.            ecutable code. The idea of program refinement can be traced
+• An agentic framework to generate correct-by-construction            back to the work of Dijkstra [15] and Wirth [45] in the 1970s.
+RTL programs from design requirements. It can autonomously            A refinement calculus is a collection of sound refinement rules
+make design decisions, apply program transformations, ver-            that serve as guardrails for program refinement [5, 32, 33].
+ify correctness, record design steps, and recover from fail-          Researchers have created refinement calculi for various do-
+ures.                                                                 mains, including general concurrent systems [8, 17], reactive
+• A thorough evaluation of the proposed framework on the              systems [37], real-time systems [20], and statecharts [39, 40].
+VerilogEval benchmark suite. It can consistently produce              Even with interactive tools that can reduce mechanical ef-
+reliable RTL implementations from design specifications.              fort [6, 18, 26, 27], program refinement still relies on human
+                                                                      creativity to choose appropriate rules and generate valid
+                                                                      statements. Recently, Cai et al. suggested using Morgan’s
+                                                                      refinement calculus [32] to guide LLMs in program genera-
+2   Background and Problem Formulation                                tion. However, hardware description languages have unique
+RTL Generation with LLM Agents. Agentic systems ac-                   features, such as concurrent processes, non-blocking assign-
+complish complex tasks by coordinating multiple compo-                ments, and wait statements, which make them fundamentally
+nents, such as planning, reasoning, and tool use. The main            different from software programming languages.
+techniques employed by RTL generation agents are reflection,          Problem Definition. We aim to establish the foundation
+memory, and grounding [38]. Reflection involves refining              for automated hardware generation. Given a requirements
+the design in multiple steps prior to code generation [7, 47–         specification expressed in natural language, tables, and fig-
+49]. Memory-related techniques rely on in-context learning,           ures, our solution should produce an RTL implementation
+vector databases, or knowledge graphs to supply relevant              that complies with all requirements. In addition, the design
+background knowledge [19, 43]. Grounding refers to con-               process should be conducted in interpretable and verifiable
+necting LLM decisions with reliable structures or external            steps.
+verifiers [42]. For example, VerilogCoder builds an abstract
+syntax tree (AST) for an RTL program to localize errors in
+waveforms [21]. VeriAssist utilizes execution feedback to it-         3   Formal Specification of Hardware
+eratively detect and fix errors [23]. RTL++ extracts a control-           Requirements
+data flow graph from an RTL program, allowing LLMs to                 In this section, we present a formal specification method
+deeply understand its internal behavior [2]. Meanwhile, post          that can represent design requirements, hardware behav-
+training techniques such as reinforcement learning with ver-          iors, or the functionalities of HDL program segments. In
+ifiable rewards (RLVR) can enhance model performance on               contrast to prior methods [9, 30], our method is intended
+well-defined tasks. VeriReason and RTLSeek employ rein-               to be straightforward for LLMs to comprehend and reason
+forcement learning (RL) to improve the reasoning capabilities         about. This unified representation of hardware gives rise
+of LLMs [12, 44]. They combine test results from executable           to a relatively concise refinement calculus, which will be
+RTL programs with additional heuristics to construct reward           discussed in Section 4.
+models for RL training. Despite their advantages, these ap-           Preliminaries. We consider standard first-order logic. A
+proaches remain monolithic in nature. The absence of struc-           term is a variable, a constant, or a function symbol applied to
+tured intermediate steps and interpretable design decisions           other terms. A predicate is built from terms with relational
+increases the verification burden, limits effective reasoning,        operators and evaluates to either true or false. A formula is
+and impedes integration with downstream design tools.                 built from predicates with logical operators and quantifiers.
+RTL Generation through High-Level Synthesis. High-                    In a quantified formula ∀𝑥 .𝜙 or ∃𝑥 .𝜙, we say that 𝑥 is a bound
+level synthesis (HLS) can automatically translate an abstract         variable and 𝜙 is the body. A variable that is not bound by
+behavioral model into a functionally equivalent RTL imple-            a quantifier is called a free variable. Given a variable 𝑥, a
+mentation [14]. It cannot be applied to an incomplete model           term 𝑡, and a formula 𝜙, we define 𝜙 [𝑥/𝑡] to be the formula
+that captures design intents and requirements. Recent work            obtained by substituting each free occurrence of 𝑥 by 𝑡. A
+has explored how to derive a concrete behavioral model                state assigns a value to each variable. Formulas 𝜙 and 𝜓 are
+                                                                  2
+⟨pred⟩ ::= true | false | ⟨relational-op⟩ (⟨term-list⟩)                 ⟨expr⟩ ::= ⟨id⟩ | ⟨op⟩ (⟨expr-list⟩)
+⟨form⟩ ::=   ⟨pred⟩ | ⟨logical-op⟩ (⟨form-list⟩)                        ⟨event⟩ ::= posedge(clk) | change(*) | change ⟨expr⟩
+         |   forall ⟨id⟩ • ⟨form⟩ | exists ⟨id⟩ • ⟨form⟩                ⟨stmt⟩ ::= skip | ⟨stmt⟩;⟨stmt⟩ | ⟨id⟩<=⟨expr⟩ | ⟨id⟩:=⟨expr⟩
+         |   ⟨temporal-op⟩ [𝑙, 𝑢] (⟨form-list⟩)                                  | if ⟨expr⟩ then ⟨stmt⟩ else ⟨stmt⟩
+         |   reset ⟨form⟩ | assume ⟨form⟩ | assert ⟨form⟩                        | wait on ⟨event-list⟩ | procedure (⟨id-list⟩) {⟨stmt⟩}
+⟨spec⟩ ::= [pre:⟨form⟩ | dur:⟨form⟩ | post:⟨form⟩] | env:⟨form⟩         ⟨bloc⟩   ::= process [out:⟨id-list⟩] ⟨stmt⟩ | ⟨bloc⟩ ∥ ⟨bloc⟩
+
+Figure 1: Syntax of the formal specification language L𝑠𝑝𝑒𝑐 (left) and the formal specification language L𝑖𝑚𝑝𝑙 (right).
+
+equivalent, denoted as 𝜙 ≡ 𝜓 , if 𝜙 ⇔ 𝜓 holds in all states.            When developing a program fragment of a process body,
+Formula 𝜙 entails formula 𝜓 , denoted as 𝜙 ⇛ 𝜓 , if 𝜙 ⇒ 𝜓               we incorporate the environment condition into the during
+holds in all states.                                                    condition, which yields a simplified specification statement
+   We use duration-bounded temporal operators to specify                𝑤 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡]. Since a loop-free process body always
+hardware behavior over its entire execution. Let T denote               terminates, these two conditions jointly provide the context
+the independent time variable, and let 𝑡 denote the value               for development. We do not include liveness properties in
+of T at the current time frame. X 𝑝 holds if 𝑝 is true at time          the specification statements. Instead, we encode progress
+𝑡 + 1. G [𝑙, 𝑢] 𝑝 holds if 𝑝 is true for all times between 𝑡 + 𝑙        requirements into the LLM prompts used for development.
+and 𝑡 + 𝑢. F [𝑙, 𝑢] 𝑝 holds if 𝑝 is true at some time between           Hardware Description Language. We define a simple lan-
+𝑡 + 𝑙 and 𝑡 + 𝑢. 𝑝 U [𝑙, 𝑢] 𝑞 holds if 𝑞 is true at some time           guage L𝑖𝑚𝑝𝑙 to represent hardware implementations. A logic
+between 𝑡 + 𝑙 and 𝑡 + 𝑢, and 𝑝 is true for all times before 𝑞           circuit is a network of interconnected processes, each trig-
+is true. When the bounds are omitted, we assume 𝑙 = 0 and               gered by the designated events in its sensitivity list. Once
+𝑢 = ∞. The past time versions of X, G, F, and U are Y, H, O,            triggered, the statements within a process are evaluated se-
+and S, respectively. For instance, Y 𝑝 holds if 𝑝 is true at time       quentially. These include control statements, signal assign-
+𝑡 − 1, and it vacuously holds when 𝑡 is 0.                              ment statements, and wait statements. The sequence assign-
+Formal Specification Language. A specification statement                ment statement, denoted as <id> := <expr>, takes effect
+represents an abstract program [32]. During program re-                 immediately when it is evaluated. The concurrent assign-
+finement, it denotes a program fragment that remains to be              ment statement, denoted as <id> <= <expr>, schedules a
+developed. In the software domain, a specification statement            new value for its left-hand side signal based on the current
+has the form 𝑤 : [𝑝𝑟𝑒, 𝑝𝑜𝑠𝑡], where 𝑤 is a set of variables,            value of its right-hand side expression. After an infinitesimal
+and pre, post are predicates. The precondition 𝑝𝑟𝑒 constrains           delay, the scheduled updates of all concurrent assignments
+the initial state, the postcondition 𝑝𝑜𝑠𝑡 constrains the final          within the same process take effect simultaneously. The wait
+state, and the frame 𝑤 lists all variables that may change              statement suspends the execution of a process until a desig-
+values during the transition. We assume that no transition              nated event occurs. Intuitively, its functionality is similar to
+occurs from an initial state that does not satisfy the precondi-        that of the sensitivity list in the process declaration [3]. Extra
+tion [17]. The specification statement describes the following          delays in statements are not allowed because they cannot be
+task for the developer: from any initial state satisfying the           synthesized into hardware.
+precondition, the program fragment must terminate in a                     The Backus-Naur Form (BNF) of the hardware descrip-
+state satisfying the postcondition, by modifying only the               tion language L𝑖𝑚𝑝𝑙 is shown in Fig. 1(right). This language
+frame variables.                                                        is functionally complete, as it can represent any concrete
+   A hardware module may execute for an extended period                 behavior specified by the formal specification language [8].
+of time or even indefinitely. As a result, it is necessary to
+specify the behavior during execution [10]. Meanwhile, the              4    A Refinement Calculus for LLM-Driven
+correct operation of a process may depend on the envi-                       Hardware Design
+ronment assumptions and the behaviors of other synchro-                 Program Refinement. Refinement is a top-down approach
+nized processes. For these reasons, we introduce a during               for program development. It starts with an abstract specifi-
+condition 𝑑𝑢𝑟 and an environment condition 𝑒𝑛𝑣 into the                 cation statement, proceeds through a series of intermediate
+specification statement, which leads to the following form:             program versions, and results in code in a programming
+𝑤 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡] | 𝑒𝑛𝑣. The program fragment must main-             language:
+tain the during condition throughout its execution, and it can
+assume the environment condition as the context for devel-                             𝑠𝑝𝑒𝑐 ⊑ 𝑣𝑒𝑟 1 ⊑ · · · ⊑ 𝑣𝑒𝑟𝑛 ⊑ 𝑐𝑜𝑑𝑒.              (1)
+opment. The pair of env and dur conditions is similar to the            Every intermediate version may be a mixture of specification
+rely/guarantee approach in reactive system modeling [1, 24].            statements and code. A version 𝑃 is refined by a version 𝑄,
+                                                                    3
+denoted 𝑃 ⊑ 𝑄, if every execution that satisfies 𝑄 also satis-          that respond to designated events on their input signals. A
+fies 𝑃 [31]. Intuitively, a refined version is more deterministic       process is activated when an event in its sensitivity list oc-
+than the previous version. In that sense, refinement can be             curs, after which every statement in the process body is
+viewed as a process to progressively reducing nondetermin-              evaluated. A standalone signal assignment statement can
+ism.                                                                    also be viewed as a process [3]. In this paper, we enforce a
+Refinement Rules. Every ⊑ symbol in a refinement trace                  simple design pattern for all design problems. In the first
+(Equation 1) represents a refinement relation between two               phase, an agent structurally and functionally partitions the
+consecutive versions. Rather than relying on human experts              original specification statement into one or more concur-
+to define a new refinement relation at each step, researchers           rently running processes. For each process, the agent con-
+have developed the refinement calculus, which provides a                solidates its behavior and extracts a specification statement
+systematic set of predefined refinement rules. The final code           representing the process body. In the second phase, an agent
+derived with the refinement calculus is correct by construc-            generates concrete statements that implement the process
+tion if all the refinement rules are sound. In this section, we         body. This design pattern reduces the size of the refinement
+introduce a refinement calculus for LLM-driven hardware de-             tree and avoids unnecessary backtracking during the tree
+sign. In our approach, each refinement rule consists of three           search. Moreover, it ensures that each process is refined in-
+components: (i) a design decision, (ii) an application condition,       dividually, and thus mitigates the context dilution problem
+and (iii) an algebraic transformation. The design decision is           in monolithic LLM-guided approaches [22].
+expressed in natural language to fully leverage LLMs’ capa-                We provide the essential rules for process-level develop-
+bilities, including semantic comprehension, task planning,              ment and control-data flow development in Table 1 and Ta-
+and information retrieval. The other two components are                 ble 2. We display the transformations and their application
+expressed in formal language to provide mathematical guar-              conditions in a symbolic format to facilitate reproduction.
+antees of functional correctness. The application condition             In the following, we give an intuitive explanation of these
+describes the scenarios in which it is sound to apply this              rules.
+rule. The transformation encapsulates a predefined refine-                 The weaken precondition and the strengthen postcondition
+ment relation and specifies how to derive the next version.             are the most fundamental rules to refine a process body. The
+This separation of concerns facilitates more effective agent            former makes the specification statement more generally
+orchestration and context management in an LLM-driven                   applicable, and the latter yields a more deterministic program.
+autonomous system.                                                      Analogously, weaken environment and strengthen during are
+Design Mechanism. The problem of program refinement                     the most fundamental rules to refine a continuously running
+exhibits a tree structure once the initial specification state-         process [28]. Recall that a specification statement may only
+ment and the refinement calculus are determined. In a re-               modify the variables in its frame. The contract frame and the
+finement tree, the root node corresponds to the initial spec-           expand frame rules allow for the addition and removal of
+ification statement, each intermediate node is a program                frame variables.
+version, each real leaf node is a valid implementation, and                We define a set of rules to reduce the problem of refining a
+each dummy leaf node is an infeasible program version. A                single process to the problem of refining two concurrent pro-
+design agent aims to find a path from the root to a real leaf           cesses 𝐴 and 𝐵. The Parallel Composition rule applies when 𝐴
+node by repeating its action: selecting a fragment of the               and 𝐵 have no cross-references between their output signals;
+current program version and applying an appropriate refine-             the Piping Composition rule applies when 𝐵 references the
+ment rule to that location. Each action corresponds to an               output signals of 𝐴, but not vice versa; the Bidirectional Com-
+edge in the refinement tree. During the search process, the             position rule applies when there is mutual dependency. The
+agent may encounter an infeasible version that cannot be                during conditions of 𝐴 or 𝐵 must not reference the frame
+implemented by any code. In that case, the agent needs to               variables of the other process, and their conjunction must be
+revert the last few refinement steps and find another direc-            sufficiently strong to establish the during condition of the
+tion. Depending on user requirements, the search can be                 original process. Furthermore, the during condition of the
+steered toward specific directions that may yield optimal               producer process should be reflected in the environment con-
+results in power, performance, and area. Search efficiency              dition of the consumer process, so that each can be refined
+can be further improved using techniques such as in-context             in isolation.
+reinforcement learning, information retrieval, and compo-                  We create Initialization and Iteration rules to reduce the
+sitional refinement rules [11]. We describe our strategy in             problem of refining a process to the problem of refining the
+detail in Section 5.                                                    process body. A process can be viewed as an infinite loop
+Refinement Calculus for Hardware Development. An                        preceded by an initialization of the state variables [8]. The
+integrated circuit can be modeled as a network of processes
+                                                                    4
+ Name                        Transformation and Conditions
+ Weaken Environment          ss ⊑ 𝑤 : [𝑝𝑟𝑒 ′, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡] | 𝑒𝑛𝑣 ′ , provided env ⇛ env ′ .
+ Strengthen During           ss ⊑ 𝑤 : [𝑝𝑟𝑒, 𝑑𝑢𝑟 ′, 𝑝𝑜𝑠𝑡] | 𝑒𝑛𝑣, provided dur ′ ⇛ dur.
+ Parallel Composition        sf ⊑ 𝑤 𝑎 : [𝑝𝑟𝑒, 𝑑𝑢𝑟 𝑎 , false] | 𝑒𝑛𝑣 ∥ 𝑤𝑏 : [𝑝𝑟𝑒, 𝑑𝑢𝑟𝑏 , false] | 𝑒𝑛𝑣, provided
+                                 i) 𝑤 𝑎 ∩ 𝑤𝑏 = ∅, ii) 𝑤 𝑎 ∉ vars(𝑑𝑢𝑟𝑏 ) ∧ 𝑤𝑏 ∉ vars(𝑑𝑢𝑟 𝑎 ), iii) 𝑑𝑢𝑟 𝑎 ∧ 𝑑𝑢𝑟𝑏 ⇛ 𝑑𝑢𝑟 .
+ Piping Composition          sf ⊑ 𝑤 𝑎 : [𝑝𝑟𝑒, 𝑑𝑢𝑟 𝑎 , false] | 𝑒𝑛𝑣 ∥ 𝑤𝑏 : [𝑝𝑟𝑒, 𝑑𝑢𝑟𝑏 , false] | 𝑒𝑛𝑣 ∧ 𝑑𝑢𝑟 𝑎 ,
+                                 provided i) 𝑤 𝑎 ∩ 𝑤𝑏 = ∅, ii) 𝑤 𝑎 ∈ vars(𝑑𝑢𝑟𝑏 ) ∧ 𝑤𝑏 ∉ vars(𝑑𝑢𝑟 𝑎 ), iii) 𝑑𝑢𝑟 𝑎 ∧ 𝑑𝑢𝑟𝑏 ⇛ 𝑑𝑢𝑟 .
+ Bidirectional Composition   sf ⊑ 𝑤 𝑎 : [𝑝𝑟𝑒, 𝑑𝑢𝑟 𝑎 , false] | 𝑒𝑛𝑣 ∧ 𝑑𝑢𝑟𝑏 ∥ 𝑤𝑏 : [𝑝𝑟𝑒, 𝑑𝑢𝑟𝑏 , false] | 𝑒𝑛𝑣 ∧ 𝑑𝑢𝑟 𝑎 ,
+                                 provided i) 𝑤 𝑎 ∩ 𝑤𝑏 = ∅, ii) 𝑤 𝑎 ∈ vars(𝑑𝑢𝑟𝑏 ) ∧ 𝑤𝑏 ∈ vars(𝑑𝑢𝑟 𝑎 ), iii) 𝑑𝑢𝑟 𝑎 ∧ 𝑑𝑢𝑟𝑏 ⇛ 𝑑𝑢𝑟 .
+ Initialization              ss ⊑ 𝑤 : [𝑝𝑟𝑒, 𝑑𝑢𝑟 ∧ 𝑟𝑠𝑡 ⇒ (T = 0 ∧ 𝑤 = reset_state), 𝑝𝑜𝑠𝑡] | 𝑒𝑛𝑣,
+                                 provided i) 𝑤 = reset_state ⇛ 𝑝𝑟𝑒, ii) T = 0 ∧ 𝑤 = reset_state ⇛ T = 0 ∧ 𝑑𝑢𝑟 .
+ Iteration                   sf ⊑ process[output:𝑤]{𝑤 : [T = 𝑡 0 ∧ 𝑖𝑛𝑣, 𝑒𝑛𝑣 ∧ 𝑑𝑢𝑟, T = (𝑡 0 + 1) ∧ 𝑖𝑛𝑣]},
+                                 provided T = 0 ∧ 𝑝𝑟𝑒 ⇛ T = 0 ∧ 𝑖𝑛𝑣.
+Table 1: Refinement rules for process-level development. ss is the shorthand for 𝑤 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡] | 𝑒𝑛𝑣, and sf is
+the shorthand for 𝑤 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, false] | 𝑒𝑛𝑣.
+
+
+ Name                        Transformation and Conditions
+ Weaken Precondition         ss ⊑ 𝑤 : [𝑝𝑟𝑒 ′, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡], provided pre ⇛ pre′ .
+ Strengthen Postcondition    ss ⊑ 𝑤 : [𝑝𝑟𝑒, 𝑑𝑢𝑟 ′, 𝑝𝑜𝑠𝑡 ′ ], provided post ′ ⇛ post.
+ Weaken Context              ss ⊑ 𝑤 : [𝑝𝑟𝑒, 𝑑𝑢𝑟 ′, 𝑝𝑜𝑠𝑡], provided i) dur contains no temporal operators, ii) dur ⇛ dur ′ .
+ Expand Frame                ss ⊑ 𝑤 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡 ∧ 𝑥 = 𝑥 0 ].
+ Contract Frame              𝑤, 𝑥 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡] ⊑ 𝑤 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡 [𝑥 0 /𝑥]].
+ Sequential Composition      𝑤, 𝑥 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡] ⊑ 𝑤 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑚𝑖𝑑]; 𝑤 : [𝑚𝑖𝑑, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡], provided
+                                   i) 𝑤 0, 𝑥 0 ∉ vars(𝑚𝑖𝑑), ii) 𝑝𝑟𝑒 ∧ 𝑑𝑢𝑟 ⇛ 𝑚𝑖𝑑, iii) 𝑚𝑖𝑑 ∧ 𝑑𝑢𝑟 ⇛ 𝑝𝑜𝑠𝑡.
+ Blocking Assignment         𝑤, 𝑥 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡] ⊑ 𝑤 := 𝐸, provided 𝑝𝑟𝑒 ∧ 𝑑𝑢𝑟 ⇛ 𝑝𝑜𝑠𝑡 [𝑤/𝐸].
+ Non-Blocking Assignment     𝑤, 𝑥 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡] ⊑ 𝑤 <== 𝐸, provided 𝑝𝑟𝑒 ∧ 𝑑𝑢𝑟 ⇛ 𝑝𝑜𝑠𝑡 [𝑇 /(𝑇 + 1)] [𝑤/𝐸].
+ Concurrent Assignment       𝑤 := 𝐸; 𝑥 := 𝐹 ⊑ 𝑤, 𝑥 := 𝐸, 𝐹 [𝑤/𝐸], provided 𝑤 ∩ 𝑥 = ∅.
+ Leading Assignment          𝑤, 𝑥 := 𝐸, 𝐹 [𝑤/𝐸] ⊑ 𝑤 := 𝐸; 𝑥 := 𝐹 , provided 𝑤 ∩ 𝑥 = ∅.
+ Following Assignment        𝑤, 𝑥 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡] ⊑ 𝑤, 𝑥 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡 [𝑤/𝐸]]; 𝑤 := 𝐸, provided 𝑝𝑟𝑒 ∧ 𝑑𝑢𝑟 ⇛ 𝑝𝑜𝑠𝑡 [𝑤/𝐸].
+ Skip Statement              ss ⊑ skip, provided 𝑝𝑟𝑒 ∧ 𝑑𝑢𝑟 ⇛ 𝑝𝑜𝑠𝑡.
+ Introduce Variable          ss ⊑ Var 𝑥; 𝑤, 𝑥 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡].
+ Alternation                 ss ⊑ if 𝐺𝑖 then {𝑤 : [𝑝𝑟𝑒 ∧ 𝐺𝑖 , 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡]} for 𝑖 = 1 . . . 𝑛.
+ Procedure Assignment        𝑤, 𝑎 := 𝐸 [𝑓 /𝑎], 𝐹 [𝑓 /𝑎] ⊑ 𝑃 (𝑎), provided procedure 𝑃 (𝑓 ) ≜ 𝑤, 𝑓 := 𝐸, 𝐹 .
+ Procedure Specification     𝑤, 𝑎 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡] ⊑ 𝑃 (𝑎), provided i) procedure 𝑃 (𝑓 ) ≜ 𝑤, 𝑓 : [𝑝𝑟𝑒 ′, true, 𝑝𝑜𝑠𝑡 ′ ],
+                                   ii) 𝑝𝑟𝑒 ∧ 𝑑𝑢𝑟 ⇛ 𝑝𝑟𝑒 ′ [𝑓 /𝑎], iii) 𝑝𝑜𝑠𝑡 ′ [𝑓 /𝑎] ⇛ 𝑝𝑜𝑠𝑡.
+ Feasibility                 ss is feasible, provided 𝑝𝑟𝑒 ∧ 𝑑𝑢𝑟 ⇛ ∃𝑤 .𝑝𝑜𝑠𝑡.
+   Table 2: Refinement rules for control and data flow development. ss is the shorthand for 𝑤 : [𝑝𝑟𝑒, 𝑑𝑢𝑟, 𝑝𝑜𝑠𝑡].
+
+
+
+Initialization rule allows information flow from the precondi-           timeline: at the beginning of every iteration when T is set to
+tion to the during condition. It represents the design decision          𝑡 0 , and at the end of every iteration when T is updated. In
+to choose a reset_state that satisfies the precondition and              addition, it must be sufficiently strong to establish the during
+to encode it into the during condition. The Iteration rule ex-           condition of the entire process. The agent has the flexibil-
+tracts the specification statement of the process body from              ity to choose an inductive invariant that satisfies the above
+that of the entire process. It represents the design decision            conditions. In practice, choosing an appropriate 𝑖𝑛𝑣 under
+to implement the given specification as a single process and             these constraints is much easier than finding an inductive
+to choose an inductive invariant for that process. Because a             invariant for a hardware implementation. For example, the
+specification statement can change the values of the frame               agent can simply strengthen the during condition to obtain
+variables and the time variable T, we use the 0-subscripted              an 𝑖𝑛𝑣. If subsequent refinement of the process body fails,
+versions to denote their values in the precondition. The in-             the agent can backtrack and explore a different 𝑖𝑛𝑣. The en-
+ductive invariant 𝑖𝑛𝑣 must hold at all discrete instants of the          vironment condition, which holds throughout the process
+                                                                     5
+execution, is integrated into the during condition of the pro-         condition is incorporated into the during condition, and the
+cess body. Such a during condition does not constrain the              entire execution is finished in one clock cycle. We define
+frame variables; instead, it provides the conditions that the          dedicated constructs so that Dafny can support hardware-
+process body can rely on during its execution.                         specific features. For instance, we flatten formulas with a
+   We extend a set of software refinement rules [31] to the            bounded temporal operator into formulas over the time vari-
+control-data flow development of a process body (Table 2).             able T, and define bit-shift operators as customized functions
+Because the during condition holds throughout the execution            in Dafny. Afterwards, the Syntax Checking node launches
+of the process body, it serves as the context when reasoning           Dafny via the command-line interface to detect syntax errors
+about the application conditions. Notably, the Concurrent As-          in the formal specifications, and the Functional Judge node
+signment and the Leading Assignment rules enable the sound             invokes an LLM to identify functional discrepancies with re-
+conversion between a single concurrent assignment state-               spect to the design specification. This loop terminates when
+ment and multiple sequential assignment statements, and                all syntactic and functional issues are resolved. The final
+vice versa. The Procedure Assignment, and Procedure Specifi-           output is a specification statement in the format described
+cation rules allow the reuse of already refined, parametrized          in Section 3. In practice, a design engineer can review the
+modules. Finally, the Feasibility condition checks whether             specification statement and make desired improvements.
+the specification statement is valid and can be refined further.       Stepwise Refinement Stage. The second stage takes both
+                                                                       the generated specification statement and the original design
+5   An Agentic System for                                              specification as input. Initially, the Planning node sketches
+                                                                       a high-level design plan according to the non-functional
+    Correct-by-Construction Hardware                                   requirements [36] in the design specification, along with
+    Development                                                        its own design decisions. The design plan contains the fol-
+We develop an end-to-end, fully automated agentic system               lowing fields: a process-level model [4] that illustrates the
+for hardware design based on the formal techniques dis-                partitioning of the system and the interconnections among
+cussed in this paper. Our main design considerations are               the processes; port definitions that describe the signal map-
+simplicity and robustness. The system is intentionally kept            pings between processes; resource, scheduling, and signal
+simple so that it does not depend on external knowledge                path constraints on each individual process; high-level de-
+bases and can be maintained by engineers without formal                scriptions of data path and control logic for each individual
+verification expertise. It is designed to be robust so that it         process; a general design pattern for the top-down, iterative
+consistently follows the guardrails and delivers reliable re-          refinement strategy; and other information the LLM deems
+sults under varying input specifications. We choose Lang-              necessary. Next, the Refinement Decision node makes a sin-
+Graph as our development framework because it offers fine-             gle design decision, selects an appropriate refinement rule,
+grained control over agent behaviors. We use Dafny as our              and identifies a program location to apply this rule. It main-
+programming language and verification tool. Dafny has built-           tains a complete history of refinement steps, so that it can
+in support for specification constructs such as preconditions          learn from previous mistakes and backtrack to a past version.
+(requires), postconditions (ensures), and frames (modifies).           Subsequently, the Program Transformation node updates the
+It also comes with an SMT-based static verifier to check               current program version based on the refinement rule and
+whether a program is functionally correct with respect to              the program location passed from the refinement decision
+the specifications. As such, we can verify the correctness             node. The above iterative refinement loop terminates when
+of a mixed program during its construction. The general                the Termination Checking node finds that all specification
+architecture of the system is shown in Fig. 2. In this figure,         statements have been replaced by concrete code. The clear
+each rectangular node represents an LLM call, each pair of             separation between decision, action, and verification enables
+parentheses represents a tool call, and each document shape            effective context management for each LLM call, which in
+represents a block of short-term memory. The system con-               turn mitigates context dilution and reduces token consump-
+sists of three orthogonal stages, which are elaborated as              tion.
+follows.                                                                  It is always difficult to verify a complex system after design
+Auto-Formalization Stage. In the first stage, the agent                completion. In that regard, we perform incremental verifica-
+parses a design specification expressed in natural language,           tion alongside each design iteration. The Condition Checking
+flow charts, truth tables, or waveforms. The Formalization             node validates the application conditions once a refinement
+node first determines whether the design specification cor-            rule is selected. The Feasibility Checking node determines
+responding to a combinational circuit or a sequential circuit.         whether the newly generated refinement statements can be
+It then extracts the functional requirements from the design           refined further. Furthermore, the Termination Checking node
+specification. For a combinational circuit, the environment            consistently verifies whether the current implementation
+                                                                   6
+             Design                                                                  Formal                                       Formal
+           Specification                                                           Specification                              Implementation
+
+
+
+
+           Formalization                                                             Planning             Design Plan          Plan Analysis
+
+
+         Syntax Checking                                 Refinement                Refinement       Condition Checking
+                                  Syntax Correction        History                                                            RTL Translation
+          (Dafny CLI)                                                               Decision          (Dafny CLI)
+
+
+                                     Functional       Program Version                Program        Feasibility Checking   RTL Translation Stage
+         Functional Judge
+                                     Correction                                   Transformation      (Dafny CLI)
+
+
+                                                                            Termination Checking   pass                            RTL
+                       pass                                                    (Dafny CLI)                                    Implementation
+       Auto-Formalization Stage                       Stepwise Refinement Stage
+
+
+
+               Figure 2: Architecture of the agentic system for correct-by-construction RTL generation.
+
+of a process body satisfies the associated Dafny specifica-                 language description of the desired functionality, a refer-
+tions. It leverages Dafny’s incremental verification features,              ence Verilog implementation, and a testbench for functional
+such as extension, strengthening, and superimposition, if                   verification. A generated RTL design is deemed correct if
+the refinement rule is compatible with them [25]. Otherwise,                it passes all test cases and is approved by a human expert.
+it inserts assume and assert statements around the pro-                     VerilogEval is considered contaminated, since the reference
+gram location to ensure the correctness of the refinement                   implementations in the public repository may have been
+step. Overall, the tight integration of design and verification             seen by LLMs during pretraining [35]. However, to the best
+reduces verification complexity, enables error detection in                 of our knowledge, no previous systems have adopted a top-
+early stages, and provides intermediate reward signals for                  down, stepwise refinement approach for hardware design.
+in-context reinforcement learning.                                          In this sense, VerilogEval remains a fresh benchmark suite
+RTL Translation Stage. The final stage receives the con-                    for our method.
+crete Dafny program and the design plan from the previous                      We compare our method with off-the-shelf Claude Opus
+stage. The Plan Analysis node extracts auxiliary information                4.6 and an advanced multi-agent RTL generation system
+from the design plan, including port definitions, register def-             called VeriMaAS [7]. VeriMaAS combines the functional veri-
+initions, and whether each process should be implemented                    fication capabilities of Yosys [46] with the reasoning capabili-
+as a sequential block, a combinational block, or an assign                  ties of agent orchestration to achieve high generation quality.
+statement. Lastly, the RTL Translation node converts each                   All verification tasks are conducted on a Windows laptop
+process signature and statement into Verilog. The end re-                   with an Intel i7-12700H CPU and 32 GB of RAM.
+sult is a synthesizable algorithmic RTL implementation that                 Experimental Results. Table 3 shows the evaluation re-
+satisfies all initial design requirements.                                  sults of the three RTL generation methods on the VerilogEval
+                                                                            benchmarks. As we have discussed, our proposed method is
+                                                                            at a disadvantage, because LLMs are not pretrained for hard-
+6   Evaluation                                                              ware design with a top-down, stepwise refinement approach.
+                                                                            We compare the results of running our method once and the
+Experimental Setup. We implement the proposed agentic
+                                                                            other two methods ten times on each benchmark. For Veri-
+system (Fig. 2) on Dafny 4.0 [27] and LangGraph, with ap-
+                                                                            MaAS, the runtime is not directly comparable, as it includes
+proximately 4,000 lines of Python code and LLM prompts.
+                                                                            a physical design flow for performance estimation. Across
+We use Claude Opus 4.6 for the Formalization and Planning
+                                                                            all benchmarks, our method achieves the highest pass rate,
+nodes, and Claude Sonnet 4.6 for the rest of the nodes. We
+                                                                            yet it consumes more tokens and runtime than the other two
+find that the Claude 4.6 family of models consistently deliv-
+                                                                            methods. This trade-off is justified by the high correctness
+ers better semantic comprehension, logical reasoning, and
+                                                                            stakes in chip design and manufacturing.
+instruction following capabilities than their counterparts. To
+                                                                               Table 4 shows the detailed statistics of our method. It
+ensure a fair comparison, we use Claude Opus 4.6 for all
+                                                                            achieves a lower pass rate on sequential benchmarks due
+baseline methods.
+                                                                            to the challenges of process-level reasoning in addition to
+   We evaluate different RTL generation methods on Ver-
+                                                                            control and data flow design. Most of the runtime and to-
+ilogEval V2, a benchmark suite comprising 156 hardware
+                                                                            kens are used by Stage 2, where the stepwise refinement
+design problems [34]. Each benchmark consists of a natural
+                                                                        7
+ Method               Metrics              Results                                           500
+
+                      Pass@1 (%)           92.3 (144/156)                                    400
+ Proposed             Avg. Runtime (s)     221.1
+                      Avg. Tokens (k)      61.8                                              300
+
+
+
+
+                                                                               Tokens (k)
+                      Pass@10 (%)          87.2 (136/156)
+ Claude Opus 4.6      Avg. Runtime (s)     52.9                                              200
+                      Avg. Tokens (k)      6.9
+                                                                                             100
+                      Pass@10 (%)          90.0 (141/156)
+ VeriMaAS [7]         Avg. Runtime (s)     –                                                   0
+                      Avg. Tokens (k)      17.1                                                        5   10   15    20       25   30   35
+                                                                                                                Search Depth
+Table 3: A comparison of different RTL generation
+methods.                                                               Figure 3: Number of tokens consumed in stage 2 vs.
+                                                                       search depth on the refinement tree.
+
+ Metrics              Category             Results
+                      Combinational        95.1 (78/82)
+ Pass@1 (%)
+                      Sequential           89.2 (66/74)                                      1000
+                      Stage 1              14.0                                               800
+ Avg. Runtime (%)     Stage 2              80.6
+
+                                                                               Runtime (s)
+                      Stage 3              5.4                                                600
+
+                      Stage 1              14.6                                               400
+ Avg. Tokens (%)      Stage 2              74.0
+                      Stage 3              11.4                                               200
+
+ Avg. Search Depth    –                    7.1                                                     0
+                                                                                                       5   10   15    20       25   30   35
+ Backtrack Rate (%)   –                    2.6                                                                  Search Depth
+ Cache Hit Rate (%)   –                    53.2
+                                                                       Figure 4: Total runtime of stage 2 vs. search depth on
+ Table 4: Detailed statistics of the proposed method.
+                                                                       the refinement tree.
+
+
+agent iteratively makes design decisions and applies pro-
+gram transformations. Notice that Stage 2’s proportion of              078, 099, 104, 137, 145, and 149, our generated implementa-
+runtime is only slightly higher than its proportion of token           tions choose a different time schedule or reset state than the
+consumption. It indicates that the time spent on formal veri-          reference implementations, yet they still exhibit correct ob-
+fication is significantly less than the time spent on LLM calls.       servable behaviors. On benchmark 070, our method selects
+We attribute the high efficiency of formal verification to the         a design strategy that violates the non-functional require-
+incremental verification strategy and the clear definition of          ments. In summary, the proposed method can consistently
+application conditions. The stepwise refinement agent takes            deliver correct functionality, while it still depends on LLMs
+an average of 7.1 steps on the refinement tree to find a valid         for other design considerations.
+implementation. Moreover, it reaches a dead end in only                Scalability Analysis. As shown in Fig. 3 and Fig. 4, the token
+2.6% of the steps. These numbers suggest a high potential for          consumption and runtime of Stage 2 grow almost linearly
+deriving compositional refinement rules and training a more            as the number of refinement steps grows. The underlying
+aggressive search agent through reinforcement learning. We             reasons include (a) that the backtrack rate (Table 4) is nearly
+leave these directions for future work.                                negligible; (b) that program transformation is applied to just a
+Failure Analysis. We analyze the root causes of all fail-              single specification statement or program fragment at a time;
+ures. On benchmarks 062, 063, and 093, the design specifi-             and (c) that the number of application conditions is constant
+cations contain ambiguities. Our generated implementations             for each refinement rule. Hence, we expect our method to
+satisfy the given functional requirements, but deviate from            scale to complex designs that require a large number of
+the reference implementations. On benchmarks 034, 053,                 design decisions.
+                                                                   8
+7   Conclusion                                                        References
+                                                                       [1] Martin Abadi and Leslie Lamport. 1993. Composing specifications. ACM Trans-
+In this paper, we propose the first LLM-driven hardware                    actions on Programming Languages and Systems (TOPLAS) 15, 1 (1993), 73–132.
+design method based on program refinement. Our method                  [2] Mohammad Akyash, Kimia Azar, and Hadi Kamali. 2025. Rtl++: Graph-enhanced
+                                                                           llm for rtl code generation. In ICLAD 2025.
+can also be viewed as (a) an inference-time scaling technique          [3] James R Armstrong and F Gail Gray. 1993. Structured logic design with VHDL.
+with formal correctness guarantees, (b) an automated system                Prentice-Hall, Inc.
+                                                                       [4] James R Armstrong and F Gail Gray. 2000. VHDL design representation and
+for stepwise program refinement, and (c) a synthetic data                  synthesis. Prentice Hall PTR.
+generator for interpretable hardware synthesis. Based on this          [5] Ralph-JR Back. 1988. A calculus of refinements for program derivations. Acta
+                                                                           Informatica 25, 6 (1988), 593–624.
+method, we construct an agentic system that consistently               [6] Friedrich L Bauer, Bernhard Moller, Helmuth Partsch, and Peter Pepper. 1989.
+produces reliable RTL implementations from design specifi-                 Formal program construction by transformations-computer-aided, intuition-
+                                                                           guided programming. IEEE Transactions on Software Engineering 15, 2 (1989),
+cations. Future directions include (a) building scaffolding for            165–180.
+the transformation, verification, and compilation of formal            [7] Amulya Bhattaram, Janani Ramamoorthy, Ranit Gupta, Diana Marculescu, and
+                                                                           Dimitrios Stamoulis. 2025. Automated Multi-Agent Workflows for RTL Design.
+hardware languages, (b) developing more general and pow-                   NeurIPS 2025 Workshop MLForSys (2025).
+erful refinement rules for hardware, and (c) using reinforce-          [8] Peter T Breuer, Carlos Kloos Delgado, Andres Lopez Marin, Natividad Mar-
+                                                                           tinez Madrid, and Luis Sanchez Fernandez. 1997. A refinement calculus for the
+ment learning to improve LLMs’ capabilities in hardware                    synthesis of verified hardware descriptions in VHDL. ACM Transactions on
+refinement.                                                                Programming Languages and Systems (TOPLAS) 19, 4 (1997), 586–616.
+                                                                       [9] Peter T Breuer, Luis Sanchez Fernandez, and Carlos Delgado Kloos. 1995. A
+                                                                           simple denotational semantics, proof theory and a validation condition generator
+                                                                           for unit-delay VHDL. Formal Methods in System Design 7, 1 (1995), 27–51.
+                                                                      [10] Peter T Breuer, Natividad Martínez Madrid, Luis Sánchez, Andrés Marin, and
+                                                                           Carlos Delgado Kloos. 1996. A formal method for specification and refinement of
+                                                                           real-time systems. In Proceedings of the Eighth Euromicro Workshop on Real-Time
+                                                                           Systems. IEEE, 200–204.
+                                                                      [11] Yufan Cai, Zhe Hou, David Sanán, Xiaokun Luan, Yun Lin, Jun Sun, and Jin Song
+                                                                           Dong. 2025. Automated program refinement: Guide and verify code large lan-
+                                                                           guage model with refinement calculus. POPL 2025 (2025).
+                                                                      [12] Zhiteng Chao, Xinyu Zhang, Yonghao Wang, Bin Sun, Tianyun Ma, Tianmeng
+                                                                           Yang, Jing Justin Ye, Jianan Mu, and Huawei Li. 2026. RTLSeek: Boosting the
+                                                                           LLM-Based RTL Generation with Diversity-Oriented Reinforcement Learning.
+                                                                           (2026).
+                                                                      [13] Luca Collini, Siddharth Garg, and Ramesh Karri. 2025. C2hlsc: Leveraging
+                                                                           large language models to bridge the software-to-hardware design gap. ACM
+                                                                           Transactions on Design Automation of Electronic Systems 30, 6 (2025), 1–24.
+                                                                      [14] Jason Cong, Bin Liu, Stephen Neuendorffer, Juanjo Noguera, Kees Vissers, and
+                                                                           Zhiru Zhang. 2011. High-level synthesis for FPGAs: From prototyping to deploy-
+                                                                           ment. IEEE Transactions on Computer-Aided Design of Integrated Circuits and
+                                                                           Systems 30, 4 (2011), 473–491.
+                                                                      [15] Ole-Johan Dahl, Edsger Wybe Dijkstra, and Charles Antony Richard Hoare. 1972.
+                                                                           Structured programming. Academic Press Ltd.
+                                                                      [16] Edsger Dijkstra. 1976. A discipline of programming. Prentice-Hall, Inc.
+                                                                      [17] Jürgen Dingel. 2002. A refinement calculus for shared-variable parallel and
+                                                                           distributed programming. Formal Aspects of Computing 14, 2 (2002), 123–197.
+                                                                      [18] Iulia Dragomir, Viorel Preoteasa, and Stavros Tripakis. 2020. The refinement
+                                                                           calculus of reactive systems toolset. International Journal on Software Tools for
+                                                                           Technology Transfer 22, 6 (2020), 689–708.
+                                                                      [19] Fanghao Fan, Yingjie Xia, and Li Kuang. 2025. SecV: LLM-based Secure Verilog
+                                                                           Generation with Clue-Guided Exploration on Hardware-CWE Knowledge Graph.
+                                                                           In IJCAI 2025.
+                                                                      [20] Ian J Hayes and Mark Utting. 2001. A sequential real-time refinement calculus.
+                                                                           Acta Informatica 37, 6 (2001), 385–448.
+                                                                      [21] Chia-Tung Ho, Haoxing Ren, and Brucek Khailany. 2025. Verilogcoder: Au-
+                                                                           tonomous verilog coding agents with graph-based planning and abstract syntax
+                                                                           tree (ast)-based waveform tracing tool. In AAAI 2025.
+                                                                      [22] Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima
+                                                                           Rekesh, Fei Jia, and Boris Ginsburg. 2024. RULER: What’s the Real Context
+                                                                           Size of Your Long-Context Language Models?. In COLM 2024.
+                                                                      [23] Hanxian Huang, Zhenghan Lin, Zixuan Wang, Xin Chen, Ke Ding, and Jishen
+                                                                           Zhao. 2024. Towards llm-powered verilog rtl assistant: Self-verification and
+                                                                           self-correction. arXiv preprint arXiv:2406.00115 (2024).
+                                                                      [24] Cliff B. Jones. 1983. Tentative steps toward a development method for interfering
+                                                                           programs. ACM Transactions on Programming Languages and Systems (TOPLAS)
+                                                                           5, 4 (1983), 596–619.
+                                                                      [25] Jason Koenig and K Rustan M Leino. 2016. Programming language features for
+                                                                           refinement. arXiv preprint arXiv:1606.02022 (2016).
+                                                                      [26] Peter Lammich and Andreas Lochbihler. 2019. Automatic refinement to efficient
+                                                                           data structures: A comparison of two approaches. Journal of Automated Reasoning
+                                                                           63, 1 (2019), 53–94.
+                                                                      [27] K Rustan M Leino. 2010. Dafny: An automatic program verifier for functional cor-
+                                                                           rectness. In International conference on logic for programming artificial intelligence
+                                                                           and reasoning. Springer, 348–370.
+
+
+                                                                  9
+[28] Brendan P Mahony and Ian J Hayes. 1992. A case-study in timed refinement: A                8     Appendix A
+     mine pump. IEEE transactions on Software Engineering 18, 9 (1992), 817–826.
+[29] Zohar Manna and Amir Pnueli. 1990. A hierarchy of temporal properties (invited             In this appendix, we select 3 simple examples to illustrate
+     paper, 1989). In Proceedings of the ninth annual ACM symposium on Principles of            the hardware refinement process.
+     distributed computing. 377–410.
+[30] Patrick Meredith, Michael Katelman, José Meseguer, and Grigore Roşu. 2010. A
+     formal executable semantics of Verilog. In MEMOCODE 2010.
+[31] Carroll Morgan. 1988. The specification statement. ACM Transactions on Pro-
+                                                                                                8.1    Oscillator
+     gramming Languages and Systems 10, 3 (1988), 403–419.                                      The following example is an excerpt from [8]. It specifies an
+[32] Carroll Morgan. 1990. Programming from specifications. Prentice-Hall, Inc.
+[33] Joseph M Morris. 1987. A theoretical basis for stepwise refinement and the                 oscillator whose half-period is equal to the time frame.
+     programming calculus. Science of Computer programming 9, 3 (1987), 287–306.
+[34] Nathaniel Pinckney, Christopher Batten, Mingjie Liu, Haoxing Ren, and Brucek                   - output Q
+     Khailany. 2025. Revisiting verilogeval: A year of improvements in large-language
+     models for hardware code generation. ACM Transactions on Design Automation
+     of Electronic Systems 30, 6 (2025), 1–20.                                                   The module should emit a zero on Q in even
+[35] Nathaniel Pinckney, Chenhui Deng, Chia-Tung Ho, Yun-Da Tsai, Mingjie Liu,                       time frames , and a one on Q in odd time
+     Wenfei Zhou, Brucek Khailany, and Haoxing Ren. 2025. Comprehensive Verilog
+     design problems: A next-generation benchmark dataset for evaluating large                        frames .
+     language models and agents on rtl design and verification. arXiv preprint
+     arXiv:2506.14074 (2025).                                                                      It is straightforward to translate the above design specifi-
+[36] Klaus Pohl. 1996. Requirements engineering: An overview. RWTH, Fachgruppe
+     Informatik Aachen.                                                                         cation into a formal specification. The output variable Q is
+[37] Viorel Preoteasa and Stavros Tripakis. 2014. Refinement calculus of reactive               supposed to be modified by the specification, so it is listed
+     systems. In Proceedings of the 14th International Conference on Embedded Software.
+     1–10.                                                                                      as the frame variable. By default, the time variable T is reset
+[38] Farzaneh Rabiei, Mark Zakharov, and Jose Renau. 2025. Beyond Verilog: Agents               to 0 at initialization. Throughout the execution, the modulo
+     for Emerging HDLs. In IEEE International Conference on Omni-layer Intelligent
+     Systems (COINS).                                                                           operator is used to check the parity of the current time frame.
+[39] Bernhard Rumpe and Cornel Klein. 1996. Automata describing object behavior.                Because the design never terminates and does not depend
+     In Object-Oriented Behavioral Specifications. Springer, 265–286.
+[40] Peter Scholz. 1998. A refinement calculus for statecharts. In International Confer-        on any environment assumptions, the postcondition and the
+     ence on Fundamental Approaches to Software Engineering. Springer, 285–301.                 environment condition are false and true, respectively.
+[41] Douglas J Smith. 1996. VHDL & Verilog compared & contrasted—plus modeled
+     example written in VHDL, Verilog and C. In DAC 1996.
+[42] Shailja Thakur, Jason Blocklove, Hammond Pearce, Benjamin Tan, Siddharth                    oscillator ==
+     Garg, and Ramesh Karri. 2023. Autochip: Automating hdl generation using llm                     Q :[ T = 0, Q = T % 2, false ]| true                  <--
+     feedback. arXiv preprint arXiv:2311.04887 (2023).
+[43] YunDa Tsai, Mingjie Liu, and Haoxing Ren. 2024. Rtlfixer: Automatically fixing
+     rtl syntax errors with large language model. In DAC 2024.                                     We use an arrow to point out which specification state-
+[44] Yiting Wang, Guoheng Sun, Wanghao Ye, Gang Qu, and Ang Li. 2025. Verireason:               ment is selected to be refined in the next step. The first design
+     Reinforcement learning with testbench feedback for reasoning-enhanced verilog
+     generation. arXiv preprint arXiv:2505.11849 (2025).                                        decision is to implement the above specification statement
+[45] Niklaus Wirth. 1971. Program development by stepwise refinement. Commun.                   as a single process. It leverages the Iteration rule is to extract
+     ACM 14, 4 (1971), 221–227.
+[46] Clifford Wolf, Johann Glaser, and Johannes Kepler. 2013. Yosys-a free verilog              the process body from the specification. To apply this rule,
+     synthesis suite. In Proceedings of the 21st Austrian Workshop on Microelectronics          the agent must choose an inductive invariant which holds
+     (Austrochip), Vol. 97. 1–6.
+[47] Zhongzhi Yu, Mingjie Liu, Michael Zimmer, Yingyan Celine, Yong Liu, and                    at the start up of the loop and in between every two time
+     Haoxing Ren. 2025. Spec2RTL-Agent: Automated Hardware Code Generation                      frames. Here, the during condition itself is a valid inductive
+     from Complex Specifications Using LLM Agent Systems. In IEEE International
+     Conference on LLM-Aided Design (ICLAD). 37–43.                                             invariant.
+[48] Yujie Zhao, Hejia Zhang, Hanxian Huang, Zhongming Yu, and Jishen Zhao. 2025.
+     Mage: A multi-agent engine for automated rtl code generation. In DAC 2025.                 ⊑ " Iteration " with inv == (Q = T % 2)
+[49] Yingjie Zhou, Renzhi Chen, Xinyu Li, Jingkai Wang, Zhigang Fang, Bowei Wang,               process [ output :Q] {
+     Wenqiang Bai, Qilin Cao, and Lei Wang. 2025. VToT: Automatic Verilog Genera-
+     tion via LLMs with Tree of Thoughts Prompting. In DATE 2025.                                    Q :[ T = t_0 ∧ Q = T % 2, Q = T % 2 ,
+                                                                                                     T = ( t_0 + 1) ∧ Q = T % 2]                           <--
+                                                                                                }
+
+                                                                                                   The next design decision is to transform the process body
+                                                                                                into a single assignment statement. It can be realized by
+                                                                                                applying the Non-Blocking Assignment rule, which assigns
+                                                                                                the inverse of Q to Q and increments T by 1:
+                                                                                                ⊑ " Non - Blocking Assignment "
+                                                                                                     Q <== ¬ Q;
+
+                                                                                                  At this point, all specifications have been transformed into
+                                                                                                concrete code, so the refinement is completed. The following
+                                                                                                implementation can be translated into a synthesizable RTL
+                                                                                                program.
+                                                                                           10
+                                                                               A :[ T = t_0 ∧ (A > 0 ∧ B > 0) ,
+ oscillator :                                                                  (B > A ∧ X(B = Y B - Y A) ∨
+ process [ output :Q] {                                                        B <= A ∧ X(B = Y B)) ∧
+     Q <== ¬ Q ;                                                               (A > B ∧ X(A = Y A - Y B) ∨
+ }                                                                             A <= B ∧ X(A = Y A)) ,
+                                                                               T = ( t_0 + 1) ∧ A > 0 ∧ B > 0]                    <--
+                                                                          }
+8.2    Euclid’s Algorithm 1
+The following design specification is excerpted from [41]. It               The above process body has two main drawbacks. First,
+describes Euclid’s algorithm, which computes the greatest                the main functional requirements are encoded in the during
+common divisor of two integers.                                          condition, which deviates from the convention that uses pre-
+  - output A
+                                                                         condition and postcondition to describe a loop body. Second,
+  - output B                                                             it contains the temporal operators X and Y, which are diffi-
+                                                                         cult to reason about. The Unfolding rewriting rule proposed
+ The module computes the greatest common                                 by Manna and Pnueli [29] is applied to address these issues.
+     divisor between two positive numbers                                To improve readability, in the postcondition of a process
+     stored in registers A and B. It                                     body, we use 𝑉0 to denote the value of variable 𝑉 at 𝑡 0 .
+     continually subtracts B from A while A
+     is greater than B , or A from B while B                             ⊑ by Manna - Pneuli " Unfolding " and the
+     is greater than A. This process                                           definition of X
+     continues until A and B are equal .                                 A :[ T = t_0 ∧ (A > 0 ∧ B > 0) , true ,
+                                                                               ( B0 > A0 ∧ B = B0 - A0 ∨
+   This specification gives a detailed description of the in-                  B0 <= A0 ∧ B = B0 ) ∧
+tended behavior in every time frame. An LTL formula can                        ( A0 > B0 ∧ A = A0 - B0 ∨
+capture the transition relation of the system with the next                    A0 <= B0 ∧ A = A0 ) ∧
+                                                                               T = ( t_0 + 1) ∧ A > 0 ∧ B > 0]                    <--
+time operator X and the previous time operator Y:
+ euclid1 == A , B :[ A   >   0   ∧    B    >    0,                          Afterward, the Alternation rule is used to decompose the
+     A > B ∧ X(A =       Y   A   -   Y    B    ∧ B = Y B) ∨              specification statement into multiple guarded commands.
+     B > A ∧ X(B =       Y   B   -   Y    A    ∧ A = Y A) ∨              Because only A is in the frame, the guards can be inferred
+     A = B ∧ X(B =       Y   B   ∧   A    =    Y A) ,                    directly from the clauses associated with A:
+     false ]| true                                            <--
+                                                                         ⊑ " Alternation " with G1 == (A > B) and G2
+  Suppose that the agent decides to decompose the above                       == (A <= B)
+process into two concurrent processes. After applying the                if (A > B) then
+Bidirectional Composition rule, the during condition of pro-                  A :[ T = t_0 ∧ (A > 0 ∧ B > 0) ∧ A > B ,
+cess proc_b becomes the environment condition of proc_a,                      true ,
+and vise versa.                                                               T = ( t_0 + 1) ∧ (A > 0 ∧ B > 0) ∧
+                                                                              ( B0 > A0 ∧ B = B0 - A0 ∨
+⊑ " Bidirectional Composition " with euclid                                   B0 <= A0 ∧ B = B0 ) ∧
+     == proc_a || proc_b                                                      ( A0 > B0 ∧ A = A0 - B0 ∨
+proc_a == A :[ A > 0 ∧ B > 0,                                                 A0 <= B0 ∧ A = A0 )]                  <--
+     A > B ∧ X(A = Y A - Y B) ∨                                          else if (A <= B) then
+     A <= B ∧ X(A = Y A) , false ]| dur_b <--                                 A :[ T = t_0 ∧ (A > 0 ∧ B > 0) ∧ A <= B ,
+proc_b == B :[ A > 0 ∧ B > 0,                                                 true ,
+     B > A ∧ X(B = Y B - Y A) ∨                                               T = ( t_0 + 1) ∧ (A > 0 ∧ B > 0) ∧
+     B <= A ∧ X(B = Y B) , false ]| dur_a                                     ( B0 > A0 ∧ B = B0 - A0 ∨
+                                                                              B0 <= A0 ∧ B = B0 ) ∧
+   In the next step, the specification statement corresponding                ( A0 > B0 ∧ A = A0 - B0 ∨
+to proc_a is selected for further refinement. According to                    A0 <= B0 ∧ A = A0 )]
+the Iteration rule, the during condition and the environment
+condition are merged to form the context of the process body.              Suppose that the first branch is selected for further refine-
+A predicate that is established at the start up of the process           ment in the next step. The Strengthen Postcondition rule is
+is chosen as the inductive invariant.                                    used to remove redundant information in the postcondition:
+⊑ " Iteration " with inv == (A > 0 ∧ B > 0)                              ⊑ " Strengthen Postcondition "
+process [ output :A] {                                                   A :[ T = t_0 ∧ (A > 0 ∧ B > 0) ∧ A > B ,
+                                                                    11
+      true , T = ( t_0 + 1) ∧ (A > 0 ∧ B > 0) ∧                        }
+      A0 > B0 ∧ B = B0 ∧ A = A0 - B0 ]      <--
+                                                                        To simplify reasoning for subsequent refinement steps, the
+   The above specification statement can be realized by a             agent weakens the unnecessary during condition to true:
+single non-blocking assignment statement:
+                                                                      ⊑ " Weaken Context "
+⊑ " Non - Blocking Assignment "                                       A ,B :[ T = t_0 ∧ (A > 0 ∧ B > 0) ∧
+A <== A - B ;                                           <--                 gcd (A ,B) = gcd (A init ,B init ) ,true ,
+                                                                            T = ( t_0 + 1) ∧ (A > 0 ∧ B > 0) ∧
+   The same refinement techniques can be applied to the else                gcd (A ,B) = gcd (A init ,B init )]                <--
+if branch as well as proc_b. The final code is displayed as
+follows:                                                                In the postcondition, 𝐴init and 𝐵 init can be replaced by
+                                                                      𝐴0 and 𝐵0. Their equivalence is justified by the precondition.
+ euclid1 :
+ process [ output :A]     {                                           ⊑ " Rewriting " by the transitive property of
+     if A > B then        A <== A - B;                                       equality
+     else skip ;                                                      A ,B :[ T = t_0 ∧ (A > 0 ∧ B > 0) ∧
+ }                                                                          gcd (A ,B) = gcd (A init ,B init ) ,true ,
+ process [ output :B]     {                                                 T = ( t_0 + 1) ∧ (A > 0 ∧ B > 0) ∧
+     if B > A then        B <== B - A;                                      gcd (A ,B) = gcd (A0 , B0 )]               <--
+     else skip ;
+ }
+                                                                         The agent then decides to decompose the specification
+                                                                      statement into three branches. Each branch may lead to a
+                                                                      different implementation.
+8.3    Euclid’s Algorithm 2                                           ⊑ " Alternation " with G1 == (A > B) , G2 == (
+A specification may not explicitly define low-level hardware               A < B) , and G3 == (A = B)
+behavior. Instead, it may provide only abstract functional            if (A > B) then
+requirements:                                                              A ,B :[ T = t_0 ∧ (A > 0 ∧ B > 0) ∧
+                                                                           gcd (A ,B) = gcd (A init ,B init ) ∧ A > B , true ,
+  - output A                                                               T = ( t_0 + 1) ∧ (A > 0 ∧ B > 0) ∧
+  - output B                                                               gcd (A ,B) = gcd (A0 , B0 )]                    <--
+                                                                      else if (A < B) then
+ The module computes the greatest common                                   A ,B :[ T = t_0 ∧ (A > 0 ∧ B > 0) ∧
+     divisor between two positive numbers                                  gcd (A ,B) = gcd (A init ,B init ) ∧ A < B , true ,
+     stored in registers A and B. Throughout                               T = ( t_0 + 1) ∧ (A > 0 ∧ B > 0) ∧
+      this process , the greatest common                                   gcd (A ,B) = gcd (A0 , B0 )]
+     divisor of A and B is always identical                           else if (A = B) then
+     to the greatest common divisor of their                               A ,B :[ T = t_0 ∧ (A > 0 ∧ B > 0) ∧
+      initial values .                                                     gcd (A ,B) = gcd (A init ,B init ) ∧ A = B , true ,
+   We use 𝑉𝑖𝑛𝑖𝑡 to denote the value of variable 𝑉 in the reset             T = ( t_0 + 1) ∧ (A > 0 ∧ B > 0) ∧
+                                                                           gcd (A ,B) = gcd (A0 , B0 )]
+state. The functional requirements are directly mapped to
+the following specification statement:                                  Suppose that the first branch is selected for further refine-
+ euclid2 == A , B :[ A > 0 ∧ B > 0,                                   ment in the next step. To ensure the progress of the process
+     gcd (A , B ) = gcd (A init ,B init ) ,                           body, a ranking function must monotonically decrease in
+     false ]| true                                      <--           every iteration. This additional clause is conjoined to the
+                                                                      postcondition with the Strengthen Postcondition rule.
+   The Iteration rule is applied to extract the process body
+from the entire process:                                              ⊑ " Strengthen Postcondition " with ranking
+                                                                            function A + B
+⊑ " Iteration " with inv == (A > 0 ∧ B > 0)                           A ,B :[ T = t_0 ∧ (A > 0 ∧ B > 0) ∧
+∧ gcd (A , B ) = gcd (A init ,B init )                                      gcd (A ,B) = gcd (A init ,B init ) ,true ,
+process [ output :A ,B] {                                                   T = ( t_0 + 1) ∧ (A > 0 ∧ B > 0) ∧
+     A , B :[ T = t_0 ∧ (A > 0 ∧ B > 0) ∧                                   gcd (A ,B) = gcd (A0 , B0 )
+     gcd (A , B ) = gcd (A init ,B init ) ,                                 ∧ (A + B < A0 + B0 )]                      <--
+     gcd (A , B ) = gcd (A init ,B init ) ,
+     T = ( t_0 + 1) ∧ (A > 0 ∧ B > 0) ∧                                The above specification statement can be realized by a
+     gcd (A , B ) = gcd (A init ,B init )]  <--                       multi-assignment non-blocking assignment statement:
+                                                                 12
+                                                              euclid2 :
+⊑ " Non - Blocking Assignment "                               process [ output :A ,B] {
+A , B <== A - B ,B;                              <--              if A > B then A ,B <== A - B ,B;
+                                                                  else if A < B then A ,B <== A ,B - A ;
+  After applying the same refinement techniques to the
+                                                                  else skip ;
+other two branches, we obtain the following code:
+                                                              }
+
+
+
+
+                                                         13
+

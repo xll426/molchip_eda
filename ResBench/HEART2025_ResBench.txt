@@ -1,0 +1,622 @@
+   ResBench: Benchmarking LLM-Generated FPGA Designs with
+                     Resource Awareness
+                                         Ce Guo                                                                            Tong Zhao
+                             Imperial College London                                                              Imperial College London
+                                 United Kingdom                                                                       United Kingdom
+                              c.guo@imperial.ac.uk                                                              tong.zhao24@imperial.ac.uk
+
+Abstract                                                                                    1    Introduction
+Field-Programmable Gate Arrays (FPGAs) are widely used in mod-                              Field-Programmable Gate Arrays (FPGAs) are widely used in re-
+ern hardware design, yet writing Hardware Description Language                              configurable computing, providing flexible and high-performance
+(HDL) code for FPGA implementation remains a complex and time-                              hardware implementations for applications such as artificial intel-
+consuming task. Large Language Models (LLMs) have emerged as                                ligence acceleration, financial computing, and embedded systems.
+a promising tool for HDL generation, but existing benchmarks for                            However, FPGA development traditionally requires manual cod-
+LLM-based code generation primarily focus on functional correct-                            ing in hardware description languages (HDLs), a process that is
+ness while overlooking hardware resource usage. Furthermore, cur-                           both time-consuming and prone to errors. Large Language Models
+rent benchmarks offer limited diversity and do not fully represent                          (LLMs) have recently shown potential in automating HDL genera-
+the wide range of real-world FPGA applications. To address these                            tion, offering a way to improve FPGA design productivity.
+shortcomings, we introduce ResBench, the first resource-focused                                While studies such as VeriGen [32] and RTLLM [23] have exam-
+benchmark explicitly designed to distinguish between resource-                              ined the feasibility of generating Verilog with LLMs, most existing
+optimized and inefficient LLM-generated HDL code. ResBench con-                             benchmarks focus primarily on functional correctness while pay-
+sists of 56 problems across 12 categories, covering applications                            ing little attention to resource constraints, which is an essential
+from finite state machines to financial computing. Our open-source                          consideration in FPGA design.
+evaluation framework automatically tests LLMs by generating Ver-                               FPGA designs are subject to strict hardware resource constraints.
+ilog code, verifying correctness, and measuring resource usage. The                         Even when HDL code passes functional correctness tests, its effi-
+experiments, which primarily analyze Lookup Table (LUT) usage, re-                          ciency in utilizing these resources can vary significantly depending
+veal significant differences among LLMs, demonstrating ResBench’s                           on how logic is optimized and mapped to FPGA hardware. In recon-
+capability to identify models that generate more resource-optimized                         figurable computing, resource-aware optimizations play a crucial
+FPGA designs.                                                                               role in determining whether a design can be practically deployed
+                                                                                            and the degree of parallelism achievable. However, existing bench-
+CCS Concepts                                                                                marks for LLM-generated hardware designs typically evaluate the
+                                                                                            generated code based only on syntax and functional correctness,
+• Hardware → Board- and system-level test; Reconfigurable
+                                                                                            overlooking resource-related issues.
+logic applications; Functional verification; Physical verification;
+                                                                                               To address this limitation, we introduce ResBench, the first
+• Software and its engineering → Source code generation.
+                                                                                            FPGA-resource-focused benchmark specifically designed to eval-
+                                                                                            uate LLM-generated designs based on resource usage. Unlike pre-
+Keywords                                                                                    vious benchmarks that focus primarily on syntax and functional
+Large Language Models (LLMs), Hardware Description Languages                                correctness, ResBench highlights how well LLMs generate Verilog
+(HDLs), Verilog Code Generation, FPGA Resource Utilization, Au-                             code optimized for FPGA resource utilization. Our key contribu-
+tomated Benchmarking, Empirical Evaluation of LLMs                                          tions are:
+                                                                                                 • A resource-focused benchmark featuring 56 problems across
+ACM Reference Format:                                                                              12 categories, covering real-world FPGA workloads such as
+Ce Guo and Tong Zhao. 2025. ResBench: Benchmarking LLM-Generated
+                                                                                                   combinational logic, state machines, AI accelerators, and
+FPGA Designs with Resource Awareness. In The International Symposium
+on Highly Efficient Accelerators and Reconfigurable Technologies 2025 (HEART
+                                                                                                   financial computing applications. (Section 3)
+2025), May 26–28, 2025, Kumamoto, Japan. ACM, New York, NY, USA,                                 • An open-source automated evaluation framework that per-
+10 pages. https://doi.org/10.1145/3728179.3728192                                                  forms LLM querying, functional correctness testing, FPGA
+                                                                                                   synthesis, and resource measurement1 . The framework auto-
+                                                                                                   matically generates Verilog code using LLMs and evaluates
+                                                                                                   its correctness and resource usage. (Section 4)
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed            • A detailed study of nine LLMs, comparing their performance
+for profit or commercial advantage and that copies bear this notice and the full citation          in functional correctness and FPGA resource usage. The
+on the first page. Copyrights for third-party components of this work must be honored.             results reveal substantial differences in how various models
+For all other uses, contact the owner/author(s).
+HEART 2025, Kumamoto, Japan                                                                        generate resource-conscious designs. (Section 5)
+© 2025 Copyright held by the owner/author(s).
+ACM ISBN 979-8-4007-1432-0/25/05
+https://doi.org/10.1145/3728179.3728192                                                     1 Code   repository: https://github.com/jultrishyyy/ResBench
+HEART 2025, May 26–28, 2025, Kumamoto, Japan                                                                                 C. Guo and T. Zhao
+
+
+   By integrating FPGA resource awareness into benchmarking,                   • MEV-LLM [25] trains on 31,104 source code files from GitHub,
+ResBench provides a practical evaluation of LLM-generated HDL.                   labeled by GPT-3.5, to fine-tune CodeGen (2B, 6B, 16B) and
+This benchmark establishes a foundation for advancing AI-driven                  GEMMA (2B, 7B) models. This approach yields an improve-
+FPGA design, encouraging the development of more resource-                       ment of up to 23.9% in the Pass@k metric [6] over VeriGen.
+efficient models optimized for FPGAs.                                          • AutoVCoder [10] also uses Verilog code from GitHub, fil-
+                                                                                 tering high-quality samples with ChatGPT-3.5. It applies
+2     Background                                                                 a two-stage fine-tuning process to improve generalization,
+This section explores the evolution of large language models (LLMs)              with final evaluation conducted on a real-world benchmark.
+from general code generation to hardware design generation using            Beyond direct fine-tuning, reinforcement learning approaches
+hardware description languages (HDLs). We examine their capa-            like Golden Code Feedback is used to refine models iteratively using
+bilities and limitations, as well as existing benchmarks for LLM-        user feedback [40]. Similarly, multi-modal techniques such as VGV
+generated hardware design.                                               [41] integrate circuit diagrams with textual data during training,
+                                                                         allowing models to understand spatial and parallel aspects of circuit
+2.1    Code-specialized and HDL-specialized LLMs                         design.
+Language models have seen significant advancements, particularly
+with the introduction of Transformers [36]. Large-scale pre-trained      2.2     Benchmarks for LLM-Generated Software
+models such as BERT [8], the GPT series [5, 28, 44], and PaLM 2          The research community has recognized the need for standardized
+[7] have expanded their capabilities across various tasks, including     benchmarks to rigorously evaluate LLM-generated code in terms
+code generation.                                                         of design correctness.
+   Code-specialized LLMs are models designed to generate com-               Most existing benchmarks for code generation are tailored for
+puter programs based on human-language prompts. Surveys such             software development rather than hardware design. For instance,
+as [16, 39, 45] review the latest techniques and model architectures     HumanEval [6] and MBPP (Mostly Basic Python Problems) [20]
+developed for this purpose. In general, a code-specialized LLM can       are widely used to evaluate LLMs for software code generation.
+be created using two different approaches.                               HumanEval consists of 164 Python programming tasks, each with
+     • The first approach trains models from scratch on large-scale      a function signature and a set of test cases to validate correct-
+        open-source code datasets spanning multiple programming          ness. While relatively small in scope, this benchmark is carefully
+        languages, as demonstrated by CodeGen [26], InCoder [9],         designed, making it well-suited for quick functional correctness
+        and StarCoder [19]. These code-first LLMs excel at code          evaluations of Python-based code generation. Several extensions
+        completion and multi-language generation. However, this          have expanded its coverage, including HumanEval+ [20], which
+        method demands extensive computational resources and             increases the number of test cases by 80 times, and HumanEvalPack
+        high-quality datasets. Additionally, these models may strug-     [24], which extends the benchmark to six programming languages.
+        gle with instruction-driven tasks due to their limited ability      Similarly, MBPP comprises approximately 974 short Python pro-
+        to process human language instructions.                          gramming tasks, each including a task description prompt, a code
+     • The second approach fine-tunes general-purpose LLMs for           solution, and three automated test cases. It emphasizes both correct-
+        coding tasks, as seen in Codex [6], which is derived from        ness and clarity. Its enhanced version, MBPP+ [20], refines flawed
+        GPT-3, and Code Llama [30], which builds on Meta’s Llama.        implementations and expands the number of test cases to improve
+        Fine-tuning incorporates the linguistic knowledge of general     robustness.
+        LLMs, allowing them to handle natural language prompts              While HumanEval and MBPP provide fundamental benchmarks,
+        while maintaining strong coding capabilities. This method        they primarily focus on entry-level programming tasks and do
+        is more computationally efficient than training from scratch,    not always reflect the complexity of real-world software develop-
+        but it may lack the precision of code-first models in under-     ment. To address this limitation, benchmarks with more intricate
+        standing programming language syntax.                            problem sets have been introduced. For example, DSP-1000 [18] con-
+   While significant research has explored the use of language mod-      tains 1,000 science-related programming tasks from seven Python
+els for general software code generation, the application of LLMs        libraries, covering a diverse set of topics and incorporating multi-
+to HDL code has not received comparable attention. Existing work         criteria evaluation metrics to provide a more realistic assessment
+on HDL code generation primarily focuses on improving general-           of code generation models.
+purpose or software-code-specialized LLMs. In particular, these
+studies aim to improve these LLMs’ understanding of hardware             2.3     Benchmarks for LLM-Generated Hardware
+description tasks by training them on HDL datasets and bench-            Existing benchmarks for hardware design generation in HDL are
+marking frameworks. Notable efforts in this area include VeriGen,        often based on experiences and lessons learned in software code
+MEV-LLM, and AutoVCoder.                                                 benchmarking, particularly in designing diverse problem sets and
+     • VeriGen [33] fine-tunes CodeGen (2B, 6B, 16B) on a Verilog        developing automated evaluation frameworks. Similar to their soft-
+        dataset collected from GitHub repositories and textbooks.        ware counterparts, performance metrics for hardware design gen-
+        It employs supervised fine-tuning with problem-code pairs,       eration frequently focus on design correctness measures such as
+        validating functional correctness using a benchmark problem      Pass@k. However, benchmarking hardware designs typically in-
+        set and problems from HDLBits tutorials [31].                    volves simulation-based hardware verification [27].
+ResBench: A Resource-Aware Benchmark for LLM-Generated FPGA Designs                                           HEART 2025, May 26–28, 2025, Kumamoto, Japan
+
+
+                                                Table 1: Benchmarks for LLM HDL Generation
+
+    Benchmark            Size              PL              Type                         Features
+    VerilogEval [21]     156             Verilog           Verilog code generation      Covers a wide range of tasks from simple combinational cir-
+                                                           tasks                        cuits to finite state machines; includes automatic functional
+                                                                                        correctness testing.
+    HDLEval [17]         100            Multiple           Language-agnostic HDL        Evaluates LLMs across multiple HDLs using standardized test-
+                                                           evaluation                   benches and formal verification; categorizes problems into
+                                                                                        combinational and pipelined tests.
+    PyHDL-Eval [4]       168    Python-embedded DSLs       Specification-to-RTL tasks   Focuses on Python-embedded DSLs for hardware design; in-
+                                                                                        cludes Verilog reference solutions and testbenches; evaluates
+                                                                                        LLMs’ ability to handle specification-to-RTL translations.
+    RTLLM [22]            50     Verilog, VHDL, Chisel     Design RTL generation        Supports evaluation across multiple HDL formats; spans var-
+                                                                                        ious design complexities and scales; includes an automated
+                                                                                        evaluation framework.
+    VHDL-Eval [37]       202             VHDL              VHDL code generation         Aggregates translated Verilog problems and publicly available
+                                                           tasks                        VHDL problems; utilizes self-verifying testbenches for func-
+                                                                                        tional correctness validation.
+    GenBen [38]          351             Verilog           Fundamental hardware de-     Evaluates synthesizability, power consumption, area utiliza-
+                                                           sign and debugging tasks     tion, and timing performance to ensure real-world applicabil-
+                                                                                        ity.
+
+
+   Unlike software benchmarks, which evaluate correctness by di-                        involves executing the generated code in Python-embedded
+rectly executing code, hardware designs require dedicated testbench                     HDLs (e.g., PyMTL3, PyRTL) and measuring functional cor-
+scripts to simulate hardware behavior and validate functionality.                       rectness based on pass rates.
+A typical evaluation process involves querying the LLM for HDL
+code, executing the generated HDL within a hardware simulation
+environment, and comparing the outputs to determine correctness.
+   Some benchmarks have emerged to address these challenges,
+as presented in Table 1. Among them, VerilogEval, HDLEval, and
+PyHDL-Eval are widely recognized.                                              2.4      Challenges in LLM Benchmarking for FPGA
+    • VerilogEval [21] is a widely adopted benchmark for evaluat-                       Design
+      ing LLMs in Verilog code generation [1, 10, 43]. It consists             Despite advancements in LLM-driven Verilog generation, existing
+      of 156 problems taken from the HDLBits tutorial website                  models primarily focus on producing syntactically and functionally
+      [31], covering a range of Verilog tasks from combinational               correct HDL but fail to address critical hardware constraints essen-
+      circuits to finite state machines. The framework automates               tial for FPGA deployment, such as resource efficiency, timing con-
+      functional correctness testing by comparing the simulation               straints, and power consumption. Unlike ASIC design, FPGA-based
+      outputs of generated designs against predefined golden so-               development demands careful consideration of resource usage, in-
+      lutions.                                                                 cluding lookup tables (LUTs), flip-flops (FFs), block RAM (BRAM),
+    • HDLEval [17] follows a language-agnostic approach. In par-               and digital signal processing (DSP) blocks. However, current LLMs
+      ticular, this benchmark allows the same set of problems,                 for Verilog generation lack an understanding of FPGA-specific re-
+      formulated in plain English, to be evaluated across different            quirements, often producing designs that are functionally correct
+      HDLs. The benchmark consists of 100 problems systemati-                  but inefficient and impractical for real-world FPGA deployment.
+      cally categorized into combinational and pipelined designs,                 The inability to evaluate and optimize LLM-generated Verilog
+      covering fundamental hardware components such as logic                   for FPGA resource constraints highlights the need for advancing
+      gates, arithmetic operations, and pipelined processing units.            resource-aware Verilog generation and motivates this study. To
+      A prominent feature of this benchmark is the use of formal               establish LLMs as a practical solution for HDL automation, it is
+      verification instead of unit tests. This feature ensures that the        essential to equip them with a deeper understanding of FPGA de-
+      generated HDL code is functionally correct and maintains                 sign constraints. Achieving this requires developing new training
+      logical equivalence with reference implementations.                      datasets, designing robust evaluation frameworks, and refining LLM
+    • PyHDL-Eval [4] is a framework for evaluating LLMs on                     training strategies to enhance their capability in hardware-aware
+      specification-to-Register Transfer Level (RTL) tasks within              code generation. This paper focuses on constructing a benchmark
+      Python-embedded domain-specific languages (DSLs). It in-                 that provides an evaluation of LLMs’ performance in generating
+      cludes 168 problems across 19 subclasses, covering combi-                HDLs that are both functionally correct and optimized for FPGA-
+      national logic and sequential logic. The evaluation process              specific resource constraints.
+HEART 2025, May 26–28, 2025, Kumamoto, Japan                                                                                 C. Guo and T. Zhao
+
+
+3     Design of ResBench                                                  By adhering to these principles, the benchmark evaluates not
+This section presents the design of ResBench, outlining its guiding    only an LLM’s ability to generate syntactically correct Verilog code
+principles and structured problem set for evaluating LLM-generated     but also its capability to produce hardware-efficient designs suited
+Verilog code. Additionally, we compare ResBench with existing          for FPGA deployment.
+benchmarks for LLM-generated HDL code.
+                                                                       3.2     Comparison with Existing Benchmarks
+                                                                       Table 3 highlights key differences between ResBench and existing
+3.1     Design Principles and Benchmark Problems
+                                                                       HDL benchmarks. The differences are particularly significant in
+ResBench is designed to evaluate LLM-generated Verilog across a di-    FPGA resource optimization awareness and problem diversity:
+verse range of FPGA applications, with a primary focus on resource
+                                                                             • FPGA resource optimization awareness. Most existing bench-
+optimization awareness. The benchmark consists of 56 problems
+                                                                               marks, such as VerilogEval, HDLEval, and GenBen, focus
+categorized into 12 domains, each representing a key area of FPGA
+                                                                               primarily on functional correctness and HDL syntax quality
+applications. The problems in ResBench are carefully structured
+                                                                               but do not explicitly account for FPGA resource usage. Con-
+to evaluate both functional correctness and resource efficiency.
+                                                                               sequently, these benchmarks cannot distinguish between
+The benchmark covers a wide range of FPGA design tasks, from
+                                                                               functionally correct designs that differ significantly in hard-
+fundamental digital logic and mathematical computation to more
+                                                                               ware resource utilization. In contrast, ResBench introduces
+complex, application-driven domains such as machine learning,
+                                                                               optimization-aware problems specifically designed to expose
+cryptography, and financial computing. By spanning these diverse
+                                                                               variations in resource usage. This enables a more practi-
+categories, ResBench ensures that LLMs are tested on both low-
+                                                                               cal comparison of LLMs based on their ability to generate
+level design problems and high-level algorithmic implementations
+                                                                               resource-efficient designs for FPGAs.
+for real-world applications.
+                                                                             • Problem diversity. Existing benchmarks primarily focus on
+   The design of ResBench is guided by two key principles:
+                                                                               fundamental HDL constructs such as basic logic, state ma-
+      • The Principle of Resource Usage Differentiation aims to                chines, and arithmetic operations, with limited diversity in
+        highlight differences in how LLMs optimize FPGA resource               FPGA applications. For example, VerilogEval emphasizes
+        usage. The benchmark includes problems that allow multiple             control logic and arithmetic, while HDLEval mainly evalu-
+        resource-aware optimization strategies and require mathe-              ates digital circuits and state machines. In contrast, ResBench
+        matical transformations. This approach makes it possible to            encompasses a significantly broader range of FPGA appli-
+        distinguish between models that generate resource-efficient            cations, including machine learning, encryption, financial
+        Verilog and those that do not.                                         computing, and physics-based modeling. These domains rep-
+      • The Principle of FPGA Application Diversity recog-                     resent real-world FPGA workloads where resource efficiency
+        nizes the wide range of FPGA applications, particularly in             is crucial for minimizing device cost and maximizing paral-
+        computational acceleration and edge computing. ResBench                lelism. By incorporating a diverse set of tasks, ResBench pro-
+        spans various domains, including financial computing, cli-             vides a more comprehensive evaluation of LLM-generated
+        mate modeling, and signal processing, allowing LLMs to be              HDL in practical FPGA design scenarios.
+        tested across a broad set of real-world FPGA workloads.
+                                                                       4     Evaluation Framework for ResBench
+   Table 2 provides an overview of the problem categories along
+                                                                       To evaluate LLM-generated designs for FPGA design with Res-
+with representative examples. The problems in the benchmark
+                                                                       Bench, we implement a structured framework that examines both
+are designed to align with the two guiding principles. Specifically,
+                                                                       functional correctness and hardware efficiency.
+ResBench addresses the principles as follows:
+                                                                          We build the software for the evaluation framework based on
+      • ResBench addresses resource usage differentiation by in-       the lessons learned in testing LLM-based software code generation.
+        troducing problems that require optimization techniques        The benchmarks for LLM-based software share a common eval-
+        beyond simple code-level improvements. Fig. 1 illustrates      uation framework aimed at assessing whether generated code is
+        this with a polynomial evaluation problem from the bench-      both syntactically valid and functionally correct. In particular, each
+        mark. Algebraic simplification in this case enables a more     benchmark generally includes four key components:
+        efficient Verilog implementation using fewer LUTs. LLMs            (1) Prompts, which can be presented as a natural language de-
+        that fail to apply this optimization generate designs with             scription [11, 35] or both description and function signature
+        excessive LUT consumption.                                             [6, 20], guiding the model on what to generate.
+      • ResBench addresses FPGA application diversity by cover-            (2) A reference solution, which serves as the correct implemen-
+        ing both foundational and application-driven workloads.                tation for comparison.
+        Foundational problems include combinational logic, finite          (3) Test cases, which are predefined inputs and expected outputs
+        state machines, arithmetic operations, pipelining, polyno-             used to validate correctness
+        mial evaluations, and mathematical functions. Application-         (4) Performance metrics, like Pass@k [6] and Code Similar-
+        driven problems span machine learning, encryption, and                 ity Scores [29], which estimates how effectively an LLM-
+        financial computing, emphasizing the role of FPGAs in AI               generated solution satisfies the given problem constraints. A
+        acceleration, security, and high-speed data processing.                widely used metric is Pass@k, which measures the likelihood
+ResBench: A Resource-Aware Benchmark for LLM-Generated FPGA Designs                                       HEART 2025, May 26–28, 2025, Kumamoto, Japan
+
+
+         Table 2: Summary of benchmark categories, including the number of problems and representative examples.
+
+                  Category                              # Problems      Example Problems
+                  Combinational Logic                          8        parity_8bit, mux4to1, bin_to_gray
+                  Finite State Machines                        4        fsm_3state, traffic_light, elevator_controller
+                  Mathematical Functions                       5        int_sqrt, fibonacci, mod_exp
+                  Basic Arithmetic Operations                  5        add_8bit, mult_4bit, abs_diff
+                  Bitwise and Logical Operations               4        bitwise_ops, left_shift, rotate_left
+                  Pipelining                                   5        pipelined_adder, pipelined_multiplier, pipelined_fir
+                  Polynomial Evaluation                        5        (𝑥 + 2) 2 + (𝑥 + 2) 2 + (𝑥 + 2) 2 , (𝑎 + 𝑏) 2 − (𝑎 − 𝑏) 2
+                  Machine Learning                             5        matrix_vector_mult, relu, mse_loss
+                  Financial Computing                          4        compound_interest, present_value, currency_converter
+                  Encryption                                   3        caesar_cipher, modular_add_cipher, feistel_cipher
+                  Physics                                      4        free_fall_distance, kinetic_energy, wavelength
+                  Climate                                      4        carbon_footprint, heat_index, air_quality_index
+                  Total                                       56        –
+
+
+
+
+      (a) Design Generated by Qwen-2.5 (213 LUTs)                                          (b) Design Generated by GPT-4 (0 LUT + 1 DSP)
+
+Figure 1: Benchmark example illustrating HDL optimization capability using the expression (𝑎 + 𝑏) 2 − (𝑎 − 𝑏) 2 . (a) Qwen-2.5
+computes the full expression directly, leading to high LUT usage. (b) GPT-4 simplifies the expression to 4𝑎𝑏, significantly reducing
+resource usage by using a single DSP unit instead of LUTs. This example demonstrates ResBench’s ability to differentiate LLMs
+based on resource optimization.
+
+                                      Table 3: Comparison of Benchmarks for LLM HDL Evaluation
+
+            Benchmark                   Year      Hardware                  Optimization                  Problem Diversity
+                                                                             Awareness
+            VerilogEval [33]            2023    General HDL                     No                     Logic, FSMs, arithmetic
+            HDLEval [17]                2024    General HDL                     No                   Digital circuits, control logic
+            PyHDL-Eval [4]              2024    General HDL                     No                 Python-based HDL, small designs
+            RTLLM [23]                  2024    General HDL                     No                     RTL, bus protocols, DSP
+            VHDL-Eval [37]              2024    General HDL                     No                  VHDL logic, sequential circuits
+            GenBen [38]                 2024    General HDL                     No                     Application-driven tasks
+            ResBench (This paper)       2025        FPGA           Resource Usage Optimizations      56 problems across 12 domains
+
+
+       that at least one of the top-k generated solutions passes all              Different from the evaluation of software code generation, our
+       test cases.                                                             framework uses the resource usage count as a key metric to quantify
+                                                                               the quality of resource-oriented optimization. The framework also
+HEART 2025, May 26–28, 2025, Kumamoto, Japan                                                                               C. Guo and T. Zhao
+
+
+
+
+Figure 2: Overview of the software workflow. The process begins with Verilog generation using an LLM, followed by functional
+verification through testbenches. Functionally correct designs undergo FPGA synthesis to extract resource usage metrics, and
+the framework compiles performance reports comparing functional correctness and resource usage.
+
+
+uses an automated benchmarking system that automates Verilog              The evaluation framework follows a structured process to evalu-
+code generation, functional correctness testing, FPGA synthesis,       ate LLM-generated designs. The evaluation of an LLM on a bench-
+and resource usage extraction.                                         mark problem consists of the following three steps:
+   The open-source software for ResBench automates the evalu-
+ation of LLM-generated Verilog, systematically measuring both
+functional correctness and FPGA resource usage with minimal              (1) The framework queries the selected LLM to generate multi-
+manual intervention. An overview of the software’s workflow is               ple Verilog code snippets for a given problem. These gener-
+shown in Fig. 2.                                                             ated snippets are stored in text format along with references
+   The software accepts a user-specified LLM and generates Ver-              to their corresponding problem descriptions. Functional cor-
+ilog solutions based on structured problem definitions. It produces          rectness is then verified using predefined testbenches. De-
+detailed evaluation reports, indicating whether each design passes           signs that pass all test cases proceed to FPGA synthesis,
+synthesis and functional correctness checks, along with a resource           while those that fail have their errors recorded for further
+utilization summary. By automating the full evaluation pipeline, the         analysis.
+framework facilitates large-scale benchmarking and comparative           (2) FPGA synthesis is performed to determine resource usage
+studies of different LLMs for HDL code generation.                           metrics such as LUT count, DSP utilization, and register
+   To maintain consistency, each problem follows a structured for-           count. For designs that fail synthesis, the resource count is
+mat consisting of three components: a natural language problem               set to ∞, ensuring a consistent comparison framework.
+description in plain English, a Verilog module header, and a pre-        (3) The framework generates structured reports summarizing
+defined testbench. The problem description specifies the expected            pass rates, synthesis success rates, and resource usage statis-
+input-output format and functional constraints, ensuring that LLM-           tics. Users can visualize model performance through auto-
+generated code aligns with real-world design requirements. The               matically generated comparisons of functional correctness
+module header provides a consistent Verilog interface with de-               and resource usage.
+fined input and output signals but leaves the internal logic for the
+LLM to fill. The testbench validates functional correctness through
+simulation by applying predefined test cases in the testbench and      By following this structured evaluation process, the framework
+comparing outputs against a manually verified reference solution.      provides a fully automated benchmarking solution that evaluates
+                                                                       LLM-generated Verilog across all benchmark problems, focusing
+                                                                       on both design correctness and resource usage.
+ResBench: A Resource-Aware Benchmark for LLM-Generated FPGA Designs                                    HEART 2025, May 26–28, 2025, Kumamoto, Japan
+
+
+5     Evaluation                                                            AMD Zynq 7000 XC7Z020CLG400-1 SoC, operating at its default
+This section presents our evaluation of LLM-generated FPGA de-              clock frequency. While design correctness remains independent of
+signs using ResBench. The evaluation focuses not only on functional         the chosen tool, the LUT count is influenced by Vivado’s synthesis
+correctness but also on FPGA resource usage.                                capabilities and the type of LUTs on the target device. However,
+                                                                            we expect the impact of FPGA software choice on relative resource
+5.1     Experimental Setup and Metrics                                      efficiency to be small. In particular, for a given problem, the HDL
+                                                                            designs with the smallest LUT count will likely stay unchanged
+Our experiments evaluate the capability of LLMs to generate both
+                                                                            even when evaluated with different FPGA tools.
+funtionally correct and resource-efficient Verilog code by examining
+                                                                               For all the evaluated LLMs, we set the temperature parameter to
+the number of functionally correct designs. Also, we examine how
+                                                                            1.5 to encourage high diversity of the HDL code for each problem.
+well different models optimize FPGA resources.
+                                                                            The evaluation includes three types of models: general-purpose
+   We run the software proposed in Section 4 with all benchmark
+                                                                            LLMs, code-specialized LLMs, and HDL-specialized LLMs. The
+problems. For each LLM-generated design, we compile the test-
+                                                                            general-purpose models we evaluate include GPT-3.5 [44], GPT-4o
+bench and simulate it to verify the functional correctness of the
+                                                                            [13], GPT-4 [2], GPT-o1-mini [14], Llama3.1-450B [34], Qwen-Max
+generated Verilog modules. If the simulation confirms that the de-
+                                                                            [3], and Qwen-Plus [42]. The evaluated code-specialized models
+sign is correct, we use the Vivado synthesis tool to generate a
+                                                                            include Qwen2.5-Coder-32B-Instruct [12] and Codestral [15]. We
+resource report and assess resource usage.
+                                                                            also evaluate VeriGen [33], an HDL-specialized model. However,
+   To evaluate functional correctness, we generate the same number
+                                                                            during the evaluation, VeriGen failed to generate legitimate Verilog
+of designs from each LLM and count how many designs pass for
+                                                                            code for all problems. As a result, we omit its results from further
+each problem. In cases where two LLMs produce the same number
+                                                                            discussion.
+of passing designs, we break the tie by considering the number of
+designs that pass synthesis but fail the functional correctness test.
+We do not use the Pass@k metric, which is commonly applied to
+LLM-generated software code, because we intend to distinguish
+designs that fail hardware synthesis from those that successfully           5.2    Functional Correctness
+synthesize but do not meet functional correctness requirements.
+                                                                            Table 4 provides detailed pass counts across 12 categories of prob-
+   In this study, we quantify the capability of resource optimization
+                                                                            lems, with 15 designs generated for each problem. Each table cell
+by minimizing the LUT count. LUTs serve as the primary logic
+                                                                            follows the format: pass / synthesis OK but incorrect design /
+resource for implementing combinational operations and small
+                                                                            synthesis error. For example, if a category contains 5 problems,
+memory elements. While FPGAs also provide other resources, these
+                                                                            each LLM generates a total of 75 solutions (5 problems × 15 gen-
+tend to be application-specific. For instance, DSPs and BRAMs are
+                                                                            erated designs per problem), and the sum of the three numbers in
+crucial for arithmetic-intensive and memory-heavy designs but are
+                                                                            each cell corresponds to this total. In this table, we also include
+not universally required across all FPGA applications. In contrast,
+                                                                            the number of wins, which represents the number of categories in
+LUTs are a fundamental component in nearly every design, making
+                                                                            which each LLM achieved the highest pass count.
+them a consistent and reliable metric for evaluating different HDL
+                                                                               The results show that GPT-o1-mini is the leading model, achiev-
+implementations.
+                                                                            ing the highest pass counts in most categories. This suggests that
+   Each LLM-generated design 𝑑𝑖 is evaluated based on its LUT
+                                                                            reasoning-optimized models have an advantage in Verilog code
+usage. If a design successfully passes both synthesis and functional
+                                                                            generation. This is potentially because its reasoning capabilities
+correctness testing, its LUT count is recorded as LUT(𝑑𝑖 ). Oth-
+                                                                            contribute to more accurate outputs.
+erwise, it is assigned ∞ to indicate that the design is either non-
+                                                                               Table 4 shows a notable observation in finite state machines,
+synthesizable or functionally incorrect:
+                                                                            mathematical functions, pipelining. The generated code can of-
+                 (                                                          ten pass synthesis but fail to function correctly. This observation
+                     LUT count,   if 𝑑𝑖 is synthesizable and correct        suggests that while LLMs grasp basic syntax, they struggle with
+    LUT(𝑑𝑖 ) =                                                       (1)
+                     ∞,           otherwise                                 complex functional logic. In contrast, for more intricate problems
+                                                                            with complex contexts, such as mathematical functions and finan-
+                                                                            cial computing, LLMs tend to produce syntactically incorrect code,
+        LUTmin = min (LUT(𝑑 0 ), LUT(𝑑 1 ), . . . , LUT(𝑑𝑛−1 ))       (2)
+                                                                            reflecting challenges in understanding and reasoning within these
+   By using ∞ for failed designs, our approach naturally excludes           contexts.
+non-functional implementations. This setting maintains computa-                The results show that for every problem there is at least one
+tional consistency and eliminates the need for explicit filtering in        model providing correct solutions. However, in categories such as
+the evaluation of Equation 2. Note that while this study focuses            pipelining, financial computing, and encryption, LLMs tend to un-
+on minimizing LUT usage, our framework is capable of extracting             derperform and show higher variability. For example, GPT-3.5 pro-
+and analyzing other resource metrics with a different optimization          duced no passing solutions in pipelining, but LLaMA 3.1 achieved
+objective.                                                                  good results. A similar pattern is observed in the mathematical
+   For correctness testing and resource usage evaluation, we use            functions category. These results highlight the importance of eval-
+Vivado 2023.1 for simulation, synthesis, and analysis. The hardware         uating both functional correctness and resource optimization in
+implementation is targeted at the programmable logic section of the         complex design scenarios.
+HEART 2025, May 26–28, 2025, Kumamoto, Japan                                                                                                                 C. Guo and T. Zhao
+
+
+                       Table 4: Design correctness of LLMs in generating Verilog code across different categories
+
+                                        Cell format: pass / synthesis OK but incorrect design / synthesis error
+                                 GPT-3.5         GPT-4         GPT-4o         GPT-o1            Llama3.1      Qwen-max       Qwen-plus      Qwen2.5-coder      Codestral
+                                  turbo                                        mini               405B                                          32B
+       Combinational Logic      112 / 5 / 3    117 / 3 / 0    120 / 0 / 0    118 / 1 / 1        115 / 2 / 3   117 / 2 / 1    109 / 1 / 10     112 / 2 / 6      120 / 0 / 0
+       Finite State Machines    23 / 15 / 22   32 / 22 / 6    31 / 24 / 5    39 / 18 / 3        31 / 24 / 5   34 / 26 / 0    27 / 23 / 10     39 / 10 / 11      36 / 6 / 18
+      Mathematical Functions    13 / 19 / 43   6 / 39 / 30    36 / 10 / 29   46 / 24 / 5        7 / 6 / 62    26 / 27 / 22   20 / 26 / 29      5 / 8 / 62       0 / 3 / 72
+       Basic Arithmetic Ops     37 / 2 / 36     63 / 8 / 4     66 / 9 / 0     68 / 4 / 3        43 / 2 / 30   38 / 22 / 15   27 / 13 / 35     54 / 6 / 15       62 / 13 / 0
+       Bitwise & Logic Ops      35 / 0 / 25     55 / 0 / 5     58 / 2 / 0     59 / 0 / 1        52 / 0 / 8    47 / 0 / 13    33 / 11 / 16     36 / 0 / 24       55 / 0 / 5
+            Pipelining          0 / 59 / 16    11 / 54 / 10   26 / 49 / 0    15 / 38 / 22       7 / 38 / 30   15 / 32 / 28   16 / 26 / 33    21 / 31 / 23       6 / 56 / 13
+      Polynomial Evaluation     19 / 3 / 53     69 / 0 / 6     74 / 1 / 0     68 / 5 / 2        58 / 6 / 11   55 / 2 / 18    28 / 5 / 42       65 / 7 / 3       69 / 6 / 0
+        Machine Learning        31 / 3 / 41     60 / 8 / 7    60 / 13 / 2     73 / 1 / 1        45 / 28 / 2   63 / 12 / 0    61 / 12 / 2      57 / 2 / 16       64 / 8 / 3
+       Financial Computing      9 / 23 / 28    21 / 22 / 17   29 / 13 / 18   20 / 20 / 20    11 / 21 / 28     28 / 15 / 17   15 / 12 / 33     16 / 7 / 37      17 / 23 / 20
+           Encryption           30 / 0 / 15    30 / 2 / 13    25 / 20 / 0    30 / 0 / 15        26 / 0 / 19   25 / 9 / 11    30 / 1 / 14      30 / 0 / 15       30 / 0 / 15
+             Physics            45 / 3 / 12     57 / 0 / 3     53 / 4 / 3     54 / 5 / 1        41 / 11 / 8    49 / 7 / 4    40 / 17 / 3      38 / 15 / 7       55 / 2 / 3
+            Climate             8 / 15 / 37    21 / 30 / 9    41 / 11 / 8    41 / 15 / 4     24 / 23 / 13     38 / 19 / 3    19 / 31 / 10     32 / 14 / 14     28 / 19 / 13
+         Number of wins              0              2              4              5               0                0              0                1                1
+
+
+
+5.3     Resource Usage                                                                               HDL, which may limit their ability to account for FPGA re-
+Table 5 presents the LUT usage results for the benchmark problems.                                   source constraints when generating and optimizing Verilog.
+In this table, problems where all LLMs yield identical LUT usage are                                 Additionally, key optimization techniques, such as mathemat-
+excluded for brevity. The cell with the lowest resource usage in each                                ical simplifications, are unlikely to be picked up effectively
+category is highlighted in bold. The number of wins is determined                                    from software code data.
+by counting these highlighted cells.                                                             (3) The observed variations in resource usage across different
+   The results suggest that different LLMs have varying levels of                                    problem types confirm that our benchmarks can lead to diver-
+optimization capability within our benchmark framework. This                                         gent hardware resource usage for Verilog designs generated
+highlights how the benchmark problems reveal differences in LLMs’                                    by different LLMs. For simple tasks such as combinational
+ability to optimize resource usage. Moreover, we have the following                                  logic and basic arithmetic operations, the differences tend to
+observations based on the results:                                                                   be less significant. This is likely because the training data of
+                                                                                                     the models include well-established reference solution for
+                                                                                                     these problems. However, for more complex problems, our
+   (1) GPT-o1-mini leads with 19 wins, significantly outperform-                                     benchmark problems lead to significantly greater divergence
+       ing the runner-up, GPT-4, which achieves 12 wins. This                                        in LUT usage. This suggests that our benchmark problems
+       indicates that GPT-o1-mini generates Verilog designs with                                     effectively evaluate the ability of LLMs to optimize resource
+       lower resource usage in most problems. Its strong perfor-                                     usage beyond learned patterns.
+       mance suggests that advanced reasoning capabilities may
+       enhance its understanding of problem requirements, the Ver-                             Considering both functional correctness and resource usage, we
+       ilog language, and the complexities of hardware design. In                           find that GPT-o1-mini achieves the highest performance in both
+       contrast, code-specialized LLMs, while demonstrating high                            aspects, while code-specialized models, including Qwen2.5-Coder
+       accuracy in producing functionally correct Verilog, may lack                         and Codestral, perform the worst.
+       the reasoning depth needed to optimize designs effectively
+       for FPGA constraints. This difference highlights that gen-
+       erating syntactically correct HDL alone is insufficient for                          6      Conclusion and Future Work
+       producing resource-efficient hardware, as true optimization                          LLMs provide a promising solution for automating HDL generation.
+       demands a deeper understanding of both design require-                               However, most current benchmarks focus mainly on functional
+       ments and FPGA-specific constraints.                                                 correctness while overlooking FPGA resource constraints. This
+   (2) GPT-3.5-Turbo, Qwen2.5-Coder, and Codestral demonstrate                              lack of attention on FPGA resource efficiency underscores the need
+       the weakest resource optimization ability, achieving only                            for resource-aware benchmarks to better evaluate LLM-generated
+       7, 7, and 8 wins, respectively. The poor resource optimiza-                          HDL for real-world FPGA deployment. Additionally, current bench-
+       tion of GPT-3.5-turbo is potentially due to its model size                           marks lack problem diversity, limiting their effectiveness in evalu-
+       and lack of updates. Qwen2.5-Coder and Codestral, the two                            ating real-world FPGA applications. To address these limitations,
+       code-specialized models in our evaluation, also struggle with                        we introduce ResBench, the first resource-centric benchmark for
+       resource optimization. One possible explanation is that these                        LLM-generated HDL. ResBench features 56 problems spanning 12
+       models are primarily trained on software code rather than                            categories. The benchmark problems are designed to expose LLMs’
+ResBench: A Resource-Aware Benchmark for LLM-Generated FPGA Designs                                        HEART 2025, May 26–28, 2025, Kumamoto, Japan
+
+
+                                                 Table 5: LUTmin for each LLM across categories
+
+                                      GPT-3.5   GPT-4   GPT-4o        GPT-o1   Llama3.1   Qwen-max      Qwen-plus     Qwen2.5-coder       Codestral
+                                       turbo                           mini      405B                                     32B
+            fsm 3state                   1        0         0           0         0            0             0                0               0
+           traffic light                 1        1         2           0         0            2             3                2               ∞
+      elevator controller                3        3         2           2         2            2             2                2               2
+       vending machine                  1         1         2           1         2            1             1                2               1
+             int sqrt                   ∞        ∞         68          177        ∞           64            229              173              ∞
+            fibonacci                   ∞        56         1           56        56           56           ∞                ∞                ∞
+             mod exp                    ∞        ∞        4466         4669       ∞          1911          1678              ∞                ∞
+              power                     ∞        79        93           93        ∞            93           93               93               ∞
+             log2 int                   ∞        ∞         ∞            10        20           ∞            ∞                12               ∞
+             abs diff                   12       12        14           12       12            ∞            12               12               12
+           modulo op                    82       82        82           82       111           ∞            ∞                ∞                ∞
+             left shift                 10       10        10           10       10            12           12               10               10
+        pipelined adder                 ∞         0        16           ∞         0            ∞             0               15               ∞
+     pipelined multiplier               ∞        ∞         77           70       56            ∞            70               ∞                ∞
+     pipelined max finder               ∞         0        24           0         24           24           24               24               24
+        𝑥 3 + 3𝑥 2 + 3𝑥 + 1             49       49         0           91        0            91            0               91               49
+  (𝑥 + 2) 2 + (𝑥 + 2) 2 + (𝑥 + 2) 2     64       33        96           11       108          108           26               18               33
+       (𝑎 + 𝑏 ) 2 − (𝑎 − 𝑏 ) 2          ∞         0       213           59        16          213           16               16               16
+               relu                     8         8         8           8         8            16            8                8               16
+             mse loss                   ∞        216       64           64       216          64            216              64               64
+      compound interest                 ∞       13060    10135        10135     52950        9247           ∞              10135            52950
+      currency converter                ∞        ∞          0           0         25           0            ∞                ∞                ∞
+        free fall distance              6         6        64           6         6            64           67               64               6
+         kinetic energy                 70       70        54           54       54           54            54               54               54
+        potential energy                 6        6        84           0         6            6             6                6               6
+        carbon footprint                174      121      110           92       121          121           110              110             110
+           heat index                   16       16       201           16       195          16            124              201             201
+        air quality index               ∞        ∞        128          104        ∞           104           116              128             128
+        Number of wins                  7        12        10           19       11           10             9                7               8
+
+
+ability to generate Verilog designs optimized for FPGA resource                 Acknowledgments
+usage.                                                                          We thank the anonymous reviewers for their valuable feedback
+   While ResBench is not explicitly designed to emphasize combi-                and suggestions. The support of the United Kingdom EPSRC (grant
+national logic and arithmetic operations, the current problem set               number UKRI256, EP/V028251/1, EP/N031768/1, EP/S030069/1, and
+naturally includes a high proportion of such designs. Future work               EP/X036006/1), Intel, and AMD is gratefully acknowledged.
+will expand the benchmark to include more sequential designs, such                 AI Usage Statement: This work involves the use of generative
+as pipelined architectures and state-driven circuits. Additionally,             AI in multiple aspects. The methodology presented in this paper
+although the current evaluation focuses on Verilog, our framework               focuses on evaluating the ability of AI models to generate HDL
+is designed to support multiple HDLs. Future efforts will extend                code. As such, all experimental results are based on Verilog designs
+support to VHDL and high-level synthesis (HLS) tools.                           produced by LLMs. For writing, ChatGPT-4 and Llama 3.1 were
+                                                                                used to refine phrasing, improve clarity, and proofread the text.
+HEART 2025, May 26–28, 2025, Kumamoto, Japan                                                                                                             C. Guo and T. Zhao
+
+
+References                                                                              [25] Bardia Nadimi and Hao Zheng. 2024. A Multi-Expert Large Language Model
+ [1] Manar Abdelatty, Jingxiao Ma, and Sherief Reda. 2024. MetRex: A Benchmark               Architecture for Verilog Code Generation.
+     for Verilog Code Metric Reasoning Using LLMs.                                      [26] Erik Nijkamp, Bo Pang, Hiroaki Hayashi, Lifu Tu, Huan Wang, Yingbo Zhou,
+ [2] Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Floren-           Silvio Savarese, and Caiming Xiong. 2022. CodeGen: An Open Large Language
+     cia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal                Model for Code with Multi-Turn Program Synthesis.
+     Anadkat, et al. 2023. GPT-4 Technical Report.                                      [27] Ruidi Qiu, Grace Li Zhang, Rolf Drechsler, Ulf Schlichtmann, and Bing Li. 2024.
+ [3] Jinze Bai, Shuai Bai, Yunfei Chu, Zeyu Cui, Kai Dang, Xiaodong Deng, Yang Fan,          Autobench: Automatic Testbench Generation and Evaluation Using LLMs for
+     Wenbin Ge, Yu Han, Fei Huang, et al. 2023. Qwen Technical Report.                       HDL Design. In Proceedings of the 2024 ACM/IEEE International Symposium on
+ [4] Christopher Batten, Nathaniel Pinckney, Mingjie Liu, Haoxing Ren, and Brucek            Machine Learning for CAD. 1–10.
+     Khailany. 2024. PyHDL-Eval: An LLM Evaluation Framework for Hardware               [28] Alec Radford. 2018. Improving Language Understanding by Generative Pre-
+     Design Using Python-Embedded DSLs. In Proceedings of the 2024 ACM/IEEE                  Training.
+     International Symposium on Machine Learning for CAD. IEEE, 1–17.                   [29] Shuo Ren, Daya Guo, Shuai Lu, Long Zhou, Shujie Liu, Duyu Tang, Neel Sundare-
+ [5] Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan,                  san, Ming Zhou, Ambrosio Blanco, and Shuai Ma. 2020. CodeBLEU: A Method
+     Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda              for Automatic Evaluation of Code Synthesis.
+     Askell, et al. 2020. Language Models are Few-Shot Learners. Advances in Neural     [30] Baptiste Roziere, Jonas Gehring, Fabian Gloeckle, Sten Sootla, Itai Gat, Xiao-
+     Information Processing Systems 33 (2020), 1877–1901.                                    qing Ellen Tan, Yossi Adi, Jingyu Liu, Romain Sauvestre, Tal Remez, et al. 2023.
+ [6] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde                        Code Llama: Open Foundation Models for Code.
+     De Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph,       [31] Alvin Tan. 2017. HDLBits: Digital Circuits Exercises. https://hdlbits.01xz.net/
+     Greg Brockman, et al. 2021. Evaluating Large Language Models Trained on Code.           wiki/Problem_sets Accessed: 2025.
+ [7] Aakanksha Chowdhery, Sharan Narang, Jacob Devlin, Maarten Bosma, Gaurav            [32] Shailja Thakur, Baleegh Ahmad, Zhenxing Fan, Hammond Pearce, Benjamin Tan,
+     Mishra, Adam Roberts, Paul Barham, Hyung Won Chung, Charles Sutton, Sebas-              Ramesh Karri, Brendan Dolan-Gavitt, and Siddharth Garg. 2023. Benchmarking
+     tian Gehrmann, et al. 2023. PaLM: Scaling Language Modeling with Pathways.              Large Language Models for Automated Verilog RTL Code Generation. In 2023
+     Journal of Machine Learning Research 24, 240 (2023), 1–113.                             Design, Automation & Test in Europe Conference & Exhibition (DATE). IEEE, 1–6.
+ [8] Jacob Devlin. 2018. BERT: Pre-Training of Deep Bidirectional Transformers for      [33] Shailja Thakur, Baleegh Ahmad, Hammond Pearce, Benjamin Tan, Brendan Dolan-
+     Language Understanding.                                                                 Gavitt, Ramesh Karri, and Siddharth Garg. 2024. VeriGen: A Large Language
+ [9] Daniel Fried, Armen Aghajanyan, Jessy Lin, Sida Wang, Eric Wallace, Freda Shi,          Model for Verilog Code Generation. ACM Transactions on Design Automation of
+     Ruiqi Zhong, Wen-tau Yih, Luke Zettlemoyer, and Mike Lewis. 2022. Incoder: A            Electronic Systems 29, 3 (2024), 1–31.
+     Generative Model for Code Infilling and Synthesis.                                 [34] Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne
+[10] Mingzhe Gao, Jieru Zhao, Zhe Lin, Wenchao Ding, Xiaofeng Hou, Yu Feng, Chao             Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal
+     Li, and Minyi Guo. 2024. AutoVCoder: A Systematic Framework for Automated               Azhar, et al. 2023. LLaMA: Open and Efficient Foundation Language Models.
+     Verilog Code Generation using LLMs.                                                [35] Mansi Uniyal, Mukul Singh, Gust Verbruggen, Sumit Gulwani, and Vu Le. 2024.
+[11] Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric           One-to-Many Testing for Code Generation from (Just) Natural Language. In
+     Tang, Dawn Song, and Jacob Steinhardt. 2021. Measuring Mathematical Problem             Findings of the Association for Computational Linguistics: EMNLP 2024. 15397–
+     Solving with the Math Dataset.                                                          15402.
+[12] Binyuan Hui, Jian Yang, Zeyu Cui, Jiaxi Yang, Dayiheng Liu, Lei Zhang, Tianyu      [36] Ashish Vaswani. 2017. Attention is All You Need. Advances in Neural Information
+     Liu, Jiajun Zhang, Bowen Yu, Keming Lu, et al. 2024. Qwen2.5-Coder Technical            Processing Systems (2017).
+     Report.                                                                            [37] Prashanth Vijayaraghavan, Luyao Shi, Stefano Ambrogio, Charles Mackin,
+[13] Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh,                  Apoorva Nitsure, David Beymer, and Ehsan Degan. 2024. VHDL-Eval: A Frame-
+     Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al. 2024.         work for Evaluating Large Language Models in VHDL Code Generation.
+     GPT-4o System Card.                                                                [38] Gwok-Waa Wan, Wang yubo, SamZaak Wong, jingyi zhang, Mengnv Xing, Zhe
+[14] Aaron Jaech, Adam Kalai, Adam Lerer, Adam Richardson, Ahmed El-Kishky,                  jiang, Nan Guan, ying wang, Ning Xu, Qiang Xu, and Xi Wang. 2025. GenBen:A
+     Aiden Low, Alec Helyar, Aleksander Madry, Alex Beutel, Alex Carney, et al. 2024.        Genarative Benchmark for LLM-Aided Design. https://openreview.net/forum?
+     OpenAI O1 System Card.                                                                  id=gtVo4xcpFI
+[15] Albert Q Jiang, Alexandre Sablayrolles, Arthur Mensch, Chris Bamford, De-          [39] Jianxun Wang and Yixiang Chen. 2023. A Review on Code Generation with LLMs:
+     vendra Singh Chaplot, Diego de las Casas, Florian Bressand, Gianna Lengyel,             Application and Evaluation. In 2023 IEEE International Conference on Medical
+     Guillaume Lample, Lucile Saulnier, et al. 2023. Mistral 7B.                             Artificial Intelligence (MedAI). IEEE, 284–289.
+[16] Juyong Jiang, Fan Wang, Jiasi Shen, Sungju Kim, and Sunghun Kim. 2024. A           [40] Ning Wang, Bingkun Yao, Jie Zhou, Xi Wang, Zhe Jiang, and Nan Guan. 2024.
+     Survey on Large Language Models for Code Generation. arXiv:2406.00515 [cs.CL]           Large Language Model for Verilog Generation with Golden Code Feedback.
+     https://arxiv.org/abs/2406.00515                                                   [41] Sam-Zaak Wong, Gwok-Waa Wan, Dongping Liu, and Xi Wang. 2024. VGV:
+[17] Farzaneh Rabiei Kashanaki, Mark Zakharov, and Jose Renau. 2024. HDLEval                 Verilog Generation Using Visual Capabilities of Multi-Modal Large Language
+     Benchmarking LLMs for Multiple HDLs. In 2024 IEEE LLM Aided Design Workshop             Models. In 2024 IEEE LLM Aided Design Workshop (LAD). IEEE, 1–5.
+     (LAD). IEEE, IEEE, 1–5.                                                            [42] An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu,
+[18] Yuhang Lai, Chengxi Li, Yiming Wang, Tianyi Zhang, Ruiqi Zhong, Luke Zettle-            Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, et al. 2024. Qwen2.5
+     moyer, Wen-tau Yih, Daniel Fried, Sida Wang, and Tao Yu. 2023. DS-1000: A               Technical Report.
+     Natural and Reliable Benchmark for Data Science Code Generation. In Interna-       [43] Yiyao Yang, Fu Teng, Pengju Liu, Mengnan Qi, Chenyang Lv, Ji Li, Xuhong Zhang,
+     tional Conference on Machine Learning. PMLR, 18319–18345.                               and Zhezhi He. 2025. HaVen: Hallucination-Mitigated LLM for Verilog Code
+[19] Raymond Li, Loubna Ben Allal, Yangtian Zi, Niklas Muennighoff, Denis Kocetkov,          Generation Aligned with HDL Engineers.
+     Chenghao Mou, Marc Marone, Christopher Akiki, Jia Li, Jenny Chim, et al. 2023.     [44] Junjie Ye, Xuanting Chen, Nuo Xu, Can Zu, Zekai Shao, Shichun Liu, Yuhan Cui,
+     StarCoder: May the Source Be with You!                                                  Zeyang Zhou, Chao Gong, Yang Shen, et al. 2023. A Comprehensive Capability
+[20] Jiawei Liu, Chunqiu Steven Xia, Yuyao Wang, and Lingming Zhang. 2024. Is                Analysis of GPT-3 and GPT-3.5 Series Models.
+     Your Code Generated by ChatGPT Really Correct? Rigorous Evaluation of Large        [45] Zibin Zheng, Kaiwen Ning, Yanlin Wang, Jingwen Zhang, Dewu Zheng, Mingxi
+     Language Models for Code Generation. Advances in Neural Information Processing          Ye, and Jiachi Chen. 2023. A Survey of Large Language Models for Code: Evolution,
+     Systems 36 (2024).                                                                      Benchmarking, and Future Trends.
+[21] Mingjie Liu, Nathaniel Pinckney, Brucek Khailany, and Haoxing Ren. 2023. Ver-
+     ilogeval: Evaluating Large Language Models for Verilog Code Generation. In 2023
+     IEEE/ACM International Conference on Computer Aided Design (ICCAD). IEEE,
+     1–8.
+[22] Shang Liu, Yao Lu, Wenji Fang, Mengming Li, and Zhiyao Xie. 2024. OpenLLM-
+     RTL: Open Dataset and Benchmark for LLM-Aided Design RTL Generation. In
+     IEEE/ACM International Conference on Computer-Aided Design (ICCAD).
+[23] Yao Lu, Shang Liu, Qijun Zhang, and Zhiyao Xie. 2024. RTLLM: An Open-Source
+     Benchmark for Design RTL Generation with Large Language Models. In 2024 29th
+     Asia and South Pacific Design Automation Conference (ASP-DAC). IEEE, 722–727.
+[24] Niklas Muennighoff, Qian Liu, Armel Zebaze, Qinkai Zheng, Binyuan Hui,
+     Terry Yue Zhuo, Swayam Singh, Xiangru Tang, Leandro Von Werra, and Shayne
+     Longpre. 2023. Octopack: Instruction Tuning Code Large Language Models.
+

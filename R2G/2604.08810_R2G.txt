@@ -1,0 +1,1185 @@
+                                             R2       : A Multi-View Circuit Graph Benchmark Suite from RTL to GDSII
+
+                                                    Zewei Zhou1 , Jiajun Zou1 , Jiajia Zhang1 , Ao Yang1 , Ruichao He1 , Haozheng Zhou1
+                                                              Ao Liu1 , Jiawei Liu2 , Leilei Jin2 , Shan Shen1,∗ , Daying Sun1,∗
+                                                 1
+                                                   Nanjing University of Science and Technology, 2 The Chinese University of Hong Kong
+                                                                           {zhouzewei, shanshen, hasdysun}@njust.edu.cn
+
+
+
+                                                                                                                                                                                                   2020 GNN
+                                                                      Abstract                                                                                                                   Benchmark [9]
+                                                                                                                                                                                                                               [21]                 [13]
+arXiv:2604.08810v1 [cs.CV] 9 Apr 2026
+
+
+
+
+                                                                                                                                             [17]    2014Quantum            2017 Tissue                               Graph           Large-Scale
+                                                                                                                                                     chemistry [24]        Networks [37]         GNN Evaluation
+                                                                                                                                                                                                                   Classification      Multi-Task
+
+                                        Graph neural networks (GNNs) are increasingly applied            1998   Citeseer [11]      Social             Chemistry           2015    ZINC 15 [31]      Biology          General
+                                        to physical design tasks such as congestion prediction and          Graph
+                                                                                                          Community
+                                        wirelength estimation, yet progress is hindered by inconsis-                            2025 ForgeEDA             2022
+                                                                                                                                                                         2022 CircuitNet[5]
+                                                                                                                                                                                                 2024 CircuitNet       2024
+                                                                                                                                      [29]          TimingPredict[12]                                2.0[16]       Superbule[20]
+
+                                        tent circuit representations and the absence of controlled          2024 EDA-
+                                                                                                                      [30]       Full Flow                                          Back-End General
+                                        evaluation protocols. We present R2G (RTL-to-GDSII),               schema
+
+
+                                                                                                                                                                      Back-End
+                                                                                                            EDA
+                                        a multi-view circuit-graph benchmark suite that standard-         Community                                                   Front-End
+
+
+                                        izes five stage-aware views with information parity (ev-                                                      Synthesis           2021 Interconne-
+                                                                                                                                                                          cted Modules[3]         Schematic           2024
+                                                                                                                                                                                                                   AMSNet[32]
+
+                                        ery view encodes the same attribute set, differing only in                              2021 OpenABC-       2024 OpenLS-D-
+                                                                                                                                                                                                 2023 OCB[8]
+                                        where features attach) over 30 open-source IP cores (up                                      D[6]                v1[22]
+
+
+
+                                        to 106 nodes/edges). R2G provides an end-to-end DEF-             Figure 1. Benchmark and dataset evolution across graph ML and
+                                                                                                         EDA, highlighting R2 G’s unique position at their intersection as a
+                                        to-graph pipeline spanning synthesis, placement, and rout-
+                                                                                                         stage-aware, multi-view circuit-graph benchmark suite.
+                                        ing stages, together with loaders, unified splits, domain
+                                        metrics, and reproducible baselines. By decoupling repre-
+                                        sentation choice from model choice, R2G isolates a con-          molecular property prediction [24, 31], and biological net-
+                                        found that prior EDA and graph-ML benchmarks leave un-           works [37], and has matured around benchmarks such as
+                                        controlled. In systematic studies with GINE, GAT, and            OGB and TUDataset [9, 13, 21], yet these datasets encode
+                                        ResGatedGCN, we find: (i) view choice dominates model            neither typed heterogeneous entities and multi-terminal hy-
+                                        choice, with Test R2 varying by more than 0.3 across             peredges nor geometry-aware attributes. Circuit graphs
+                                        representations for a fixed GNN; (ii) node-centric views         contain entities with explicit types and hierarchy whose co-
+                                        generalize best across both placement and routing; and           ordinates and orientations are tightly coupled with electrical
+                                        (iii) decoder-head depth (3–4 layers) is the primary ac-         constraints, spanning multiple non-interchangeable physi-
+                                        curacy driver, turning divergent training into near-perfect      cal design (PD) stages. More critically, the same circuit
+                                        predictions (R2 >0.99). Code and datasets: https://              admits multiple legitimate representations in late physical
+                                        github.com/ShenShan123/R2G.                                      design, including netlist graphs, spatial graphs, and hyper-
+                                                                                                         graphs, whose preserved spatial semantics and message-
+                                                                                                         passing paths differ fundamentally.
+                                        1. Introduction                                                      Despite mature open-source flows and growing graph-
+                                                                                                         oriented resources enabling scalable data generation [1, 2],
+                                        AI for Electronic Design Automation (EDA) is gaining
+                                                                                                         existing resources cannot support systematic study of graph
+                                        rapid attention. A growing range of physical design tasks,
+                                                                                                         representation. Front-end datasets are fixed to a single
+                                        including placement, routing, timing, and congestion pre-
+                                                                                                         logical representation such as AIG or Boolean circuits,
+                                        diction, can be tackled by deep learning models [15, 19,
+                                                                                                         emphasizing logic structure over back-end spatial seman-
+                                        25, 35]. Modern circuit layouts are structured spatial
+                                                                                                         tics [6, 22]; schematic-level resources focus on netlist un-
+                                        scenes where components occupy two-dimensional coordi-
+                                                                                                         derstanding and analog topology, remaining distant from
+                                        nates and interact through connectivity relations. Yet cir-
+                                                                                                         digital late-PD tasks [3, 8, 32]. Back-end datasets co-
+                                        cuit graphs carry structural complexity absent from general-
+                                                                                                         determine graph representation and task-specific labels, so
+                                        purpose graph datasets: the graph ML community has built
+                                                                                                         view choice has never been studied as an independent vari-
+                                        rich resources for citation networks [11], social graphs [17],
+                                                                                                         able [5, 12, 16, 20]. Cross-stage resources have advanced in
+                                          * Corresponding   authors                                      flow coverage, yet are not designed for the controlled com-
+parison of fixing circuits and tasks while varying only the      fers multiple representations of the same data to isolate rep-
+graph view [29, 30]. The result is that views, stages, and       resentation effects.
+tasks are deeply entangled, and the independent effect of           Circuit graphs differ fundamentally from these bench-
+graph representation on performance remains indiscernible:       marks: a single design reaches 104 –106 nodes and edges in
+it is impossible to determine whether a model’s accuracy re-     incidence-style views, while geometry- or routing-resource
+flects its architecture or its choice of graph representation.   views add O(W×H×L) edges (where W , H, and L denote
+Figure 1 situates this gap within the broader evolution of       layout width, height, and metal-layer count); DEF files pro-
+graph ML and EDA datasets.                                       vide explicit 2D layout cues (cell coordinates, orientations);
+    To address this gap, we propose R2G (RTL-to-GDSII),          and both topology and spatial structure are intrinsic to the
+which standardizes five stage-aware views with information       representation.
+parity over 30 IP cores, extracting graphs, features, and la-
+bels directly from DEF with loaders, unified splits, and re-
+                                                                 2.2. Benchmarks in the EDA Field
+producible baselines. Our contributions are:                     Open EDA datasets have advanced ML for circuits across
+• Multi-view circuit-graph benchmark: Five comple-               stages and tasks. Front-end datasets such as OpenABC [6]
+  mentary views of the same late-PD circuits with informa-       and OpenLS-D-v1 [22] are built on fixed logical represen-
+  tion parity, stage-aware features, and labels for node-level   tations like AIG or Boolean circuits, emphasizing synthe-
+  placement (HPWL) and edge-level routing (wire length),         sis over back-end spatial semantics. Schematic-level re-
+  enabling controlled study of representation effects absent     sources including GNN-RE [3], CktGNN [8], and AM-
+  from prior single-view EDA datasets.                           SNet [32] address netlist understanding and analog topol-
+• Cross-view findings: For a fixed GNN, Test R2 varies           ogy outside the digital late-PD scope. Back-end datasets
+  by more than 0.3 across views and model rankings flip,         including CircuitNet [5], CircuitNet2.0 [16], the Timing-
+  showing that representation choice dominates model se-         Predict dataset [12], and Superblue [20] target conges-
+  lection. Node-centric views are most robust; view (b) per-     tion, timing, and routability tasks, but co-determine graph
+  forms best across both stages.                                 representation and labels—so view choice has never been
+• Decoder-head depth as a dominant lever: Head depth             studied as an independent variable. Cross-stage resources
+  (3–4 layers) matters far more than GNN depth: raising          such as EDA-schema [30] and ForgeEDA [29] have ad-
+  head layers from 1 to 4 lifts Test R2 from −0.17 to 0.99       vanced flow coverage and multimodal aggregation, along-
+  for placement and resolves NaN divergence for routing [9,      side EDALearn [23] and synthetic generators [14], yet none
+  13].                                                           is designed for controlled cross-view comparison under
+• Open-source pipeline:          End-to-end DEF-to-graph         fixed circuits and tasks.
+  pipeline, loaders, unified splits, and baselines over              Yet the field still lacks standard graph benchmarks: ex-
+  datasets spanning up to 106 nodes/edges.             Usage     isting resources adopt a single representation per task or
+  examples: Appendix A.                                          stage with inconsistent node/edge types, features, and la-
+                                                                 bel resolutions, and no unified conversion from design files
+                                                                 to typed graphs with information parity across stages. The
+2. Related Work                                                  key gap is therefore benchmark formulation rather than
+R2G sits at the intersection of graph-ML benchmarking and        data availability. R2G addresses this by inheriting graph-
+EDA datasets; we discuss each in turn and then articulate        ML best practices (unified splits, scalable loaders, repro-
+the gap both communities have left open. A detailed com-         ducible baselines) while providing typed, multi-view circuit
+parison table appears in Appendix B.                             graphs with information parity and resolution-matched su-
+                                                                 pervision, offering the first controlled framework for evalu-
+2.1. Benchmarks in the Graph ML Field                            ating circuit graph representations across PD stages.
+Graph ML benchmarking has matured around large-scale,                2
+                                                                 3. R    Benchmark Construction
+standardized datasets. OGB [13] introduced unified splits
+and metrics across node, link, and graph tasks, and TU-          We now detail how R2G is constructed, beginning with the
+Dataset [21] consolidated graph classification collections.      design corpus and its graph-relevant characteristics.
+Datasets for social and citation networks [7, 11, 17],
+molecules [9, 24, 31], and proteins [13, 37] established best    3.1. Digital Designs
+practices for loaders, baselines, and evaluation. Despite        We begin with the R2G design corpus: 30 open-source
+these advances, all of these datasets are domain-agnostic        IP cores from OpenCores and GitHub spanning proces-
+and predominantly single-view: they encode neither typed         sors, DSP, cryptography, communication/system control,
+heterogeneity and multi-terminal hyperedges nor geometry-        and video/audio control. Table 1 summarizes gate and
+aware attributes required for physical design, and none of-      net counts, top-level netlist/DEF IO counts, node and edge
+Table 1. Design corpus statistics including circuit sizes and cor-                                                                                        RTL Deisgns     Constraints
+
+responding graph scale (#Nodes and #Edges under view (b)) for
+representative open-source IP cores.                                                                                                     G1 G2 G3    G4             Logic
+                                                                                                                                                                  Synthesis                                            Benchmark Construction
+                                               Circuit & Graph Statistics                                                                                                                IO                                 at Placement
+ Designs          Category                                                             Function
+                                      #Gates   #Nets    #IOs    #Nodes      #Edges                                                                                Floorplan
+                                                                                                                                                                                                   Track        Row
+                                                                                                                                                                                                                           Floorplan DEF
+ ss pcm           Audio controller     463      521      28      2.44k       2.88k     pulse code modula-
+                                                                                       tion                                               G2        G3
+
+
+
+
+                                                                                                                                                                                                                                              Features
+                                                                                                                Benchmark Construction
+ ac97 ctrl        Audio controller    10509    12531     132    58.22k       70.60k    AC97 Audio Codec                                             G4           Placement                                                  Circuit2Graph
+                                                                                                                   at Routing Stage
+                                                                                       Controller
+                                                                                                                                               G1                                                                       Graph Adj.
+ vga lcd          Video controller    97688    110587    198   531.33k      650.84k    VGA/LCD Display                CTS DEF
+                                                                                       Controller                                                                   CTS                                                     Training Data
+ des3 area        Crypto core          1529     1655     190     9.78k       12.46k    3DES       Enc/Dec           Circuit2Graph
+                                                                                                                                                                                                                                     Labels
+                                                                                       Module
+ systemcdes       Crypto core          2663     2788     197    14.17k       17.02k    SystemC       DES            Training Data                                  Routing              IOC   G2           G3   IOZ1
+                                                                                                                                                                                                                           Placement DEF
+                                                                                       Encryption/Decryp-                                                                               IOB            G4       IOZ2
+                                                                                       tion Core
+                                                                                                                    Routing DEF                                                         IOA   G1
+ systemcaes       Crypto core          7565     7963     389    41.08k       50.29k    SystemC       AES                                                            GDSII
+                                                                                       Encryption/Decryp-
+                                                                                       tion Core
+ sha256           Crypto core         10637    12461     774    62.83k       76.32k    SHA256 Hash Ac-         Figure 2. OpenROAD RTL-to-GDSII post-end flow including
+                                                                                       celerator
+ aes secworks     Crypto core         21700    23941     520   128.40k      164.11k    Area-optimized
+                                                                                                               floorplanning, placement (global and detailed), clock-tree synthe-
+                                                                                       AES Implementa-
+                                                                                       tion
+                                                                                                               sis, routing (global and detailed), and signoff. R2G focuses on
+ aes xcrypt       Crypto core         28337    29595     391   165.76k      215.07k    AES Engine with         placement and routing, while earlier stages provide constraints and
+                                                                                       Enc/Dec Support
+ tv80             Processor            5634     5880     63     31.14k       39.45k    Z80     Compatible
+                                                                                                               contextual information.
+                                                                                       Processor Core
+ tv80s            Processor            7298     7377     46     37.24k       45.74k    Z80     Compatible
+                                                                                       Processor Core
+ riscv32i         Processor            9712    10446     135    53.23k       66.91k    Simplified     RISC
+                                                                                       Variant Processor       • Processors: Largest circuit and graph scales; diverse fan-
+ ibex             Processor           16523    18760     264    96.60k      122.18k    Ibex 32-bit RISC-V
+                                                                                       CPU Core                   in/fan-out; mixed control–datapath structure.
+ tinyRocket       Processor           27770    32239     269    50.63k       36.27k    TinyRocket RISC-
+                                                                                       V Processor Core            Across categories, circuit/graph scale, interface com-
+ swerv            Processor           89893    102155   2039   538.36k      684.89k    SweRV EH1 RISC-
+                                                                                       V Core                  plexity, and topology vary, motivating careful view selection
+ bp multi         Processor           158629   139704   1453   296.72k      250.15k    Black Parrot multi-
+                                                                                       core processor          and task formulation. Compute-dense cores emphasize spa-
+ uart             Communication        478      550      54      2.73k       3.29k     Universal     Async     tial coordination and placement signals, whereas interface-
+                  controller                                                           Receiver/Transmit-
+                                                                                       ter                     heavy controllers expose stronger routing, fanout, and con-
+ sasc top         Communication        696      726      28      3.45k       4.17k     Simple        Async
+                  controller                                                           Serial Comm Con-        gestion patterns.
+                                                                                       troller
+ i2c verilog      Communication        883      959      33      4.69k       5.70k     Inter-Integrated Cir-
+
+ simple spi top
+                  controller
+                  Communication        936      968      28      4.57k       5.49k
+                                                                                       cuit Bus Controller
+                                                                                       Simple SPI Con-
+                                                                                                               3.2. Post-End Flow
+                  controller                                                           troller
+ spi top          Communication        3031     3050     92     15.62k       19.18k    SPI Controller          Physical design transforms RTL into manufacturable lay-
+                  controller
+ dynamic node     Communication       11196    13560     693    67.87k       83.87k    Dynamic Network         outs through the RTL-to-GDSII post-end flow. Following
+                  controller                                                           Router Node
+ pci              Communication       12041    14915     369    72.69k       90.70k    PCI Interface Con-      the OpenROAD pipeline (Figure 2), the flow includes syn-
+                  controller                                                           troller
+ usb funct        Communication       12222    14121     249    67.30k       81.58k    USB Function Con-       thesis, floorplanning, macro placement, global and detailed
+                  controller                                                           troller
+ wb dma top       System controller    3416     3840     432    19.52k       23.03k    WISHBONE DMA            placement, clock tree synthesis (CTS), global and detailed
+                                                                                       Controller
+ wb conmax        Communication       32161    33312    2546   181.45k      221.76k    WISHBONE Con-           routing, and signoff verification [2]. DEF files are produced
+                  controller                                                           nection Matrix
+ usb phy          Communication        555      588      33      2.73k       3.22k     USB Physical Layer      after floorplanning, placement, and routing, together with
+                  controller
+                                                                                                               routing guides and timing or congestion reports, encoding
+ fir              DSP core             4077     4777     66     22.63k       27.68k    Finite Impulse Re-
+                                                                                       sponse Filter           geometric layout, circuit topology, and electrical informa-
+ jpeg             DSP core            61865    73108     47    331.18k      394.38k    JPEG Encoder/De-
+                                                                                       coder                   tion that provide the basis for graph construction. A frag-
+ idft             DSP core            138312   178202    132   817.88k      1009.40k   Inverse     Discrete
+                                                                                       Fourier Transform       ment of the DEF template is shown in Appendix C.
+                                                                                                                  R2G focuses on the placement and routing stages be-
+                                                                                                               cause they largely determine timing, power consumption,
+counts, and each design’s function and category. For discus-                                                   and routability. Supervision is derived from physically
+sion, we consolidate these 30 designs into five broad cate-                                                    meaningful quantities produced by the flow and is attached
+gories and highlight their graph-relevant traits.                                                              to whichever entity instantiates the target in a given graph
+• Video/Audio controllers: Structured dataflow with mod-                                                       view. For placement, these quantities are derived from
+  est IO counts.                                                                                               placed cell geometry and net bounding boxes; for routing,
+• Communication/System controllers: Protocol-centric                                                           they describe realized interconnect properties such as routed
+  controllers and bus interconnects emphasize handshakes,                                                      wire length and via usage.
+  arbitration, and high external connectivity; graphs high-                                                       Placement quality is evaluated using half-perimeter
+  light interface nets, control trees, and contention points.                                                  wirelength (HPWL), derived from bounding boxes of con-
+• Crypto cores: Dense combinational logic with staged                                                          nected gates. Routing quality is measured using the exact
+  datapaths; regular rounds stress arithmetic-heavy paths.                                                     routed wirelength after metal layer assignment and via in-
+• DSP cores: Arithmetic throughput and wide datapaths;                                                         sertion. These labels remain consistent across stages: place-
+  structured pipelines and repeated arithmetic motifs.                                                         ment HPWL approximates routing effort, while final routed
+                              (a) Netlist after Logic Synthesis                                                    (b) HeteGraph: Net Node, Pin Node, Gate Node
+
+   IOA                                                                                        IOA    NetA     P1    G1         P3       Net1      P6          G3    P9     NetZ1     IOZ1
+           NetA
+                  P1
+                                  P3                      P6           P9    NetZ1
+                        G1                                        G3                   IOZ1
+                                            Net1
+                  P2
+           NetB
+   IOB                                                                                        IOB    NetB     P2                                  P7          G4   P10     NetZ2     IOZ2
+
+                                                          P7
+                                                                       P10   NetZ2
+           NetC   P4              P5        Net2                  G4                   IOZ2
+   IOC                  G2                                                                    IOC    NetC     P4    G2         P5       Net2      P8
+                                                          P8
+
+
+
+                       (c) HeteGraph: Net Node, Pin Edge, Gate Node                                                (d) HeteGraph: Net Edge, Pin Node, Gate Node
+
+                  P1                                                   P9                            NetA                               Net1                               NetZ1
+   IOA   NetA           G1        P3                      P6      G3           NetZ1   IOZ2   IOA             P1    G1         P3                  P6         G3   P9                IOZ1
+
+                                            Net1
+
+                  P2                                      P7           P10                                                              Net1
+                                                                                                     NetB                                                                  NetZ2
+   IOB   NetB                                                     G4           NetZ2   IOZ2   IOB             P2                                   P7         G4   P10               IOZ2
+
+
+                                            Net2          P8
+
+                  P4              P5                                                                 NetC                               Net2
+   IOC   NetC           G2                                                                    IOC             P4    G2         P5                  P8
+
+
+
+
+                       (e) HeteGraph: Net Edge, Pin Node, Gate Edge                                                      (f) HomoGraph: Net Edge, Gate Node
+
+         NetA           G1                  Net1                  G3           NetZ1                NetA+P1                          P3+Net1+P6                          P9+NetZ1
+   IOA            P1                                      P6           P9              IOZ1   IOA                   G1                                        G3                     IOZ1
+
+                                  P3
+                        G1                                P7                                                                         P3+Net1+P7
+                                                                                                                                                                         P10+NetZ2
+                                            Net1                                                                                                              G4                     IOZ2
+         NetB                                                     G4           NetZ2          IOB   NetB+P2
+   IOB            P2                                                   P10             IOZ2
+
+
+                                                          P8      G4
+         NetC           G2                                                                          NetC+P4                          P5+Net2+P8
+   IOC            P4              P5        Net2                                              IOC                   G2
+
+
+
+
+Figure 3. Original circuit schematic (a) and five complementary circuit graph views (b–f) used in R2G: (b) all-elements-as-nodes, (c)
+pins-as-edges, (d) nets-as-edges, (e) net–gate incidence edges, (f) net edges without pin nodes. These views support placement and routing
+analyses under different supervision granularities.
+
+
+wirelength reflects realized interconnect across metal lay-                                   can similarly be explicit nodes or encoded as incidence at-
+ers.                                                                                          tributes on gate–net edges.
+   Existing datasets often isolate individual steps such as                                      We provide an original circuit schematic (a) and five
+synthesis trajectories or single-stage layout snapshots [5, 6,                                complementary views (b–f) in Figure 3, each panel tied to a
+16, 23], leading to fragmented graph representations and                                      consistent conversion rule and emphasizing distinct logical,
+evaluation protocols. In contrast, R2G captures the full                                      geometric, and resource aspects of the same circuit:
+placement and routing stages and tracks structural changes
+directly from DEF, including topology updates (e.g., buffer-                                  a) Original circuit schematic: gate-level functional dia-
+ing and clock-tree sink insertion) and feature shifts related                                    gram with signals and IOs prior to graph conversion;
+to placement density, geometric constraints, routing lay-                                        serves as the source representation.
+ers, and via usage. Outputs from earlier stages, such as                                      b) All-elements-as-nodes: gates, pins, nets, and IOs are
+floorplan constraints, CTS sinks, and power grid structures,                                     nodes; typed edges encode relations (connects-to, drives,
+are incorporated as contextual features rather than predic-                                      belongs-to). This maximizes semantic coverage.
+tion targets. This design preserves the modular OpenROAD                                      c) Pins-as-edges: pins become typed edges between gate
+flow while grounding multi-view circuit graphs in consis-                                        and net nodes; preserves incidence and direction while
+tent stage-aware supervision.                                                                    reducing size.
+                                                                                              d) Nets-as-edges: nets become edges between gate nodes;
+3.3. Multi-View Circuit Graphs                                                                   emphasizes pairwise connectivity.
+Key graph definitions. We represent digital circuits as                                       e) Net–Gate incidence-as-edges: net–gate membership is
+typed, attributed graphs G = (V, E) whose nodes and edges                                        encoded with edges in a bipartite formulation; retains
+carry domain features drawn from DEF. A heterogeneous                                            multi-terminal semantics and scales to large designs.
+circuit graph includes multiple node and edge types to en-                                    f) Net edges without pin nodes: pin nodes are pruned;
+code EDA semantics faithfully. R2G is built from four fun-                                       nets remain as edges between gates.
+damental entity types: (i) logic gates, (ii) directional pins                                    Task alignment and empirical usage. Researchers
+(input/output/inout), (iii) electrical nets connecting multi-                                 select views to match signals and labels rather than a
+ple pins (multi-terminal connectivity), and (iv) IOs (macro                                   fixed front-/post-end dichotomy. View (b) supports early-
+ports and pads). Crucially, the same entity may appear as                                     stage coupling capacitance prediction [26]. View (c) is
+a node or an edge depending on the view: a net becomes                                        used for early-stage ground capacitance prediction [25] and
+a node in bipartite or hypergraph views to capture multi-                                     for placement-stage congestion and HPWL prediction [36].
+terminal connectivity, but an edge in pairwise views; pins                                    View (d) emphasizes pairwise connectivity and is adopted
+Table 2. Definitions of features/labels for circuit components in                         cuit graphs in Figure 3, views (b–f). Table 2 specifies
+terms of views.                                                                           the schema and sources (DEF and technology libraries).
+ Unit   Name          Type              Definition             Notes
+                                                                                          To maintain a coherent narrative, we first describe stage-
+ Gate   x             feat. (rout.)     Gate x (DBU)           Node (b/c/d/f); edge (e)
+ Gate   y             feat. (rout.)     Gate y (DBU)           Node (b/c/d/f); edge (e)   specific feature sets and then detail how they are attached
+ Gate   cell type     feat.             Integer encoding of    Node (b/c/d/f); edge (e)   under each view.
+                                        gate type
+ Gate   orientation   feat.             Orientation    code    Node (b/c/d/f); edge (e)      Feature sets are stage-specific. During placement, gates
+                                        (0–7)
+ Gate   area          feat.             Gate area (tech lib)   Node (b/c/d/f); edge (e)   omit x/y and rely on static attributes such as cell type,
+ Gate   place flag    feat.             Placement status       Node (b/c/d/f); edge (e)   area, and power leak. During routing, gates include
+ Gate   power leak    feat.             Leakage       power    Node (b/c/d/f); edge (e)
+                                        (tech lib)                                        placed x/y, orientation, and place flag. Nets in-
+ Net    net type      feat.             Net category encod-    Node (b/c); edge (d/e/f)   clude net type, pin count, and HPWL as a derived fea-
+                                        ing
+ Net    pin count     feat.             Pin count              Node (b/c); edge (d/e/f)   ture once gate positions are determined. IO features com-
+ Net    HPWL
+                      label (place.)/
+                                        HPWL (DBU) from        Node (b/c); edge (d/e/f)   prise x/y, orientation, and layer id. Pins expose
+                      feat. (rout.)
+                                        pin bbox                                          two categorical entries: pin type encodes the pin type,
+ Net    wire length   label (rout.)     Exact routed wire      node (b/c), edge (d/e/f)
+                                        length (DBU), per-                                and cell type encodes the owning gate type.Coordinates
+                                        layer Manhattan
+ Net    via count     label (rout.)     Via count              Node (b/c); edge (d/e/f)
+                                                                                          (x, y) are reported in DBU (Database Unit).
+ IO     x             feat.             IO x (DBU)             Node (b/c/d/e/f)              To ensure reproducibility and consistent ordering across
+ IO     y             feat.             IO y (DBU)             Node (b/c/d/e/f)
+ IO     orientation   feat.             IO orientation         Node (b/c/d/e/f)
+                                                                                          designs and views, discrete fields use stable integer vo-
+ IO     layer id      feat.             Metal layer index      Node (b/c/d/e/f)           cabularies: cell type maps logic-gate categories to
+ Pin    pin type      feat.             Pin type encoding      Node (b); edge (c/e);      IDs (e.g., 0–95); orientation maps to codes 0–7;
+                                                               aggregated (d/f)
+ Pin    cell type     feat.             Owning gate type       Node (b); edge (c/e);      net type encodes {signal, power, ground, clock,
+                                        encoding               aggregated (d/f)
+                                                                                          reset, scan}; layer id indexes metal layers; and
+                                                                                          place flag encodes placement status.
+                                                                                             With features defined, we keep feature parity across
+for analog circuit topology generation [10]. View (e) en-
+                                                                                          views: the same set of attributes is available in every
+codes net–gate membership suitable for timing-graph net
+                                                                                          view—no fields are missing and none are duplicated across
+delay prediction at the placement stage [16]. View (f)
+                                                                                          views. We vary only attachment location to enable fair com-
+prunes pin nodes for scalability and is widely used for func-
+                                                                                          parison across Figure 3, while preserving information con-
+tional and synthesis tasks, including truth table prediction
+                                                                                          tent: (b) All-elements-as-nodes keeps gate, pin, net, and IO
+and SAT solving [27, 28], circuit synthesis [6], and logic
+                                                                                          features on their respective nodes; (c) Pins-as-edges moves
+synthesis with PPA prediction [29].
+                                                                                          pin features to gate–net incidence edges while gates and
+   View choices across stages. The appropriate inductive                                  nets retain node features; (d) Nets-as-edges attaches net fea-
+bias follows the task: capacitance estimation benefits from                               tures to pairwise gate–gate edges and propagates them de-
+direction and membership in view (b/c); placement metrics                                 terministically to edges derived from the same net (with-
+(congestion, HPWL) and timing rely on geometry attached                                   out introducing new attributes); (e) Net–Gate incidence-as-
+to gates/edges in view (c/e); analog topology generation                                  edges attaches gate features to incidence edges between net
+leverages pairwise net connectivity in view (d); functional                               and gate nodes to preserve bipartite semantics; and (f) Net
+and synthesis tasks favor scalable net-edge view (f). This di-                            edges without pin nodes concatenates pin and net features
+versity underscores a fidelity–scalability trade-off and mo-                              into a single attribute on gate–gate net edges. When multi-
+tivates standardized, resolution-matched evaluation across                                ple pins exist between a gate pair, pin features are aggre-
+views. More statistical information of five views is com-                                 gated with a fixed reducer before concatenation to avoid
+pared in Appendix D.                                                                      duplicating information. This design ensures feature parity
+   R2G standardization. R2G provides unified DEF-to-                                      across views and isolates representation effects.
+graph conversion across five typed, attributed views (b–f),
+enabling resolution-matched evaluation for placement and                                  3.4.2. Label calculation
+routing and controlled cross-view ablations that disentan-
+                                                                                          We compute task-specific net labels consistently across
+gle connectivity versus geometry signals. Selecting view
+                                                                                          stages. For placement, supervision uses HPWL, defined as
+per task avoids forcing a single representation and supports
+                                                                                          the minimal bounding box over a net’s pins:
+transfer across designs and technology nodes.
+
+3.4. Feature & Label Extraction                                                                   HPWL = (xmax − xmin ) + (ymax − ymin ).           (1)
+
+3.4.1. Feature collection and assembly                                                    After placement, HPWL becomes a derived routing feature
+We standardize feature definitions for four unit types (gates,                            because gate positions are available. For routing, supervi-
+nets, IOs, pins) and align them to the multi-view cir-                                    sion uses exact wire length from DEF routed geometry.
+For each metal layer ℓ, there is                                      and view (f) is moderate. These trends are mirrored by
+                 X          X                                         MAE/RMSE, indicating practical significance beyond vari-
+wire length =                                 x2 − x 1 + y2 − y 1 .   ance. Importantly, view (b) fits the physical design stages
+                  ℓ∈L (x1 ,y1 ),(x2 ,y2 )∈ℓ                           well and outperforms view (f) by large margins, suggest-
+                                                         (2)          ing view (f) should not be the default representation for
+Here, L denotes the routed metal layers parsed from the               learning-based placement.
+nets section. We also parse an auxiliary routing label,                   Across models, performance is view-dependent: on
+via count, from DEF tokens.                                           view (b), GINE slightly edges ResGatedGCN; on view (c),
+   Consistent with the chosen representation, labels attach           ResGatedGCN surpasses GINE; on view (d), GINE > Res-
+to the entity that represents the net: when a net is a node           GatedGCN; on view (e), both GINE and ResGatedGCN
+(views b/c in Figure 3), the label attaches to that node;             are negative whereas GAT is barely positive; on view (f),
+when a net is an edge (views d–f), the label attaches to              ResGatedGCN > GINE ≫ GAT. The pattern suggests that
+that edge. As designs progress through physical stages,               residual gating stabilizes edge-aware message passing on
+the supervisory target changes accordingly: HPWL super-               node-centric graphs, while attention-only GAT underper-
+vises placement and then transitions to a derived feature             forms in geometry-coupled regimes. Our critical finding
+after placement, whereas wire length and via count                    lies here: for a fixed GNN, view choice affects perfor-
+supervise routing. This convention preserves stage-aware              mance far more than expected; rankings turn over across
+supervision while informing downstream views with physi-              views. For example, GAT achieves its best accuracy only
+cally grounded features.                                              on view (e).
+                                                                          Negative R2 on view (e) indicates a label–view mis-
+4. Experiments                                                        match: incidence-edge supervision dilutes spatial inductive
+We report three standard regression metrics: mean absolute            bias needed for node targets. Moderate performance on
+error (MAE), root mean squared error (RMSE), and coeffi-              view (f) suggests it can serve as auxiliary supervision rather
+cient of determination (R2 ).                                         than a primary view. This pattern underscores the impor-
+    To enable fair cross-view comparison, we convert typed,           tance of matching representation to target geometry.
+heterogeneous graph views into homogeneous graphs with                    With placement trends established, we next examine
+unified node and edge types while preserving attribute par-           whether these view-dependent patterns persist when labels
+ity across views. This allows classic homogeneous GNNs,               are connectivity-driven.
+GINE [34], GAT [33], and ResGatedGCN [4], to serve as
+                                                                      4.2. Comparison of Different Views for Routing
+baselines across all views. In practice, homogeneous GNNs
+                                                                           Tasks
+are widely adopted in EDA learning systems for scalabil-
+ity and lower engineering complexity, making them suitable            Routing is connectivity-driven; consequently, incidence and
+for controlled benchmark comparisons. The experimental                net-edge formulations (views (e) and (d)) should be com-
+setup can be found in Appendix E. We leave heterogeneous              petitive, while view (b) remains strong due to coupled ge-
+representations and hetero-GNNs to future work.                       ometry and features. Using the same models and metrics,
+                                                                      Table 4 reports Train/Validation/Test performance across
+4.1. Comparison of Different Views for Placement                      views (b–f).
+      Tasks                                                               Despite connectivity-centric labels, the node-centric
+Metrics follow MAE/RMSE/R2 ; lower MAE/RMSE and                       view (b) remains the strongest across baselines, reinforcing
+higher R2 indicate better performance. Train/Valida-                  the general preference for node-centric representations.
+tion/Test splits are merged into a single wide table for side-            Across views, view (b) shows the best generalization
+by-side comparison (Table 3). The Avg. Test R2 row re-                on the test split. Among edge-based views, view (e) per-
+ports the mean across the three GNN baselines, providing a            forms strongest overall, with view (d) remaining compet-
+view-level summary. Intuitively, node-centric graphs align            itive, while view (f) consistently underperforms. These
+more directly with gate-position labels than edge-only for-           trends are consistent across data splits.
+mulations or pin-incidence encodings, helping explain the                 Across models, architectures exhibit clear view prefer-
+stronger generalization of view (b). Critically, node-centric         ences. ResGatedGCN performs best on node-centric views
+views (b/c) are preferred by all classic GNNs, consistently           (b,c), GINE remains competitive across views (b–d), and
+surpassing edge-only views (d/e) and the widely used AIG-             GAT performs best on view (e) but degrades on other views.
+equivalent view (f).                                                      Our critical finding is that view choice dominates model
+   Across views, view (b) is consistently strongest on                choice: model rankings change substantially across graph
+Test R2 , with view (c) close for ResGatedGCN. View (d)               representations. Attention-based models perform well on
+is mid-tier; view (e) collapses for GINE/ResGatedGCN;                 view (e) but lag on views (b–d), while GINE and ResGat-
+                     Table 3. Placement results across views (b–f) and splits. Lower MAE/RMSE is better; higher R2 is better.
+                                      (b)                         (c)                            (d)                                 (e)                            (f)
+Split        Model         MAE ↓     RMSE ↓   R2 ↑     MAE ↓    RMSE ↓    R2 ↑     MAE ↓        RMSE ↓       R2 ↑     MAE ↓      RMSE ↓        R2 ↑     MAE ↓     RMSE ↓      R2 ↑
+             GINE           0.2859   0.6117   0.9554   0.5061   0.8678    0.9017   0.3272       0.4516    0.7984      0.1649       0.2936     0.9137    0.3334     0.4563    0.7941
+Train        ResGatedGCN    0.3097   0.655    0.9489   0.4808    0.798    0.9169   0.3263       0.4477    0.8016      0.1819       0.3508     0.8767    0.3339     0.4609    0.7938
+             GAT            0.4762   1.1623    0.839   1.0883   1.8336    0.5611   0.4834       0.6394    0.5958      0.1812       0.3374     0.8861    0.6848     0.8683    0.2541
+             GINE           0.6332   1.2972   0.8219    1.095   1.6276    0.6929   0.3604       0.4516     0.748      0.4134       0.7032     0.5137    0.5431     0.6576    0.4674
+Validation   ResGatedGCN    0.7485   1.4158   0.7879   0.8544   1.2884    0.8075   0.3772       0.4809    0.7142      0.3637       0.5815     0.6675    0.4462     0.5689    0.6108
+             GAT            1.1039   2.2889   0.4455   1.9788   2.3872    0.3393   0.4518       0.5596    0.6131      0.4071       0.7779     0.4049    0.7117     0.8487    0.2643
+             GINE           0.3468   1.0331   0.8878   0.7194   1.3095    0.8003   0.4337       0.5804    0.7109      0.4755       0.9655     -0.0107   0.4903     0.6615    0.6151
+Test         ResGatedGCN    0.3694   1.0668   0.8803   0.6355   1.1277    0.8519   0.4576       0.6043    0.6866      0.4930       0.9892     -0.0610   0.4717     0.6207    0.7067
+             GAT            0.5068   1.3621   0.8049   1.6859   2.6390    0.1889   0.6109       0.7568    0.5085      0.4276       0.9374      0.0472   0.8857     1.0320    0.0634
+         Avg. Test          0.4077   1.1540   0.8577   1.0136   1.6921    0.6137   0.5007       0.6472    0.6353      0.4654       0.9640     −0.0082   0.6159     0.7714    0.4617
+
+
+                      Table 4. Routing results across views (b–f) and splits. Lower MAE/RMSE is better; higher R2 is better.
+                                      (b)                         (c)                             (d)                                (e)                            (f)
+Split        Model         MAE ↓     RMSE ↓    R2 ↑    MAE ↓    RMSE ↓     R2 ↑    MAE ↓        RMSE ↓       R2 ↑       MAE ↓      RMSE ↓      R2 ↑     MAE ↓     RMSE ↓      R2 ↑
+             GINE           0.2520   0.7796   0.9257   0.7011    1.3372   0.8716   0.4019        0.5419      0.7105     0.4188     0.5744     0.6746    0.1477    0.2130      0.9551
+Train        ResGatedGCN    0.3041   0.6848   0.9427   0.5291    0.9252   0.9385   0.3947        0.5400      0.7126     0.3805     0.5217     0.7318    0.5545    0.7204      0.4886
+             GAT            0.3944   1.0904   0.8547   1.4430    2.5930   0.5170   0.5659        0.7216      0.4871     0.2914     0.4246     0.8224    0.8544    1.0354     -0.0618
+             GINE           0.8523   1.7891   0.6529   1.7403    2.8566   0.4877   0.3892        0.5013      0.6601     0.3839     0.5155     0.6370    0.2670    0.4098      0.8143
+Validation   ResGatedGCN    0.7971   1.5267   0.7472   1.0107    1.7078   0.8169   0.4222        0.5288      0.6218     0.3929     0.5237     0.6255    0.6243    0.7871      0.1746
+             GAT            1.1039   2.2035   0.4734   2.6724    3.3680   0.2879   0.5718        0.7148      0.3089     0.1054     0.3233     0.4816    0.8053    0.9564     -0.0111
+             GINE           0.2994   1.1373   0.8596   1.2648    2.3667   0.6471   0.5746        0.7391      0.5758     0.6993     0.8588     0.4277    0.8106    0.9531     0.2972
+Test         ResGatedGCN    0.3498   1.0676   0.8763   0.7856    1.4808   0.8618   0.5912        0.7640      0.5467     0.5001     0.6548     0.6673    0.7634    0.9402     0.3179
+             GAT            0.4477   1.3123   0.8131   2.2493    3.7245   0.1260   0.8769        1.1125      0.0389     0.3202     0.4557     0.8389    1.0043    1.1361     0.0014
+         Avg. Test          0.3656   1.1724   0.8497   1.4332    2.5240   0.5450   0.6809        0.8719      0.3871     0.5065     0.6564     0.6446    0.8594    1.0098     0.2055
+
+
+
+
+edGCN alternate as the strongest models depending on the                              Table 5. Placement on view (b) vs. GNN depth (3–6). Compact
+representation.                                                                       stacks (3–4) yield highest accuracy; deeper (6) underperform.
+                                                                                                                      GINE                                ResGatedGCN
+   The strong performance of GAT on view (e) suggests                                  #layers      MAE↓       RMSE↓       R²↑      #Param.    MAE↓     RMSE↓      R²↑      #Param.
+that attention benefits from incidence-edge neighborhoods                                   3       0.3489     1.0454     0.8851     0.78 M    0.3319    1.0296   0.8885    0.98 M
+capturing dense local connectivity, whereas pairwise nets                                   4       0.2594     1.0158     0.8915     0.98 M    0.3249    1.0617   0.8815    1.24 M
+                                                                                            5       0.2991     1.0445     0.8853     1.18 M    0.2923    1.0699   0.8797    1.51 M
+in view (d) create sparser structures that weaken attention                                 6       0.3312     1.2536     0.8348     1.38 M    0.3327    1.0833   0.8766    1.77 M
+aggregation. ResGatedGCN remains stable on views (b,c),
+likely due to residual-gated aggregation that preserves ge-                           Table 6. Routing on view (b) vs. GNN depth (3–6). Performance
+ometric coupling. Generalization gaps widen on edge-only                              peaks at 3 layers for both architectures; deeper stacks show dimin-
+views, indicating weaker alignment between connectivity-                              ishing returns.
+only inputs and routing labels.                                                                                       GINE                                ResGatedGCN
+                                                                                       #layers      MAE↓       RMSE↓       R²↑      #Param.    MAE↓     RMSE↓      R²↑      #Param.
+   Compared with placement, routing is generally more
+                                                                                            3       0.3220     1.0691     0.8759     0.78 M    0.3439    1.0682   0.8762    0.98 M
+challenging for classical GNNs, with lower predictive ac-                                   4       0.3466     1.1503     0.8664     0.98 M    0.2977    1.1141   0.8653    1.24 M
+                                                                                            5       0.2845     1.0969     0.8694     1.18 M    0.3188    1.0768   0.8742    1.51 M
+curacy and larger generalization gaps.                                                      6       0.3670     1.0910     0.8708     1.38 M    0.3892    1.1495   0.8566    1.77 M
+   Taken together, view (b) is the most reliable representa-
+tion for routing tasks, while view (e) serves as the strongest
+edge-oriented complement. View (f) should generally be                                dominant lever for placement and routing accuracy, a di-
+avoided. Model selection should match the representation:                             mension underexplored in graph ML/EDA benchmarks that
+ResGatedGCN is most reliable on views (b,c), whereas                                  primarily tune the message-passing stack [4, 9, 13, 34].
+GAT can be effective on view (e) but is less stable across                            With information parity across multi-view, typed circuit
+views.                                                                                graphs and stage- and resolution-matched targets, R2G re-
+                                                                                      veals that increasing head depth from 1 to 3–4 layers trans-
+4.3. Comparison of GNNs and Task-Specific Heads                                       forms performance and training stability (often flipping
+We now turn from view-level recommendations to model                                  model rankings). With this context, we first summarize the
+capacity: how message-passing depth and decoder-head de-                              layer ablations below, then return to head effects.
+sign drive performance.
+   Building on these findings, on node-centric view (b),                              4.3.1. GNN Layers vs. Accuracy
+a moderate message-passing depth (3–4 layers) suffices;                               For placement on view (b), accuracy varies non-
+deeper stacks risk over-smoothing and optimization decay                              monotonically with depth (Table 5). Both GINE and Res-
+[18]. More importantly, decoder-head configuration is the                             GatedGCN achieve their best performance at moderate
+Table 7. Placement on view (b) vs. head layers (1–4). Increasing                        merical instability; nan metrics at head 1 confirm this. Rout-
+head capacity stabilizes training and drives accuracy; 3–4 head                         ing labels encode local connectivity patterns requiring non-
+layers deliver near-perfect R2 across architectures.                                    linear fusion, which shallow heads cannot provide. Accord-
+                          GINE                              ResGatedGCN
+ #layers   MAE↓      RMSE↓      R2 ↑    #Param.   MAE↓     RMSE↓     R2 ↑     #Param.
+                                                                                        ingly, adopt 3–4 head layers for routing on view (b); shallow
+   1       0.4708    1.1886    0.8514   0.91 M    3.1580   3.3342   -0.1689   1.18 M
+                                                                                        heads are brittle and should be avoided.
+   2       0.3414    1.1184    0.8685   0.98 M    0.3249   1.0542    0.8832   1.24 M        Overall, on node-centric view (b), compact message-
+   3       0.0870    0.3329    0.9883   1.05 M    0.0963   0.3251    0.9889   1.31 M
+   4       0.0703    0.1909    0.9962   1.11 M    0.1421   0.3223    0.9891   1.38 M    passing depth (3–4 layers) suffices, while deeper stacks
+                                                                                        show over-smoothing and diminishing returns [18]. In con-
+Table 8. Routing on view (b) vs. head layers (1–4). Shallow heads                       trast, decoder-head capacity is the primary driver of accu-
+are unstable; accuracy improves sharply at 3 and is near-perfect at                     racy and stability: increasing the head from shallow settings
+4. Prefer 3–4 head layers for robust routing.                                           to 3–4 layers consistently turns unstable optimization, par-
+                          GINE                              ResGatedGCN                 ticularly for routing, into accurate predictions. This pattern
+ #layers   MAE↓      RMSE↓       R2 ↑   #Param.   MAE↓     RMSE↓      R2 ↑    #Param.   holds across architectures and can flip model rankings de-
+   1       13.9757   54.1022     nan     0.91 M     nan      nan      nan     1.18 M
+   2        0.3425    1.1414   0.8586    0.98 M   0.2892   1.1276   0.8620    1.24 M
+                                                                                        pending on view and head choices. Supplementary exper-
+   3        0.0761    0.3173   0.9891    1.05 M   0.1230   0.3823   0.9841    1.31 M    iments on view (d) show the same qualitative behavior for
+   4        0.0542    0.1802   0.9965    1.11 M   0.2482   0.3824   0.9841    1.38 M
+                                                                                        edge-centric settings, as reported in Appendix F.
+                                                                                            R2G’s uniqueness lies in its controlled, multi-view,
+                                                                                        stage- and resolution-matched design with information par-
+depths and decline as depth increases, indicating diminish-
+                                                                                        ity, which decouples representation from modeling and
+ing returns.
+                                                                                        makes decoder-head effects visible in ways that prior
+    Moderate depth balances receptive-field coverage and
+                                                                                        benchmarks, which emphasize message-passing stacks, sel-
+optimization stability, whereas deeper stacks risk over-
+                                                                                        dom do [13, 34]. Practically, pair view (b) with 3–4 GNN
+smoothing and gradient decay. The sharper degradation
+                                                                                        layers and 3–4 head layers for robust, high accuracy, and
+observed for GINE suggests greater depth sensitivity of
+                                                                                        prioritize view/head configuration before increasing depth.
+its aggregation mechanism. Consequently, compact stacks
+(3–4 layers) are preferred for node-centric placement on
+view (b).
+                                                                                        5. Conclusions & Future Work
+    Turning to routing (Table 6), we observe a similar non-                             We have presented R2G, the first multi-view circuit-graph
+monotonic pattern: both GINE and ResGatedGCN perform                                    benchmark suite for physical design, providing five stage-
+best at moderate depths and degrade as depth increases. Ex-                             aware views with information parity over 30 open-source IP
+cessive depth diffuses signal across nets and increases train-                          cores, together with an end-to-end DEF-to-graph pipeline,
+ing variance; the drop observed for ResGatedGCN at in-                                  loaders, unified splits, domain metrics, and reproducible
+termediate depths may indicate gating saturation. Accord-                               baselines. Experiments with classic GNNs yield three trans-
+ingly, compact stacks (3–4 layers) are also preferred for                               ferable findings: (i) view choice dominates model choice,
+routing on view (b).                                                                    with Test R2 varying by more than 0.3 across represen-
+                                                                                        tations for a fixed GNN; (ii) node-centric views gener-
+4.3.2. Head Layers vs. Accuracy                                                         alize best across both placement and routing, with ef-
+On placement, performance rises sharply with head depth:                                fective views aligning with supervision granularity; and
+moving from head 1 to head 3 lifts Test R2 from 0.8514                                  (iii) decoder-head depth (3–4 layers) is the primary accu-
+to 0.9883 (GINE) and from −0.1689 to 0.9889 (ResGat-                                    racy driver, turning divergent training into near-perfect pre-
+edGCN); head 4 reaches near-perfect accuracy for GINE                                   dictions (R2 >0.99), a finding prior benchmarks have not
+(0.9962) and maintains or slightly improves ResGatedGCN                                 surfaced. For practitioners, we recommend view (b) as
+(0.9891). Moreover, shallow heads cannot linearize the                                  the default representation, 3–4 GNN layers to avoid over-
+mapping from node features to coordinates; additional                                   smoothing, and prioritizing decoder-head configuration be-
+depth provides the nonlinearity and normalization capacity                              fore increasing model depth.
+needed for stable generalization. The negative R2 at head                                   Limitations and future work. R2G currently covers
+1 for ResGatedGCN is a clear outlier and reflects under-                                late physical-design stages; DEF-derived attributes omit
+parameterization and poor calibration. Consequently, use                                timing, IR-drop, and detailed power; designs span limited
+3–4 head layers on view (b); this yields stable, near-perfect                           technology nodes; and evaluations center on classic GNNs.
+placement accuracy.                                                                     Future work includes broader design and technology cover-
+   For routing, head 1 is unstable (nan metrics); accuracy                              age, timing- and congestion-aware tasks with richer LEF/S-
+improves sharply at head 3 and reaches near-perfect at head                             TA/PDN attributes, graph transformers and MoE architec-
+4 (GINE 0.9965; ResGatedGCN 0.9841). Furthermore, in-                                   tures, and stronger EDA evaluation protocols for broader
+sufficient head capacity causes optimization failure and nu-                            adoption.
+References                                                    [13] Weihua Hu, Matthias Fey, Marinka Zitnik, Yuxiao
+                                                                   Dong, Hongyu Ren, Bowen Liu, Michele Catasta, and
+ [1] Openroad documentation. https://openroad.                     Jure Leskovec. Open graph benchmark: Datasets for
+     readthedocs . io / en / latest / main /                       machine learning on graphs. Advances in neural infor-
+     README.html, . Accessed: 2025-11-06. 1
+                                                                   mation processing systems, 33:22118–22133, 2020. 1,
+ [2] Openroad: Unified application for rtl-to-gdsii flow.          2, 7, 8
+     https : / / github . com / The - OpenROAD -
+                                                              [14] Michael D Hutton, Jonathan Rose, Jerry P Grossman,
+     Project/OpenROAD, . Accessed: 2025-11-06. 1,
+                                                                   and Derek G Corneil. Characterization and parameter-
+     3
+                                                                   ized generation of synthetic combinational benchmark
+ [3] Lilas Alrahis, Abhrajit Sengupta, Johann Knechtel,
+                                                                   circuits. IEEE Transactions on Computer-Aided De-
+     Satwik Patnaik, Hani Saleh, Baker Mohammad, Mah-
+                                                                   sign of Integrated Circuits and Systems, 17(10):985–
+     moud Al-Qutayri, and Ozgur Sinanoglu. GNN-RE:
+                                                                   996, 2002. 2
+     Graph neural networks for reverse engineering of gate-
+                                                              [15] Xun Jiang, Zizheng Guo, Zhuomin Chai, Yuxiang
+     level netlists. IEEE Transactions on Computer-Aided
+                                                                   Zhao, Yibo Lin, Runsheng Wang, and Ru Huang.
+     Design of Integrated Circuits and Systems, 41(8):
+                                                                   Accelerating routability and timing optimization with
+     2435–2448, 2022. 1, 2
+                                                                   open-source ai4eda dataset circuitnet and heteroge-
+ [4] Xavier Bresson and Thomas Laurent. Residual gated
+                                                                   neous platforms. In 2023 IEEE/ACM International
+     graph convnets. arXiv preprint arXiv:1711.07553,
+                                                                   Conference on Computer Aided Design (ICCAD),
+     2017. 6, 7
+                                                                   pages 1–9. IEEE, 2023. 1
+ [5] Zhuomin Chai, Yuxiang Zhao, Yibo Lin, Wei Liu,
+     Runsheng Wang, and Ru Huang. Circuitnet: An open-        [16] Xun Jiang, Yuxiang Zhao, Yibo Lin, Runsheng Wang,
+     source dataset for machine learning applications in           Ru Huang, et al. Circuitnet 2.0: An advanced dataset
+     electronic design automation (eda). arXiv preprint            for promoting machine learning innovations in realis-
+     arXiv:2208.01040, 2022. 1, 2, 4                               tic chip design environment. In The Twelfth Interna-
+ [6] Animesh Basak Chowdhury, Benjamin Tan, Ramesh                 tional Conference on Learning Representations, 2024.
+     Karri, and Siddharth Garg. Openabc-d: A large-scale           1, 2, 4, 5
+     dataset for machine learning guided integrated circuit   [17] Jure Leskovec and Andrej Krevl. SNAP Datasets:
+     synthesis. arXiv preprint arXiv:2110.11292, 2021. 1,          Stanford large network dataset collection. http:
+     2, 4, 5                                                       //snap.stanford.edu/data, 2014. 1, 2
+ [7] Graph Consulting. The cora dataset. https :              [18] Qimai Li, Zhichao Han, and Xiao-Ming Wu. Deeper
+     / / graphsandnetworks . com / the - cora -                    insights into graph convolutional networks for semi-
+     dataset/. Accessed: 2025-11-06. 2                             supervised learning. In Thirty-Second AAAI confer-
+ [8] Zehao Dong, Weidong Cao, Muhan Zhang, Dacheng                 ence on artificial intelligence, 2018. 7, 8
+     Tao, Yixin Chen, and Xuan Zhang. Cktgnn: Circuit         [19] Peiyu Liao, Dawei Guo, Zizheng Guo, Siting Liu,
+     graph neural network for electronic design automa-            Yibo Lin, and Bei Yu. Dreamplace 4.0: Timing-
+     tion. In The Eleventh International Conference on             driven placement with momentum-based net weight-
+     Learning Representations, 2023. 1, 2                          ing and lagrangian-based refinement. IEEE Trans-
+ [9] Vijay Prakash Dwivedi, Chaitanya K Joshi, Thomas              actions on Computer-Aided Design of Integrated Cir-
+     Laurent, Yoshua Bengio, and Xavier Bresson. Bench-            cuits and Systems, 42(10):3374–3387, 2023. 1
+     marking graph neural networks.        arXiv preprint     [20] Zhishang Luo, Truong Son Hy, Puoya Tabaghi,
+     arXiv:2003.00982, 2020. 1, 2, 7                               Michaël Defferrard, Elahe Rezaei, Ryan M Carey,
+[10] Jian Gao, Weidong Cao, Junyi Yang, and Xuan Zhang.            Rhett Davis, Rajeev Jain, and Yusu Wang. DE-HNN:
+     Analoggenie: A generative engine for automatic dis-           An effective neural model for circuit netlist represen-
+     covery of analog circuit topologies. arXiv preprint           tation. In Proceedings of The 27th International Con-
+     arXiv:2503.00205, 2025. 5                                     ference on Artificial Intelligence and Statistics, pages
+[11] C Lee Giles, Kurt D Bollacker, and Steve Lawrence.            4258–4266, 2024. 1, 2
+     Citeseer: An automatic citation indexing system. In      [21] Christopher Morris, Nils M Kriege, Franka Bause,
+     Proceedings of the third ACM conference on Digital            Kristian Kersting, Petra Mutzel, and Marion Neu-
+     libraries, pages 89–98, 1998. 1, 2                            mann.      Tudataset: A collection of benchmark
+[12] Zizheng Guo, Mingjie Liu, Jiaqi Gu, Shuhan Zhang,             datasets for learning with graphs. arXiv preprint
+     David Z Pan, and Yibo Lin. A timing engine inspired           arXiv:2007.08663, 2020. 1, 2
+     graph neural network model for pre-routing slack pre-    [22] Liwei Ni, Rui Wang, Miao Liu, Xingyu Meng, Xi-
+     diction. In Proceedings of the 59th ACM/IEEE Design           aoze Lin, Junfeng Liu, Guojie Luo, Zhufei Chu,
+     Automation Conference, pages 1207–1212, 2022. 1, 2            Weikang Qian, Xiaoyan Yang, Biwei Xie, Xingquan
+       Li, and Huawei Li. Openls-dgf: An adaptive open-                    circuits. In 2024 IEEE LLM Aided Design Workshop
+       source dataset generation framework for machine                     (LAD), pages 1–5. IEEE, 2024. 1, 2
+       learning tasks in logic synthesis. arXiv preprint            [33]   Petar Velickovic, Guillem Cucurull, Arantxa
+       arXiv:2411.09422, 2024. 1, 2                                        Casanova, Adriana Romero, Pietro Lio, and Yoshua
+[23]   Jingyu Pan, Chen-Chia Chang, Zhiyao Xie, Yiran                      Bengio. Graph attention networks. In International
+       Chen, and Hai Helen Li. Edalearn: A comprehen-                      Conference on Learning Representations, 2018. 6
+       sive rtl-to-signoff eda benchmark for democratized           [34]   Keyulu Xu, Weihua Hu, Jure Leskovec, and Stefanie
+       and reproducible ml for eda research. Proceedings                   Jegelka. How powerful are graph neural networks?
+       of the 43rd IEEE/ACM International Conference on                    arXiv preprint arXiv:1810.00826, 2018. 6, 7, 8
+       Computer-Aided Design, 2023. 2, 4                            [35]   Dingcheng Yang, Haoyuan Li, Wenjian Yu, Yuanbo
+[24]   Raghunathan Ramakrishnan, Pavlo O. Dral, Matthias                   Guo, and Wenjie Liang. Cnn-cap: Effective convo-
+       Rupp, and O. Anatole von Lilienfeld. Quantum chem-                  lutional neural network-based capacitance models for
+       istry structures and properties of 134k molecules. Sci-             interconnect capacitance extraction. ACM Transac-
+       entific Data, 1:140022, 2014. 1, 2                                  tions on Design Automation of Electronic Systems, 28
+[25]   Shan Shen, Dingcheng Yang, Yuyang Xie, Chunyan                      (4):1–22, 2023. 1
+       Pei, Bei Yu, and Wenjian Yu. Deep-learning-based             [36]   Shuwen Yang, Zhihao Yang, Dong Li, Yingxueff
+       pre-layout parasitic capacitance prediction on sram                 Zhang, Zhanguang Zhang, Guojie Song, and Jianye
+       designs. In Proceedings of the Great Lakes Sympo-                   Hao. Versatile multi-stage graph neural network for
+       sium on VLSI 2024, pages 440–445, 2024. 1, 4                        circuit representation. Advances in Neural Informa-
+[26]   Shan Shen, Yibin Zhang, Hector Rodriguez Ro-                        tion Processing Systems, 35:20313–20324, 2022. 4
+       driguez, and Wenjian Yu. Few-shot learning on ams            [37]   Marinka Zitnik and Jure Leskovec. Predicting multi-
+       circuits and its application to parasitic capacitance pre-          cellular function through multi-layer tissue networks.
+       diction. In 2025 62nd ACM/IEEE Design Automation                    Bioinformatics, 2017. 1, 2
+       Conference (DAC), pages 1–7. IEEE, 2025. 4
+[27]   Zhengyuan Shi, Hongyang Pan, Sadaf Khan, Min
+       Li, Yi Liu, Junhua Huang, Hui-Ling Zhen, Mingx-
+       uan Yuan, Zhufei Chu, and Qiang Xu. Deepgate2:
+       Functionality-aware circuit representation learning. In
+       2023 IEEE/ACM International Conference on Com-
+       puter Aided Design (ICCAD), pages 1–9. IEEE, 2023.
+       5
+[28]   Zhengyuan Shi, Ziyang Zheng, Sadaf Khan, Jianyuan
+       Zhong, Min Li, and Qiang Xu. Deepgate3: Towards
+       scalable circuit representation learning. In Proceed-
+       ings of the 43rd IEEE/ACM International Conference
+       on Computer-Aided Design, pages 1–9, 2024. 5
+[29]   Zhengyuan Shi, Zeju Li, Chengyu Ma, Yunhao Zhou,
+       Ziyang Zheng, Jiawei Liu, Hongyang Pan, Lingfeng
+       Zhou, Kezhi Li, Jiaying Zhu, et al. Forgeeda: A
+       comprehensive multimodal dataset for advancing eda.
+       arXiv preprint arXiv:2505.02016, 2025. 2, 5
+[30]   Pratik Shrestha, Alec Aversa, Saran Phatharodom, and
+       Ioannis Savidis. Eda-schema: A graph datamodel
+       schema and open dataset for digital design automa-
+       tion. In Proceedings of the Great Lakes Symposium
+       on VLSI 2024, pages 69–77, 2024. 2
+[31]   Teague Sterling and John J. Irwin. Zinc 15—ligand
+       discovery for everyone. Journal of Chemical Informa-
+       tion and Modeling, 55(11):2324–2337, 2015. 1, 2
+[32]   Zhuofu Tao, Yichen Shi, Yiru Huo, Rui Ye, Zonghang
+       Li, Li Huang, Chen Wu, Na Bai, Zhiping Yu, Ting-
+       Jung Lin, and Lei He. Amsnet: Netlist dataset for ams
+     R2      : A Multi-View Circuit Graph Benchmark Suite from RTL to GDSII
+                                Supplementary Material
+
+   This supplementary material provides comprehensive               A.2. Model Training
+details, implementation specifics, and additional experi-           The generated datasets can be used directly for GNN train-
+mental analyses to support the main manuscript. The doc-
+                                                                    ing. R2G provides training scripts for prediction tasks at
+ument is organized as follows: Section A offers a practi-
+                                                                    different supervision granularities.
+cal guide and API examples for utilizing the R2G bench-
+                                                                    • Node-centric configurations: Training scripts are lo-
+mark suite. Section B categorizes existing graph datasets
+to contextualize the unique contribution of the R2G bench-            cated in the gnn-node/ directory. In the released base-
+mark. Section C elaborates on the data processing pipeline,           lines, they are used for placement-oriented targets such as
+specifically the DEF parser used to translate physical lay-           HPWL.
+outs into graph structures. Section D presents granular             • Edge-centric configurations: Training scripts are lo-
+                                                                      cated in the gnn-edge/ directory. In the released base-
+statistics across the multi-view graph representations. Sec-
+tion E provides an in-depth look at the experimental setup,           lines, they are used for routing-oriented targets such as
+detailing hyperparameter tuning strategies. Finally, Sec-             wire-length prediction.
+tion F presents ablation studies on GNN and head depths.               Each training pipeline includes dataset loading, fea-
+                                                                    ture encoding, neighbor sampling, model initialization, and
+A. Usage                                                            evaluation. The framework supports multiple GNN archi-
+                                                                    tectures including GINE, ResGatedGCN, and GAT.
+R2G provides a reproducible pipeline that converts Open-
+ROAD DEF files into multi-view circuit graphs and sup-              A.3. Training Example
+ports standardized GNN training and evaluation. The work-           A typical node-centric configuration for the placement task
+flow consists of two main stages: (1) graph generation from         is shown below:
+physical-design files and (2) model training and evaluation
+                                                               1    cd gnn-node
+on the generated datasets.                                     2
+                                                               3    python main.py \
+A.1. Data Generation Pipeline                                  4        --dataset place_B_homograph \
+                                                               5        --task_level node \
+R2G converts physical design outputs into graph datasets       6        --task regression \
+                                                               7        --model gine \
+through a multi-stage pipeline. Starting from DEF files gen-   8        --num_gnn_layers 4 \
+erated by the OpenROAD flow, the framework constructs          9        --num_head_layers 4 \
+                                                               10       --hid_dim 256 \
+typed circuit graphs and produces datasets compatible with     11       --epochs 100 \
+PyTorch Geometric.                                             12       --gpu 0
+
+   The pipeline consists of three steps:                            Listing 1.   Example training command for a node-centric
+• Heterograph generation: DEF files are parsed to                   placement configuration.
+  construct typed heterogeneous graphs containing gates,
+  nets, pins, and IO nodes. Multiple graph views (B–                   Similarly, routing tasks can be trained using the scripts
+  F) can be generated using the provided scripts in                 in gnn-edge/.
+  data pipeline/heterograph generation/.
+                                                                    A.4. Evaluation
+• Homograph conversion:                The heterogeneous
+  graphs are converted into homogeneous graphs                      During training, the framework automatically reports stan-
+  for efficient GNN training using the converters in                dard regression metrics including Mean Absolute Error
+  data pipeline/homograph conversion/.                              (MAE), Root Mean Squared Error (RMSE), and the coef-
+• Graph merging: Graphs from multiple designs are                   ficient of determination (R2 ). The best-performing model
+  merged into a single dataset to enable large-scale train-         on the validation set is saved and evaluated on the test set.
+  ing. The resulting merged graphs are stored as PyTorch                Additional analysis tools are provided to visualize pre-
+  .pt files and serve as the final benchmark datasets.              diction quality, including scatter plots and label distribution
+   This pipeline converts DEF-based physical layouts into           statistics.
+standardized circuit graphs suitable for machine learning
+tasks such as placement and routing prediction.
+Table 9. Overview of existing graph datasets. Tasks include Clas-                                             C.1. DEF File Description
+sification (C), Regression (R), and Link prediction (L).
+  Benchmark Suite          Category       Level   Task
+                                                                      Statistics
+                                                                                                  Metric
+                                                                                                              The Design Exchange Format (DEF) serves as the stan-
+                                                         #Node/G     #Edge/G       #Degree/G
+                                                                                                              dard for exchanging physical layout information. Its content
+        ogbn-products       Product       node     C     2,449,029   61,859,140       50.5       Accuracy
+ OGB
+          ogbn-mag
+           ogbl-ppa
+                           Academic
+                              Bio
+                                          node
+                                          edge
+                                                   C
+                                                   L
+                                                         1,939,743
+                                                          576,289
+                                                                     21,111,007
+                                                                     30,326,273
+                                                                                     21.77
+                                                                                     105.2
+                                                                                                 Accuracy
+                                                                                                 Hits@100
+                                                                                                              evolves significantly through the physical design stages:
+        ogbl-citation2
+           QM9
+                            Citation
+                           Molecules
+                                          edge
+                                          node
+                                                   L
+                                                   R
+                                                         2,927,963
+                                                            18
+                                                                     30,561,187
+                                                                         19
+                                                                                      20.9
+                                                                                      2.07
+                                                                                                   MRR
+                                                                                                  MAE
+                                                                                                              • Floorplan Stage: This stage establishes the “geomet-
+ TU
+           ZINC
+         PROTEINS
+                           Molecules
+                             Bio
+                                          graph
+                                          graph
+                                                   R
+                                                   C
+                                                            23
+                                                            39
+                                                                         25
+                                                                         73
+                                                                                      2.14
+                                                                                      3.73
+                                                                                                  MAE
+                                                                                                 Accuracy
+                                                                                                                 ric stage” and power distribution. The DEF file de-
+           reddit
+          COLLAB
+                            Social
+                            Social
+                                          graph
+                                          graph
+                                                   C
+                                                   C
+                                                            24
+                                                            74
+                                                                         25
+                                                                       2,458
+                                                                                      2.03
+                                                                                     37.39
+                                                                                                 F1-Score
+                                                                                                 F1-Score
+                                                                                                                 fines the design bounds (DIEAREA), standard cell rows
+         ego-Twitter         Social       node     C      81306      1768149         43.49       F1-Score        (ROW), and routing tracks (TRACKS). Power networks
+        com-Youtube          Social       node     C     1134890     2987624          5.27       F1-Score
+ SNAP     cit-Patents       Citation      node     C     3774768     16518948         8.75       F1-Score        (SPECIALNETS) are often generated here (e.g., VD-
+         web-Google           Web         node     C      875713     5105039         11.66       F1-Score
+        amazon-meta         Product       node     C      548552     1788725          6.52       F1-Score        D/VSS stripes). Logical connections (NETS) exist but
+          B graph        Circuit Design   node     R      124408      149287         2.4          MAE
+          C graph        Circuit Design   node     R      49921       110166         4.41         MAE            lack physical geometry, and components generally lack
+ R2G      D graph        Circuit Design   edge    R/C     89640       107689         2.4       MAE/F1-Score
+          E graph        Circuit Design   edge    R/C     64975        78789         2.43      MAE/F1-Score      fixed coordinates unless manually locked.
+          F graph        Circuit Design   edge    R/C     25061        46597         3.72      MAE/F1-Score
+                                                                                                              • Placement Stage: Specific physical coordinates are as-
+B. Overview of existing graph datasets                                                                           signed. Standard cells in the COMPONENTS section are
+                                                                                                                 updated with + PLACED (x y) coordinates and ori-
+Benchmarks and tasks. We situate widely used graph suites                                                        entations. Similarly, I/O pins in the PINS section are
+alongside our circuit-graph benchmark, as summarized in                                                          assigned specific metal layers and physical locations (+
+Table 9. OGB [13] targets large-scale node, link, and graph                                                      PORT + LAYER). Signal nets remain logical connec-
+tasks with unified splits and metrics; TUDataset [21] ag-                                                        tions without detailed routing segments.
+gregates small-to-mid collections (molecules, bio, social)                                                    • Routing Stage: The layout is finalized with detailed in-
+for graph-level classification and regression; SNAP [17] cu-                                                     terconnects. A global routing grid (GCELLGRID) is of-
+rates massive social, web, and citation networks for node                                                        ten added. The NETS section is populated with detailed
+classification and link prediction. These domain-agnostic,                                                       physical paths, including wire segments, turns, and cross-
+predominantly single-view resources lack typed hetero-                                                           layer vias using the + ROUTED ... NEW syntax. The
+geneity, multi-terminal hyperedges, and geometry-aware at-                                                       component count may increase due to the insertion of
+tributes required for physical design.                                                                           filler cells or buffers.
+    R2G differs fundamentally. It releases typed, heteroge-                                                       Listing 2 illustrates a routed DEF file structure, high-
+neous circuit graphs extracted from DEF, with stage-aware,                                                    lighting the information accumulated from these stages.
+multi-view representations and information parity. Targets
+are attached at the entity resolution induced by each view,                                                   C.2. DEF-to-Graph Conversion
+with domain metrics aligned to EDA objectives in place-                                                          The conversion process from a raw DEF file to a struc-
+ment and routing. Graphs are industrial yet tractable, cap-                                                   tured graph representation is outlined in Algorithm 1.
+turing net topology, pin-level connectivity, and macro-to-                                                       The DEF-to-Graph Conversion Algorithm transforms a
+cell context. With scalable loaders, unified splits, met-                                                     Design Exchange Format (DEF) file, which describes the
+rics, and reproducible baselines, R2G enables fair cross-                                                     physical layout of an integrated circuit, into a heteroge-
+view comparison and cleanly decouples representation from                                                     neous graph representation suitable for machine learning
+modeling across late physical-design stages.                                                                  and analysis tasks. This algorithm systematically converts
+                                                                                                              circuit components into graph nodes and their interconnec-
+C. DEF Parser                                                                                                 tions into graph edges, creating a structured representation
+To bridge the gap between physical layout implementation                                                      that preserves the topological and functional relationships
+and graph-based learning, the R2G framework incorporates                                                      within the circuit design.
+a specialized DEF parser. This component is responsible for                                                      The conversion process involves three main phases:
+extracting semantic and geometric information from stan-                                                      Node Construction (creating nodes for gates, nets, and
+dard Design Exchange Format (DEF) files, converting them                                                      pins), Edge Construction (establishing connectivity be-
+into the structured graph representations used in our bench-                                                  tween components), and Feature Encoding (adding numer-
+mark. In this section, we first detail the structural evolution                                               ical attributes to nodes and edges). The resulting heteroge-
+of DEF files throughout the design flow to clarify the data                                                   neous graph captures both the structural hierarchy and phys-
+availability at each stage. Subsequently, we outline the al-                                                  ical properties of the circuit, enabling applications in opti-
+gorithmic procedure used to translate these raw descriptions                                                  mization, verification, and AI-driven design automation.
+into heterogeneous graphs.
+                                                  Table 10. Comparison of graph statistics across graph views and design categories.
+                                                        #nodes                                             #edges                                     avg degree                        avg shortest path
+Cat.                  RTL2G           (b)       (c)       (d)       (e)       (f)       (b)        (c)       (d)       (e)       (f)     (b)    (c)      (d)       (e)   (f)     (b)    (c)     (d)     (e)    (f)
+                      ss pcm         2.44k      1.01k     1.89k    1.46k     0.46k     2.88k      2.02k      2.36k    1.66k     1.01k    2.37   4.01     2.49   2.28     4.35   12.07   3.00    9.81   12.69   4.05
+  A/V ctrl.
+
+
+
+
+                     ac97 ctrl      58.22k     22.99k    40.86k    30.63k   10.36k     70.60k    47.20k     52.19k    36.83k   23.50k    2.43   4.11     2.55   2.40     4.54   13.41   3.00   13.76   21.20   5.65
+                      vga lcd       531.33k   206.01k   369.72k   275.41k   94.51k    650.84k    445.88k   455.43k   325.55k   197.12k   2.45   4.33     2.46   2.36     4.17   14.33   3.02   24.37   31.42   8.00
+                      Average       197.33k   76.67k    137.49k   102.50k   35.11k    241.44k    165.03k   170.00k   121.35k   74.08k    2.42   4.15     2.50   2.35     4.35   13.27   3.01   15.98   21.77   5.90
+                     des3 area       9.78k     3.65k      7.94k    6.33k     1.80k     12.46k     9.29k     11.17k    9.41k     5.10k    2.55   5.09     2.81   2.97     5.66   18.16   3.28   15.43   12.42   6.13
+                    systemcdes      14.17k     5.76k     10.73k    8.14k     2.79k     17.02k    12.84k     13.48k    10.13k    5.73k    2.40   4.46     2.51   2.49     4.11   20.60   3.18   19.62   17.26   7.20
+ Crypto Core
+
+
+
+
+                    systemcaes      41.08k    16.13k     31.74k    24.34k    7.78k     50.29k    36.81k     40.30k    30.46k   16.83k    2.45   4.56     2.54   2.50     4.33   18.02   3.16   13.91   18.13   6.20
+                      sha256        62.83k    25.06k     47.57k    36.52k   11.83k     76.32k    56.36k     59.51k    45.47k   24.70k    2.43   4.50     2.50   2.49     4.18   18.66   2.88   16.43   17.12   6.75
+                   aes secworks     128.40k   46.60k     96.64k    75.04k   22.12k    164.11k    113.16k   128.92k    99.87k   56.87k    2.56   4.86     2.67   2.66     5.14   19.92   2.93   19.73   20.61   7.07
+                    aes xcrypt      165.76k   58.42k    135.12k   107.08k   28.43k    215.07k    156.35k   188.34k   156.69k   81.88k    2.60   5.35     2.79   2.93     5.76   20.68   2.97   17.39   16.57   7.17
+                      Average       73.85k    26.27k    58.29k    44.58k    12.46k     92.55k    64.13k    75.32k     58.67k   31.84k    2.50   4.77     2.64   2.64     4.86   19.34   3.07   17.08   17.02   6.75
+                          tv80      31.14k     11.44k    24.91k    19.47k    5.51k     39.45k    29.34k     34.25k    28.48k   15.14k    2.53   5.13     2.75   2.93     5.50   16.71   3.10   14.48   13.95   5.94
+                         tv80s      37.24k     14.39k    28.88k    21.96k    6.97k     45.74k    35.41k     37.09k    29.41k   15.52k    2.46   4.92     2.57   2.68     4.45   19.02   3.14   17.64   17.13   7.05
+                       riscv32i     53.23k     19.76k    40.78k    31.50k    9.41k     66.91k    47.74k     56.38k    45.79k   26.04k    2.51   4.83     2.77   2.91     5.53   17.43   3.20   15.24   15.57   5.42
+  Processor
+
+
+
+
+                          ibex      96.60k     35.64k    72.50k    56.14k   16.62k    122.18k    84.69k     98.88k    79.63k   43.94k    2.53   4.75     2.73   2.84     5.29   18.44   3.05   17.90   18.85   6.86
+                     tinyRocket     50.63k     32.60k    42.82k    15.43k   27.66k     36.27k    66.69k     26.03k    13.54k   14.90k    1.43   4.09     1.22   1.75     1.08   11.00   2.40    9.68   12.07   4.53
+                        swerv       538.36k   196.94k   384.55k   294.23k   92.36k    684.89k    469.98k   510.70k   388.58k   229.49k   2.54   4.77     2.66   2.64     4.97   17.10   3.08   19.33   28.16   8.27
+                       bp multi     296.72k   171.27k   235.98k   107.09k   130.34k   250.15k    353.77k   176.42k   102.51k   86.96k    1.69   4.13     1.50   1.91     1.33   11.72   2.58   18.45   25.72   6.42
+                      Average       154.85k   69.63k    118.58k   78.52k    29.88k    177.80k    155.03k   163.18k   114.28k   61.65k    2.15   4.51     2.17   2.41     3.90   15.90   2.94   16.10   18.64   6.36
+                         uart        2.73k     1.11k      1.94k    1.48k     0.52k     3.29k      2.30k      2.60k    1.88k     1.15k    2.41   4.13     2.67   2.54     4.47   13.80   3.27   14.79   10.61   5.63
+                       sasc top      3.45k     1.38k      2.44k    1.84k     0.63k     4.17k      2.88k      3.01k    2.12k     1.33k    2.42   4.18     2.47   2.31     4.22   12.20   2.88   12.69   15.79   4.75
+                     i2c verilog     4.69k     1.85k      3.39k    2.56k     0.87k     5.70k      4.03k      6.54k    5.28k     4.12k    2.43   4.35     3.86   4.13     9.51   13.42   3.02   11.96   13.93   5.49
+                   simple spi top    4.57k     1.84k      3.35k    2.52k     0.85k     5.49k      3.89k      4.17k    3.01k     1.80k    2.40   4.23     2.49   2.39     4.23   13.33   2.90   12.23   13.55   4.93
+  Comm. ctrl.
+
+
+
+
+                        spi top     15.62k     6.07k     12.31k    9.47k     2.93k     19.18k    14.21k     19.15k    15.39k    9.99k    2.46   4.68     3.11   3.25     6.81   16.79   3.02   13.75   14.99   5.68
+                   dynamic node     67.87k    26.28k     46.91k    35.50k   12.10k     83.87k    56.29k     57.47k    40.55k   24.88k    2.47   4.28     2.45   2.28     4.11   15.10   3.22   16.09   15.00   6.62
+                          pci       72.69k    27.53k     48.45k    36.59k   12.23k     90.70k    56.01k     72.86k    51.99k   38.15k    2.50   4.07     3.01   2.84     6.24   15.13   2.88   16.35   25.42   6.37
+                      usb funct     67.30k    26.63k     48.60k    36.55k   12.30k     81.58k    58.85k     60.03k    44.10k   23.78k    2.42   4.42     2.47   2.41     3.87   21.41   3.33   19.13   21.79   7.43
+                    wb dma top      19.52k     8.22k     14.60k    11.08k    3.95k     23.03k    16.72k     17.79k    12.52k    7.62k    2.36   4.07     2.44   2.26     3.86   15.38   3.17   13.09   15.66   5.76
+                     wb conmax      181.45k   71.84k    144.40k   110.71k   36.24k    221.76k    177.04k   183.96k   145.80k   76.57k    2.44   4.93     2.55   2.63     4.23   24.35   2.96   21.46   18.56   9.04
+                       usb phy       2.73k     1.13k      1.84k    1.36k     0.51k     3.22k      2.35k      2.14k    1.42k     0.91k    2.36   4.15     2.33   2.09     3.56   10.67   3.27   11.10   11.89   4.41
+                      Average       42.20k    16.68k    31.93k    24.40k     8.76k     50.89k    39.33k    43.32k     33.03k   19.54k    2.42   4.30     2.67   2.61     4.78   15.65   3.06   14.71   16.23   5.98
+                          fir       22.63k     8.82k     16.90k    12.98k    3.98k      27.68k   19.51k     21.46k    16.28k    8.80k    2.45   4.42     2.54   2.51     4.42   17.94   3.07   16.16   20.45   6.23
+  DSP Core
+
+
+
+
+                        jpeg        331.18k   134.01k   244.06k   183.26k   60.85k     394.38k   301.36k   297.27k   236.65k   118.01k   2.38   4.50     2.44   2.58     3.88   23.11   3.04   23.11   24.50   8.91
+                         idft       817.88k   313.24k   527.42k   392.61k   134.94k   1009.40k   622.01k   590.78k   382.70k   236.06k   2.47   3.97     2.24   1.91     3.50   13.06   3.26   19.57   26.46   6.64
+                      Average       390.56k   152.02k   262.79k   196.28k   66.59k    477.15k    314.29k   303.17k   211.88k   120.96k   2.43   4.30     2.41   2.33     3.93   18.04   3.12   19.61   23.80   7.26
+                Total Average       124.41k   49.92k    89.64k    64.98k    25.06k    149.29k    110.17k   107.69k    78.79k   46.60k    2.40   4.48     2.55   2.56     4.58   16.43   3.04   16.16   18.25   6.35
+
+
+D. Statistics of Multi-Views                                                                                       quired. views (d)/(e) retain moderate degrees (≈2.55/2.56)
+                                                                                                                   and mid-to-long paths (≈16.16/18.25), reflecting pin-level
+This appendix summarizes structural statistics for 30 cir-                                                         dependencies along nets: multi-hop propagation is sup-
+cuits across five graph views (b–f): #nodes, #edges,                                                               ported without saturating neighborhoods. view (f) is dense,
+avg degree, and avg shortest path computed by a uni-                                                               small-world (degree ≈4.58, paths ≈6.35), tying distant sub-
+fied late-stage pipeline. Table 10 shows consistent patterns
+                                                                                                                   circuits through hubs; this increases correlation but can blur
+aligned with physical design: view (b) has moderate degree
+                                                                                                                   constraint boundaries and inject hub bias.
+(≈2.4–2.6) and long paths (≈11–23); view (c) is the dens-
+est node-centric option (higher degree, very short paths);                                                         D.1.2. Cross-Stage Outcomes
+views (d)/(e) retain moderate degrees with mid-to-long/very                                                        Placement favors node-centric graphs: view (b) is strongest,
+long diameters; view (f) is dense, small-world (high degree,                                                       with view (c) close. Placement decisions rely on global
+short paths). These structures match trends in Table 3 and                                                         context and net topology; B’s long paths and controlled de-
+Table 4.                                                                                                           gree deliver broad context without noise, explaining its mar-
+                                                                                                                   gin. C competes when local density helps, but its short-path
+D.1. Why view (b) leads and node-centric views pre-
+                                                                                                                   bias can hamper cases needing global coordination. In rout-
+      vail
+                                                                                                                   ing, view (b) remains strongest overall, while among edge-
+D.1.1. Average Statistics                                                                                          centric views, views (d)/(e) are competitive: their mid-to-
+view (b) balances locality and reach: moderate degree                                                              long paths track channel capacity and congestion cascades
+(≈2.40) with long paths (≈16.43). A moderate degree                                                                along connections, making them useful complements for
+constrains neighborhood breadth—reducing noise amplifi-                                                            routing-oriented analysis. view (f) underperforms because
+cation and over-mixing—while long paths preserve global                                                            hub-dominated mixing erodes locality and misaligns with
+dependencies needed for macro-to-cell interactions and net                                                         edge constraints.
+connectivity. view (c) is the densest node-centric op-                                                             D.1.3. Summaries
+tion (degree ≈4.48, paths ≈3.04): high degree and very
+short paths concentrate information locally; this aids fine-                                                       Prefer view (b) as a robust default across stages. Use
+                                                                                                                   view (c) judiciously for workloads dominated by local inter-
+grained aggregation but compresses structural distance, lim-
+iting long-range context when global coordination is re-                                                           actions; treat views (d)/(e) as complementary choices when
+1    DESIGN ac97_top ;                                                 Algorithm 1 DEF-to-Graph Conversion Process
+2    UNITS DISTANCE MICRONS 2000 ;
+3    DIEAREA ( 0 0 ) ( 434390 434390 ) ;                               Require: DEF file D
+4                                                                      Ensure: Heterogeneous Graph G = (V, E)
+5    # [Floorplan] Rows, Tracks, and Power Grid defined                 1: Initialization: V ← ∅, E ← ∅
+6    ROW ROW_0 FreePDK45_38x28_10R_NP_162NW_34O 2280 2800 N
+           DO 1131 BY 1 STEP 380 0 ;                                    2: Ddata ← ParseDEF(D)
+7    TRACKS X 190 DO 1143 STEP 380 LAYER metal1 ;
+8    SPECIALNETS 2 ;
+                                                                        3:   {Phase 1: Node Construction}
+9        - VDD ( * VDD ) + USE POWER                                    4:   for all comp ∈ Ddata .components do
+10         + ROUTED metal7 2800 + SHAPE STRIPE ( 61800                  5:      vgate ← CreateGateNode(comp)
+          396800 ) ( 398760 396800 ) ;
+11   END SPECIALNETS                                                    6:      V.add(vgate )
+12                                                                      7:   end for
+13   # [Routing] Global routing grid added                              8:   for all net ∈ Ddata .nets do
+14   GCELLGRID X 0 DO 103 STEP 4200 ;
+15                                                                      9:      vnet ← CreateNetNode(net)
+16   # [Placement] Coords added (+ PLACED); [Routing] Count            10:      V.add(vnet )
+            increases
+17   COMPONENTS 11178 ;
+                                                                       11:   end for
+18       - _10221_ CLKBUF_X2 + PLACED ( 169860 109200 ) FN             12:   for all pin ∈ Ddata .pins do
+          ;                                                            13:      vio ← CreateIOPinNode(pin)
+19       - _10222_ INV_X1    + PLACED ( 165300 109200 ) FN
+          ;                                                            14:      V.add(vio )
+20   END COMPONENTS                                                    15:   end for
+21
+                                                                       16:   for all int pin ∈ Ddata .internal pins do
+22   # [Placement] Pin physical details (+ PORT + LAYER)
+          added                                                        17:      vpin ← CreatePinNode(int pin)
+23   PINS 132 ;                                                        18:      V.add(vpin )
+24       - ac97_reset_pad_o_ + NET ac97_reset_pad_o_ +
+          DIRECTION OUTPUT + USE SIGNAL
+                                                                       19:   end for
+25         + PORT                                                      20:   {Phase 2: Edge Construction}
+26            + LAYER metal6 ( -140 -140 ) ( 140 140 )
+27            + PLACED ( 127870 140 ) N ;
+                                                                       21:   for all net ∈ Ddata .nets do
+28   END PINS                                                          22:      for all (comp, pin) ∈ net.connections do
+29                                                                     23:         if comp == ‘PIN’ then
+30   # [Routing] Detailed geometry segments (+ ROUTED ...
+          NEW) added                                                   24:             E.add((vio , vnet )) {Edge: IO Pin ↔ Net}
+31   NETS 12959 ;                                                      25:         else
+32       - _00000_ ( u10.dout[0]$_DFF_P_ D ) ( _11175_ ZN )            26:             E.add((vpin , vnet )) {Edge: Internal Pin ↔ Net}
+           + USE SIGNAL
+33         + ROUTED metal2 ( 91770 88060 ) ( * 96600 )                 27:         end if
+34         NEW    metal2 ( 91770 96600 ) ( 92150 * )                   28:      end for
+35         NEW    metal1 ( 91770 88060 ) via1_4 ;
+36   END NETS
+                                                                       29:   end for
+37                                                                     30:   for all comp ∈ Ddata .components do
+38   END DESIGN                                                        31:      for all pin ∈ comp.pins do
+     Listing 2. A DEF file example showing the accumulation of data    32:         E.add((vgate , vpin )) {Edge: Gate ↔ Pin}
+     from Floorplan to Routing.                                        33:      end for
+                                                                       34:   end for
+                                                                       35:   {Phase 3: Feature Encoding}
+     routing fidelity is prioritized. Avoid view (f) for headline      36:   for all v ∈ V do
+     reporting due to small-world mixing and hub bias that harm        37:      v.x ← EncodeNodeFeatures(v)
+     both placement coordination and routing locality.                 38:   end for
+                                                                       39:   for all e ∈ E do
+     D.2. Why view (d) leads among edge-centric views:                 40:      e.attr ← EncodeEdgeFeatures(e)
+           statistical comparison                                      41:   end for
+                                                                       42:   G.global ← ExtractGlobalFeatures(Ddata )
+     D.2.1. Key Statistics
+                                                                       43:   return G
+     view (d) combines moderate degree with mid-to-long paths,
+     yielding expressive yet unsaturated neighborhoods. Com-           D.2.2. Cross-Stage Alignment
+     pared with view (e), degrees are similar on average, but          For routing-oriented analysis, view (d) is the strongest edge-
+     E’s paths are consistently longer, shifting useful interactions   centric complement; view (e) supports longer-range effects
+     to larger hop distances. view (f) exhibits higher degrees         when they are critical; view (f)’s small-world structure is
+     and shorter paths, encouraging small-world mixing and hub         generally misaligned.
+     bias that blur fine-grained signals. In edges-to-nodes bal-
+     ance, view (d) remains near-linear, whereas view (f) in-          D.2.3. Summaries
+     creases density and alters neighborhood selectivity.              Average structural statistics explain stage-level outcomes
+                                                                       without model-specific details: view (b) is robust across
+Table 11. Placement Task Hyperparameters for Different Graph                                             Table 13. Placement on view (d) vs. GNN depth (3–6).
+Views                                                                                                                       GINE                             ResGatedGCN
+Hyper          lr    wd     hid dim      act         gnn layer   dropout   head layer   head dim   #layers    MAE↓     RMSE↓    R2 ↑     #Param.   MAE↓     RMSE↓    R2 ↑     #Param.
+                                               (b)                                                   3        0.4552   0.6098   0.6811   0.83M     0.4521   0.6026   0.6886   1.62M
+GINE          1e-4   1e-4    256        relu            4          0.3         2          256        4        0.4451   0.5937   0.6975   1.03M     0.4670   0.6197   0.6704   2.08M
+ResGatedGCN   1e-4   1e-4    256        relu            4          0.3         2          256        5        0.4837   0.6467   0.6414   1.23M     0.4700   0.6077   0.6833   2.54M
+GAT           1e-4   1e-4    256        relu            4          0.3         2          256        6        0.4063   0.5478   0.7427   1.42M     0.5449   0.6786   0.6051   3.00M
+                                               (c)
+GINE          1e-4   1e-4    256        relu            4          0.3         2          256                Table 14. Routing on view (d) vs. GNN depth (3–6).
+ResGatedGCN   1e-4   1e-4    256        relu            4          0.3         2          256
+GAT           1e-4   1e-4    256        relu            4          0.3         2          256                               GINE                             ResGatedGCN
+                                               (d)
+                                                                                                   #layers    MAE↓     RMSE↓    R2 ↑     #Param.   MAE↓     RMSE↓    R2 ↑     #Param.
+GINE          5e-4   1e-5    256      leakyrelu         4          0.3         2          256
+ResGatedGCN   5e-4   1e-5    256      leakyrelu         4          0.3         2          256        3        0.5470   0.7172   0.6000   0.83M     0.5732   0.7557   0.5558   1.62M
+GAT           5e-4   1e-5    256      leakyrelu         4          0.3         2          256        4        0.6111   0.7920   0.5122   1.03M     0.6007   0.7826   0.5237   2.08M
+                                             (e)                                                     5        0.5062   0.6805   0.6398   1.22M     0.5413   0.7091   0.6090   2.54M
+GINE          5e-4   1e-5    256      leakyrelu         4          0.3         2          256        6        0.5964   0.7571   0.5542   1.42M     0.6803   0.8942   0.3782   3.00M
+ResGatedGCN   5e-4   1e-5    256      leakyrelu         4          0.3         2          256
+GAT           5e-4   1e-5    256      leakyrelu         4          0.3         2          256            Table 15. Placement on view (d) vs. head layers (1–4).
+                                             (f)
+GINE          5e-4   1e-5    256      leakyrelu         4          0.3         2          256                               GINE                             ResGatedGCN
+ResGatedGCN   5e-4   1e-5    256      leakyrelu         4          0.3         2          256      #layers    MAE↓     RMSE↓    R2 ↑     #Param.   MAE↓     RMSE↓    R2 ↑     #Param.
+GAT           5e-4   1e-5    256      leakyrelu         4          0.3         2          256
+                                                                                                     1          nan      nan      nan    0.90M       nan      nan      nan    1.95M
+                                                                                                     2        0.4451   0.5937   0.6975   1.03M     0.4670   0.6197   0.6704   2.08M
+Table 12. Routing Task Hyperparameters for Different Graph                                           3        0.4337   0.5804   0.7109   1.10M     0.4576   0.6043   0.6866   2.15M
+Views                                                                                                4        0.4359   0.5851   0.7062   1.16M     0.4418   0.5922   0.6990   2.21M
+Hyper          lr    wd     hid dim      act         gnn layer   dropout   head layer   head dim
+                                               (b)
+                                                                                                             Table 16. Routing on view (d) vs. head layers (1–4).
+GINE          1e-4   1e-4    256      leakyrelu         4          0.3         2          256                               GINE                             ResGatedGCN
+ResGatedGCN   1e-4   1e-4    256      leakyrelu         4          0.3         2          256      #layers    MAE↓     RMSE↓    R2 ↑     #Param.   MAE↓     RMSE↓    R2 ↑     #Param.
+GAT           1e-4   1e-4    256      leakyrelu         4          0.3         2          256
+                                             (c)                                                     1          nan      nan      nan    0.90M       nan      nan      nan    1.95M
+GINE          1e-4   1e-4    256      leakyrelu         4          0.3         2          256        2        0.6111    0.792   0.5122   1.03M     0.6007   0.7826   0.5237   2.08M
+ResGatedGCN   1e-4   1e-4    256      leakyrelu         4          0.3         2          256        3        0.4637   0.6148   0.7060   1.09M     0.5678   0.7551   0.5565   2.14M
+GAT           1e-4   1e-4    256      leakyrelu         4          0.3         2          256        4        0.4971   0.6636   0.6581   1.16M     0.5445   0.7099   0.6089   2.21M
+                                             (d)
+GINE          5e-4   1e-5    256      leakyrelu         4          0.3         2          256
+ResGatedGCN   5e-4   1e-5    256      leakyrelu         4          0.3         2          256      tasks under view (d). These experiments investigate the im-
+GAT           5e-4   1e-5    256      leakyrelu         4          0.3         2          256
+                                             (e)                                                   pact of two key architectural hyperparameters—the depth of
+GINE          5e-4   1e-5    256      leakyrelu         4          0.3         2          256      the Graph Neural Network (GNN) backbone and the num-
+ResGatedGCN   5e-4   1e-5    256      leakyrelu         4          0.3         2          256
+GAT           5e-4   1e-5    256      leakyrelu         4          0.3         2          256      ber of prediction head layers—on model performance. The
+                                             (f)
+GINE          5e-4   1e-5    256      leakyrelu         4          0.3         2          256
+                                                                                                   results indicate that the number of GNN layers has a rela-
+ResGatedGCN   5e-4   1e-5    256      leakyrelu         4          0.3         2          256      tively minor and inconsistent effect, whereas the number of
+GAT           5e-4   1e-5    256      leakyrelu         4          0.3         2          256
+                                                                                                   head layers is a crucial factor significantly influencing the
+placement and routing; view (c) is strong but less stable;                                         outcomes.
+views (d)/(e) are viable edge-centric complements; view (f)                                            Impact of GNN Depth (Table 13 and Table 14): The
+is not recommended for headline results.                                                           number of GNN layers (ranging from 3 to 6) does not ex-
+                                                                                                   hibit a consistent impact on model performance. In Ta-
+E. Hyperparameter Tuning                                                                           ble 13 (Placement), GINE achieves its best results at deeper
+                                                                                                   configurations, whereas ResGatedGCN performs best with
+The experimental results for the Placement Task across dif-                                        fewer layers. A similar observation holds for routing in
+ferent graph views (b-f), as presented in Table 3 of the main                                      Table 14, where both models achieve their strongest re-
+paper, and for the Routing Task in Table 4, were obtained                                          sults at intermediate depths rather than at the deepest set-
+using the specific hyperparameter configurations detailed                                          tings. Across both tasks, the performance metrics fluctuate
+in Table 11 and Table 12, respectively. To ensure a fair                                           across layer configurations without showing a clear mono-
+and consistent comparison across the different graph views,                                        tonic trend. These results suggest that increasing GNN
+each model (GINE, ResGatedGCN, GAT) utilized a single,                                             depth alone does not consistently improve prediction qual-
+fixed set of hyperparameters for all views within a given                                          ity, and that message-passing depth is not a dominant factor
+task. This means that the same hyperparameter values were                                          for these tasks.
+applied to all views (b), (c), (d), (e), and (f) for the Place-                                        Impact of Head Layers (Table 15 and Table 16): In
+ment task, and similarly for the Routing task, without fur-                                        contrast, the number of head layers (ranging from 1 to 4)
+ther view-specific tuning.                                                                         has a much stronger influence on performance. In Table 15
+                                                                                                   (Placement), increasing the depth of the prediction head
+F. GNN Depth and Head Depth                                                                        leads to noticeable improvements for both GINE and Res-
+The following four tables (Table 13-Table 16) present sup-                                         GatedGCN. A similar trend is observed in Table 16 (Rout-
+plementary experiments for the Placement and Routing                                               ing), where deeper prediction heads consistently produce
+better results. These improvements indicate that the de-
+sign of the prediction head plays a crucial role in model
+performance. In particular, richer head architectures appear
+to provide stronger capacity for mapping learned node or
+edge embeddings to task-specific targets, highlighting the
+importance of prediction-head design in GNN-based physi-
+cal design tasks.
+

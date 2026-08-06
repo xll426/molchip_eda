@@ -1,0 +1,1938 @@
+                                                OmniLayout: A Schematic-Coupled Multimodal Benchmark for
+                                                  Constraint-Aware Geometric Reasoning in PCB Layout
+
+                                              Taiting Lu1* , Kaiyuan Lin1* , Mingjia Wang2 , Haolin Ye1 , Runze Liu1 , Yuxin Tian3 ,
+                                              Vahe Melkonyan1 , Haoyu Wang1 , Muchuan Wang1 , Chufan Hong 3 , Yifan Yang 4 ,
+                                                    Sung-Liang Chen 2 , Yi-Chao Chen 2 , Yicheng Jin5 , Mahanth Gowda1† ,
+                                            1
+                                              Pennsylvania State University, 2 Shanghai Jiao Tong University, 3 Independent Researcher,
+                                                                  4
+                                                                    Microsoft Research, 5 Binghamton University
+
+
+                                                               Abstract                                 Prompt
+                                                                                                       Please act as an expert PCB layout engineer. I will provide the
+                                                                                                       schematic design (in image), board outline (in DXF format), netlist
+                                             Recent large language models (LLMs) have                  (with spatial weight), and IC dimensions. Generate the optimal
+                                             demonstrated remarkable progress in 3D spatial            placement for all ICs, including the position (x, y), placement side
+                                                                                                                                                                              Board Frame
+                                                                                                       (front or back), and orientation of each component…
+                                             reasoning, spatial grounding, and fine-grained
+                                             geometric understanding. However, their abil-
+                                             ity to reason about densely packed object place-
+                                             ment under strict spatial and functional con-
+                                                                                                     Board Frame                         All Components    Schematic Design
+                                             straints remains largely unexplored, despite be-
+arXiv:2607.03261v2 [cs.CV] 7 Jul 2026
+
+
+
+
+                                             ing a fundamental challenge in practical elec-
+                                                                                                        Response                               Response
+                                             tronic design automation (EDA) workflows.            Claude-Sonnet-4.6                     Qwen3.6-35B-A3B
+                                             To bridge this gap, we introduce OmniLay-                                                    xc
+
+
+
+                                             out, the first benchmark designed to evalu-
+                                             ate LLMs on printed-circuit-board (PCB) lay-
+                                             out placement reasoning under real-world geo-
+                                             metric, routing, and connectivity constraints.
+                                             OmniLayout contains 1,681 industrial-grade
+                                             schematic-coupled PCB layout and includes
+                                             four tasks: (1) geometric reasoning for IC                 Response                                Human
+                                                                                                                                               Engineer
+                                             physical placement, with 77.24K placement            GPT-5.5
+
+                                             instances constrained within PCB board bound-
+                                             aries; (2) routability-aware placement rea-
+                                             soning, generating physically valid component
+                                             placements; (3) electrical functionality, pre-
+                                             serving schematic-specified connectivity and
+                                             electronic functional correctness; and (4) tool-
+                                             augmented agentic reasoning for, invoking
+                                             external tools to accomplish (1)-(3). Our results   Figure 1: Large language models (LLMs) fail to per-
+                                             reveal substantial limitations of current LMMs      form reliable PCB layout placement under geometric
+                                             in PCB layout placement, including weak geo-        and electrical constraints. Frequent overlap violations
+                                             metric reasoning, poor routability optimization,    (highlighted by dashed red circles) placement decisions
+                                             and inconsistent preservation of electrical func-   by LLMs reveal substantial weaknesses in spatial rea-
+                                             tionality.                                          soning and constraint-aware layout generation.
+
+                                        1    introduction                                        remains largely manual, with experienced layout
+                                                                                                 engineers spending several weeks to complete a
+                                        Driven by the explosive growth in semiconductor
+                                                                                                 single design. However, real-world PCB layout de-
+                                        technology, modern Printed Circuit Boards (PCBs)
+                                                                                                 signs are almost exclusively proprietary and rarely
+                                        now contain hundreds to thousands of components
+                                                                                                 publicly available. Even within the academic com-
+                                        that must be precisely positioned and electrically
+                                                                                                 munity, most PCB PnR works (Zhang et al., 2025a;
+                                        connected within a limited area. Despite this grow-
+                                                                                                 Chen et al., 2025b; Han et al., 2026a,b) are trained
+                                        ing complexity, the placement and routing (PnR)
+                                                                                                 and evaluated on closed-source private datasets con-
+                                        process, such as the example shown in Figure 1,
+                                                                                                 taining only 10 to 20 samples, severely hindering
+                                            * Both authors contributed equally.                  reproducible benchmarking and generalization.
+                                            † Corresponding author.
+                                            Project Page: https://omnieda.com/                      In recent years, large multimodal models
+Table 1: Comparison of publicly available PCB layout                                          ure 2, OmniLayout contains 1,681 real-world PCB
+benchmarks and datasets.                                                                      layouts paired with corresponding schematics and
+                        Ref.                Annotation           Sem.
+                                                                                              expert-designed reference layouts, covering diverse
+ Dataset      Layout          Sch.                                       DRV   #Layers Year
+                       Layout
+                                     #Comp. #Pins        #Nets
+                                                                 Attr.                        board outlines ranging from industrial PCB stack-
+Cypress (Zhang
+                                                                                              ups from 2 to 8 layers. The benchmark includes
+                10      ✗      ✗     1.2K     9.5K       2.6K     ✗       ✗      2    2025
+et al., 2025a)
+OmniLayout
+                                                                                              109.9K IC and component placement instances,
+               1681     ✓     ✓      77.24K 168.8K 139.4K         ✓      ✓      2-8   2026
+(Ours)                                                                                        245.4K SMDs and pads, and 219.8K net connec-
+                                                                                              tions with spatial distance weights and connectivity
+(LMMs) (Mouselinos et al., 2024; Chen et al.,                                                 semantic attributes. We first propose a systematic
+2024; Cheng et al., 2024; Rodionov et al., 2025;                                              evaluation protocol for assessing PCB layout de-
+Huang et al., 2025), have demonstrated strong ca-                                             signs generated by LMMs with respect to routabil-
+pabilities in 3D spatial reasoning, fine-grained ge-                                          ity, geometric legality, and electrical functionality.
+ometry, spatial grounding, and spatially planning.                                            Our benchmark evaluates four core abilities, includ-
+These advances suggest new opportunities for ap-                                              ing (i) geometric reasoning for physically valid
+plying LMMs to engineering workflows, particu-                                                IC and component placement within PCB board
+larly for PCB PnR under geometric and electrical                                              boundaries, (ii) routability-aware placement rea-
+constraints. However, these existing spatial-LMM                                              soning for generating routing-efficient layouts un-
+works largely overlook the fundamental challenge                                              der netlist constraints, (iii) electrical functional-
+of placing densely packed objects within tightly                                              ity reasoning for preserving schematic-specified
+constrained spaces while simultaneously satisfying                                            connectivity and functional circuit relationships,
+complex geometric and functional requirements.                                                and (iv) tool-augmented agentic reasoning for
+This raises a critical open question: can current                                             iterative PCB placement optimization using exter-
+LMMs generate PCB layouts that are geometrically                                              nal layout-status visualization, overlap localization,
+legal, routing-aware, and electrically functional                                             electrical functionality verification, and routabil-
+across diverse real-world circuit designs?                                                    ity analysis tools to guide constraint-aware layout
+   To answer this question, we designed a set of pre-                                         refinement.
+liminary experiments to evaluate the PCB PnR ca-                                                 Our main contribution are as follows: (i): We in-
+pabilities of several state-of-the-art LMMs, includ-                                          troduce OmniLayout, a comprehensive benchmark
+ing Claude-Sonnet-4.6 (Anthropic, 2026), GPT-5.5                                              for evaluating LMMs on PCB layout placement,
+(OpenAI, 2026), and Qwen3.6-35B-A3B (Qwen                                                     containing 1,681 real-world schematic-coupled
+Team, 2026a), benchmarked against experienced                                                 PCB layouts with expert-designed reference place-
+human layout engineers. Specifically, we evalu-                                               ments and systematic evaluation protocols. (ii) We
+ated their ability to perform component placement                                             systematically evaluate state-of-the-art LMMs on
+under the geometric and electrical constraints char-                                          PCB layout placement under multiple settings, in-
+acteristic of real-world PCB designs. As illustrated                                          cluding single-zeroshot placement generation and
+in Figure 1, all evaluated models exhibit more than                                           tool-augmented agentic refinement with iterative vi-
+5 component overlap errors on typical PCB layout                                              sual, geometric, and routability feedback. (iii) We
+tasks, while consistently confining all components                                            provide a detailed analysis of LMM capabilities
+to a single board side rather than leveraging the                                             in PCB layout placement, examining performance
+full spatial capacity of the board. These results                                             across geometric legality, routability-aware spatial
+reveal that current LMMs fundamentally lack the                                               reasoning, preservation of electrical functionality,
+spatial constraint reasoning and dense placement                                              and the effectiveness of tool-augmented agentic
+optimization capabilities required for PCB PnR,                                               refinement with iterative layout feedback.
+as they fail to satisfy component non-overlap con-
+straints, multi-layer spatial utilization, and electri-                                       2   Related Work
+cal connectivity requirements essential to practical
+layout design.                                                                                This section reviews related literature particularly
+   To bridge this gap, we introduce OmniLayout,                                               relevant to PCB placement tasks and their role in ad-
+a large-scale benchmark of real-world schematic-                                              vancing geometric reasoning capabilities in LLMs.
+coupled PCB layout designs for evaluating LMMs                                                   Spatial Reasoning in LMMs. LMMs such
+on multimodal constraint-aware geometric reason-                                              as SpatialVLM, SpatialRGPT, FloorplanQA, and
+ing for PCB placement tasks. As shown in Fig-                                                 Fireplace (Chen et al., 2024; Cheng et al., 2024;
+                              Layout (≈1,681)                                                                                                                                   Schematic (≈1,681)
+                                 Component Object                                                                                                                                          Symbol Object
+
+             Component Name                               Component Value                                                                                               Symbol Name                               Symbol Value
+
+            Placement Position                             Placement Layer                                           IC2                                                Symbol BBox                               Symbol Type
+                            Component Example                                                                                                                                  Schematic Symbol Example
+          Comp. Name: IC2                Comp. Value: DS3231                                                                                                     Symbol Name: IC2                Symbol Value: DS3231
+          Comp. Type: Real Time Clock IC Comp. Orientation: 90°                                                                                                  Symbol Type: Real Time Clock IC Pin List: [NC4, …]
+          Comp. Position: [12.3825, 10.287]              Pad List: [9, …]                                                                                        Symbol BBox: [156, 168, 304, 304]
+          Comp. Placement Layer: Top-side                                                                                                                        Symbol Name Txt BBox: [182, 293, 208, 300]
+          Comp. Overall Dimension: 11.2 x 10.4 mm                                                                                                                Symbol Value Txt BBox: [182, 293, 208, 300]
+
+
+                              Soldering Pad Object                                                                                                                                           Pin Object
+
+                    Pad Name                                Pad Dimension                                                                                                   Pin Name                               Pad Name
+
+            Placement Position                           Component Name                                                                                                     Pin BBox                              Symbol Name
+                             Solder Pad Example                                                                                                                                   Schematic Pin Example
+          Pad Name: 9                     Net Name: GND                                                                                                                                             Pad Name: 9
+                                                                                                                                                                   Pin Name: NC4
+          Pad Type: Surface Mount         Pad Orientation: 0°                                                                                                      Symbol Name: U2
+          Pad Position: [4.445, 4.6]
+                                                                                                                                                                   Pin BBox: [260, 243, 305, 263]
+          Pad Placement Layer: Top-side                                                                                                                            Pin Name Txt BBox: [248, 244, 254, 253]
+          Pad Overall Dimension: 0.6 x 2.2 mm                                                                                                                      Pad Name Txt BBox: [309, 244, 331, 253]
+
+
+                                                                                                                                                                                                         …                    Schematic
+                Netlist Graph (≈ 55.8K)                                                                                                                                                                                         Netlist
+                                                                                                                                           Encode Visual Locality
+                                                                                                                                              onto Schematic                                                      𝝆sch
+                                                                                                                                                                                       …               IC2               R1
+                                  Graph Object                                                 IC2   R1    R2
+                                                                                                                                               Coordinates
+
+
+           Symbol Node (≈99.66K)                   Comp. Node (≈77.24K)                                                                                                                                      R2
+                                                                                                                D1                                                           𝐆𝒔𝒄𝒉 = 𝑵𝒔𝒄𝒉 , 𝑫𝒔𝒄𝒉
+
+              Pin Node (≈222.5K)                  Soldering Pad Node (≈168.8K)
+
+                                                                                                          在此处键入公式。                    Specctra DSNSpecctra DSN
+
+
+
+             Sch. Net (≈ 139.4K)                   Layout Net (≈139.4K)
+                                                                                                                           𝓖 = 𝑵, 𝑫
+                                Schematic Net Example                                                                                                                                                    …                     Layout
+                                                                                       𝝆brd                                    Netlist Graph                                                                                   Netlist
+          Net Name: SCL                   Spatial Weight : 0.58 (𝜌sch )
+          End Point Pin: IC2_[16]         End Point Pin: R1_[1]                                                                                                                                                   𝝆brd
+                                                                                                                                                                                       …               IC2               R1
+                                  Layout Net Example
+                                                                                                                                              Encode Physical
+          Net Name: SCL                   Spatial Weight : 0.51 (𝜌brd)
+                                                                                                                                            Locality onto Layout
+          End Point Pad: IC2_[16]         End Point Pad: R1_[1]                                                                                Coordinates                   𝐆𝐛𝐫𝐝 = 𝑵𝒃𝒓𝒅 , 𝑫𝒃𝒓𝒅              R2
+
+
+
+
+                                                                                                                       Sch. & Layout Diagram                                         Source Code (Sch. & Layout)
+                      Printed-Circuit-Board Design (≈1,681)
+
+                   Meta Information                                         BoM & Attachments
+      Overview:
+      The system is built around a Texas Instruments CC3220-series
+      microcontroller that integrates Wi-Fi connectivity and analog
+      sensing capabilities.
+      Design Description:
+      •    Microcontroller Core: Texas Instruments CC3220-series
+           MCU providing Wi-Fi connectivity, analog-to-digital
+           conversion, and general-purpose digital interfaces.                   Board Frame
+      •    Power Management: Low-dropout voltage regulators and
+           decoupling capacitors generate stable 3.3V
+      •    …
+      Specifications:
+      •   Microcontroller: Texas Instruments CC3220 Wi-Fi MCU
+      •   …
+
+
+
+
+                                           Figure 2: Overview of OmniLayout benchmark with representative cases.
+
+Rodionov et al., 2025; Huang et al., 2025) have                                                                            complex geometric and functional constraints.
+demonstrated increasingly strong spatial reasoning
+capabilities, progressing from symbolic and textual                                                                       Benchmarks for PCB Placement. In recent
+spatial reasoning benchmarks such as SPARTQA,                                                                          years, a growing number of both commercial tools
+SpaRTUN, and StepGame (Mirzaee et al., 2021;                                                                           (Kuo, 2006; Jones, 2023) and academic methods
+Mirzaee and Kordjamshidi, 2022; Shi et al., 2022)                                                                      (Zhang et al., 2025a; Chen et al., 2025b; Han et al.,
+toward multimodal and grounded spatial under-                                                                          2026a,b) have been proposed to automate the PCB
+standing in benchmarks such as SpatialEval, VSI-                                                                       component placement process, spanning classical
+Bench, Open3DVQA, 3DSRBench, and CA-VQA                                                                                optimization algorithms, constraint-based solvers,
+(Yang et al., 2025; Zhang et al., 2025b; Ma et al.,                                                                    and emerging learning-based approaches. Repre-
+2025). Recent work further explores spatial world                                                                      sentative commercial tools such as Cadence Al-
+modeling through cognitive-map prompting, depth-                                                                       legro X AI (Kuo, 2006; Jones, 2023), DeepPcb
+aware multimodal learning, and neuro-symbolic                                                                          (DeepPCB, 2026) and Quilter (Quilter, 2026) adopt
+reasoning (Yang et al., 2025; Cai et al., 2025; Ali                                                                    search-based and reinforcement learning strategies
+et al., 2025). Despite these advances, existing                                                                        respectively to automate PCB component place-
+LMM research has largely overlooked the chal-                                                                          ment. However, these approaches are developed on
+lenge of placing densely packed objects within tight                                                                   proprietary private datasets that are never publicly
+spatial boundaries while simultaneously satisfying                                                                     released, and generating a single placement candi-
+                                                                                                                       date can take up to several hours, posing significant
+                                             600              583                                                       600         586                                                                                 561
+                                                                                      Mean=45.95                                                                     Mean=100.43                                  512
+                                                                                                                                                                                                                                                   Mean=82.90
+                                                                                      Median=35.00                                        509                        Median=63.00                                                                  Median=54.00
+
+                                             450
+                                                                    452
+                                                                                                                        450                                                                           450
+
+
+
+
+                                 Frequency
+
+
+
+
+                                                                                                            Frequency
+
+
+
+
+                                                                                                                                                                                          Frequency
+                                             300        274                                                             300                                                                           300                     282
+
+                                                                                                                                                220
+                                                                          179                                                 183
+                                                                                                                                                                                                                                    150
+                                             150                                                                        150                           123                                             150   108
+                                                                                104
+
+                                                                                      43                                                                    45                                                                            46
+                                                   30
+                                                                                               13       3                                                            11       2       2                                                            13       6       3
+                                              0                                                                          0                                                                             0
+
+
+
+
+                                              0
+
+                                                   4
+
+                                                         16
+
+                                                               36
+
+                                                                     65
+
+                                                                            1
+
+                                                                                  5
+
+                                                                                           8
+
+                                                                                                    8
+
+
+
+
+                                                                                                                         0
+
+                                                                                                                              14
+
+                                                                                                                                     58
+
+                                                                                                                                            0
+
+                                                                                                                                                  2
+
+                                                                                                                                                        2
+
+                                                                                                                                                                 1
+
+                                                                                                                                                                          9
+
+                                                                                                                                                                                  6
+
+
+
+
+                                                                                                                                                                                                       0
+
+                                                                                                                                                                                                             10
+
+                                                                                                                                                                                                                   41
+
+                                                                                                                                                                                                                         93
+
+                                                                                                                                                                                                                                6
+
+                                                                                                                                                                                                                                      9
+
+                                                                                                                                                                                                                                               3
+
+                                                                                                                                                                                                                                                        8
+
+                                                                                                                                                                                                                                                                4
+                                                                          10
+
+                                                                                 14
+
+                                                                                      19
+
+                                                                                               25
+
+
+
+
+                                                                                                                                          13
+
+                                                                                                                                                23
+
+                                                                                                                                                      36
+
+                                                                                                                                                            52
+
+                                                                                                                                                                     70
+
+                                                                                                                                                                              92
+
+
+
+
+                                                                                                                                                                                                                              16
+
+                                                                                                                                                                                                                                    25
+
+                                                                                                                                                                                                                                          37
+
+                                                                                                                                                                                                                                                   50
+
+                                                                                                                                                                                                                                                            66
+      (a) worldcloud of topics       (b) Components per diagram.                                                              (c) Pins per diagram.                                                         (d) Nets per diagram.
+Figure 3: Statistical overview of the OmniLayout benchmark. The dataset covers a wide range of electronic domains,
+with each layout design containing up to 327 components, 1,172 pins, and 840 nets.
+
+barriers to both reproducibility and practical de-                                                                      ing, and routability verification) to progressively
+ployment. Cypress (Zhang et al., 2025a) and Mod-                                                                        refine component positions until all geometric and
+uPlace (Han et al., 2026b) represent the most recent                                                                    electrical constraints are satisfied.
+academic efforts, proposing a VLSI-inspired GPU-
+accelerated placement framework and an LLM-                                                                             3.2          Source-driven Annotation Curation
+assisted modular placement method respectively,
+yet both are evaluated on small closed-source or                                                                        We construct the OmniLayout benchmark through
+synthesized benchmarks of fewer than 100 com-                                                                           a scalable automated pipeline, with full cura-
+ponents. Current works remain severely limited                                                                          tion details in Appendix A. We gather real-world
+in both scale and accessibility, as most methods                                                                        schematic designs from open-source hardware plat-
+are evaluated on closed-source private datasets con-                                                                    forms such as SparkFun, Arduino, Adafruit, and
+taining only tens of designs with limited numbers                                                                       GitHub (SparkFun Electronics, 2026; GitHub, Inc.,
+of components, far below the complexity of real-                                                                        2026; Arduino, 2026; Adafruit Industries, 2026;
+world industrial PCBs, which fundamentally hin-                                                                         Seeed Technology Co., Ltd., 2026; ProtoCentral,
+ders the generalizability and reproducibility of pro-                                                                   2026). The collected projects are implemented
+posed methods across diverse circuit designs.                                                                           in Autodesk EAGLE (Autodesk Inc., 2024), a
+                                                                                                                        widely used industrial EDA tool that adopts an
+3      Benchmark Construction                                                                                           XML-based file format, allowing efficient parsing
+                                                                                                                        of circuit structures and connectivity information
+3.1     Task Formulation                                                                                                through programmatic extraction. To evaluate PCB
+To provide a comprehensive evaluation framework                                                                         placement across spatial, routability, and electrical
+for PCB placement tasks, our task formulation cov-                                                                      functionality dimensions, we require two types of
+ers four key capabilities of constraint-aware geo-                                                                      ground-truth annotations: (i) schematic visual posi-
+metric reasoning: (i) Spatial Reasoning, which                                                                          tions encoding intended electrical relationships be-
+requires determining the position, orientation, and                                                                     tween components, and (ii) reference layout annota-
+layer assignment of a large number of densely                                                                           tions capturing ground-truth component positions,
+packed components within an irregularly shaped                                                                          orientations, layer assignments, and board frame
+board boundary while satisfying geometric spac-                                                                         geometry. Rather than costly manual annotation,
+ing and non-overlap constraints; (ii) Routability,                                                                      we leverage two complementary EDA rendering
+which evaluates whether the resulting component                                                                         engines. For schematics, we adopt the rendering
+placement can be successfully connected by electri-                                                                     engine from (Lu et al., 2026), which parses EA-
+cal traces without conflicts, a necessary condition                                                                     GLE XML files to produce high-fidelity schematic
+for a functional PCB; (iii) Electrical Function-                                                                        diagrams with pixel-aligned component positions
+ality, which assesses whether the placement pre-                                                                        and net-level connectivity annotations, serving as
+serves the correct electrical relationships between                                                                     reference signals for evaluating electrical function-
+components, including proper connectivity of pins,                                                                      ality preservation. For reference layouts, while
+nets, and signal paths as defined in the circuit                                                                        component placements can be extracted directly
+schematic; (iv) Agentic Tool Use for Constraint-                                                                        from EAGLE software, board frame geometry is
+Aware Geometric Reasoning, which formulates                                                                             not captured; we therefore develop a dedicated
+PCB component placement as an iterative decision-                                                                       PCB layout rendering engine that parses source-
+making problem, where LMMs are equipped with                                                                            driven annotations and board frame geometry di-
+tools (such as layout visualization, overlap check-                                                                     rectly from EAGLE XML layout files containing
+the reference layout information. Beyond annota-          a well-known non-convex NP-hard problem: given
+tion extraction, this engine additionally serves as       n components to be placed within a constrained
+an interactive visualization tool within our agentic      board area, the solution space grows combinatori-
+evaluation framework (Section 5.1), rendering the         ally due to discrete orientations, layer assignments,
+current placement state as visual feedback to guide       and non-overlapping constraints, yielding multi-
+LMMs in iteratively refining component positions.         ple feasible solutions with no efficient algorithm
+                                                          guaranteed to find the global optimum. To evaluate
+3.3    Statistics of OmniLayout Benchmark                 a predicted placement against a reference design,
+As illustrated in Figure 3 and Figure 2, OmniLay-         we formulate PCB placement evaluation as a con-
+out comprises 1,681 real-world schematic-coupled          strained optimization assessment problem. Given a
+PCB layout designs spanning diverse application           set of components V , nets E, and board boundary
+domains (e.g., robotics, wireless systems, and sens-      B, the placement quality is measured by:
+ing), providing a rich and diverse resource for su-              min      W (x, y, θ) + λ1 Cp2p (x, y)
+                                                                x,y,θ,l
+                                                                                                                            (1)
+pervised learning in PCB placement and other EDA                          + λ2 D(x, y, θ, l) + λ3 F(x, y, x∗ , y∗ )
+tasks. Our dataset includes three levels of struc-
+tured annotations: (i) Schematic-Coupled Lay-                subject to θi ∈ {0◦ , 90◦ , 180◦ , 270◦ }, li ∈ {top, back},
+                                                          ∀vi ∈ V , and (xi , yi ) ∈ B , where W (x, y, θ) mea-
+out Design, providing fine-grained annotations for
+77.24K components, 168.8K pads, and 139.4K                sures total wirelength as a proxy for routing ef-
+nets, paired with corresponding schematic and ref-        ficiency, Cp2p (x, y) penalizes pad-to-pad clearance
+erence layout designs. Each component in the lay-         violations, D(x, y, θ, l) penalizes component over-
+out is annotated with its name, value, reference          laps across both board layers, and F measures elec-
+placement, orientation, and layer assignment, with        trical functionality preservation, defined as:
+                                                                                    1                   pred
+                                                                                                               − ∆ref
+                                                                                            X
+its corresponding symbol in the schematic anno-              F(x, y, x∗ , y∗ ) =                       ∆ij        ij        (2)
+                                                                                   |E|                                  2
+                                                                                         (vi ,vj )∈E
+tated with position and pin connectivity. Each
+pad in the layout is annotated with its name, di-         where ∆pred  ij  = (xi − xj , yi − yj ) and ∆ref    ∗
+                                                                                                       ij = (xi −
+                                                           ∗    ∗     ∗
+mensions, and position in the component coor-             xj , yi − yj ) denote the relative spatial displacement
+dinate frame, with its corresponding pin in the           between electrically connected component pair
+schematic annotated with connectivity and spatial         (vi , vj ) in the predicted and reference placements
+position. (ii) Connectivity Annotations, explicitly       respectively, measuring whether the predicted lay-
+capturing circuit topology through pad–pad con-           out preserves the spatial topology of electrical con-
+nections with net semantic labels (when available),       nections as defined in the circuit schematic. The
+defining the structural wiring relationships between      coefficients λ1 , λ2 , λ3 balance the contribution of
+components. (iii) Functional Spatially-Weighted           each evaluation dimension.
+Netlist Annotations, capturing circuit topology
+                                                          4.2    Evaluation Criteria
+through pad–pad connections with net semantic la-
+bels (when available), accompanied by two spatial         We define evaluation metrics across four comple-
+netlist graph representations: one computed from          mentary dimensions to comprehensively assess
+component distances in the reference layout coor-         PCB placement quality; full details of each met-
+dinate frame, and one from symbol distances in            ric are provided in Appendix B due to space con-
+the schematic image frame. Both serve as electri-         straints. (i) Geometric Legality, which evaluates
+cal functionality metrics, where alignment between        whether the predicted placement satisfies physi-
+predicted and reference spatial weights indicates         cal constraints, including normalized component
+greater functional similarity.                            overlap area, out-of-boundary ratio, and runtime,
+                                                          collectively measuring whether the placement is
+4     Evaluation Metrics                                  physically valid within board boundary B; (ii)
+                                                          Routability, which assesses routing quality of the
+4.1    Evaluation Protocol                                predicted placement across both pre-routing prox-
+To the best of our knowledge, there is no standard-       ies — half-perimeter wirelength (HPWL) (Nay-
+ized protocol for evaluating PCB component place-         lor et al., 2001), net crossing (NC) (Zhang et al.,
+ment predictions from LMMs that jointly considers         2025a), and net separation (Cheng et al., 2022) —
+spatial constraint satisfaction, routability, and elec-   and post-routing metrics obtained via FreeRout-
+trical functionality preservation. PCB PnR task is        ing (Freerouting, 2024), including actual routed
+        Prompt
+
+    Please act as an expert PCB layout engineer. I will provide the
+    schematic design (in image), board outline (in DXF format), netlist
+    (with spatial weight), and IC dimensions.                                   Initial
+    Generate the optimal placement for all ICs, including the position (x,   Placement
+    y), placement side (front or back), and orientation of each
+    component…                                                                                                              …                               …                                   …                               …
+                                                                                                                            …                               …                                   …                               …
+                                                                                                                            …                               …                                   …                               …
+                                                                                                                            …                               …                                   …                               …   Final Placement
+
+
+                                                                                                   Iteration 0                       Iteration 1                     Iteration 2                          Iteration 3
+                                                                                                      Failed                            Failed                          Failed                                Failed
+                                                                                                 Move overlapping        Edit      Adjust component      Edit        Place connected     Edit               Reorganize
+                                                                                                                                                                   components closer
+                                                                                                components farther                placement to resolve                                                 components to better                           …
+                                                                                                                                                                    together to reduce
+                                                                                               apart to improve layout            detected geometric                                                    preserve schematic                            …
+        Planner                                                               Checklist                 clarity.                       overlaps.
+                                                                                                                                                                    HPWL and improve
+                                                                                                                                                                        routability.                   spatial relationships.
+                                                                                                                                                                                                                                                      …
+                                                                                                                                                                                                                                                      …
+                                                      Think                   Questions
+                                                                                                                                                                                                                                      Iteration N
+         Prompt            Netlist                          Checklist          Checklist                                                                                                                                                Passed
+                                             LLM
+      Board Outline    IC Dimensions
+                                                            Questions               …         Are there any visually             Are any components             Does the layout design              Does the layout preserve
+                                                                                    …      overlapping components in            overlapping based on            have poor routability                spatial relationships
+                                                                                            the current layout image?             offline checking?
+                                                                                    …                                                                             based on HPWL?                     from the schematic?
+
+
+
+
+Figure 4: Overview of a multi-modal, multi-agent, multi-round agentic framework for evaluating LMM-based tool
+usage in PCB component placement.
+wirelength (PRWL), routability ratio (Zhang et al.,                                                                                 assess end-to-end PCB component placement. All
+2025a) and number of vias (#Vias); (iii) Electri-                                                                                   settings include the board boundary, netlist, and
+cal Functionality Preservation, which measures                                                                                      component dimensions, while we further study
+whether the predicted placement preserves the rela-                                                                                 the impact of additional information, including
+tive spatial relationships of subcircuits defined in                                                                                schematic images, schematic-aware netlist graphs,
+the circuit schematic. Since PCB placement does                                                                                     global schematic positions, and few-shot examples;
+not have a unique ground truth solution, we evalu-                                                                                  and (ii) Agentic Evaluation, where LMMs are
+ate the degree to which the predicted layout aligns                                                                                 equipped with layout visualization, overlap check-
+with the subcircuit topology of the schematic dia-                                                                                  ing, and routability verification tools to iteratively
+gram in terms of visual relative distances, as well as                                                                              refine component placement under geometric and
+the component-level relative placement distances                                                                                    electrical constraints. Implementation details are
+of the expert-designed reference layout. (iv) Agen-                                                                                 provided in Appendix C due to space constraints.
+tic Placement, which evaluates LMMs iteratively                                                                                       Implementation of Commercial and Open-
+refining PCB placement through tool use, mea-                                                                                      Source PCB Layout Baselines. To comprehen-
+sured by: (a) Constraint Satisfaction Rate, the ratio                                                                              sively evaluate the difficulty and quality of our
+of geometric and electrical constraints satisfied at                                                                               benchmark, we assess placement performance
+the final placement iteration; (b) Step Efficiency,                                                                                across both commercial and academic baselines.
+the average number of tool-use steps required to                                                                                   For commercial tool, we evaluate Quilter (Quilter,
+reach a valid placement; and (c) Placement Re-                                                                                     2026), a reinforcement learning-based PCB PnR so-
+finement Quality, whether successive placement                                                                                     lution. For academic baselines, we implement SA-
+updates progressively reduce overlap violations,                                                                                   PCB (OpenROAD, 2024), an OpenROAD-based
+out-of-boundary components, and routing conflicts                                                                                  simulated annealing placer; NS-Place (Cheng et al.,
+across iterations.                                                                                                                 2022), a net separation-oriented analytical place-
+                                                                                                                                   ment method; Cypress (Zhang et al., 2025a), a
+5        Experiment and Findings                                                                                                   VLSI-inspired GPU-accelerated placement frame-
+                                                                                                                                   work; Chen et al. (Chen et al., 2025b), a clearance-
+5.1          Experimental Setups                                                                                                   constrained global placement method supporting
+Study Setup.      The tested LMMs in this                                                                                          heterogeneous components; and PCBAgent (Chen
+section include GPT-5.5 (OpenAI, 2026),                                                                                            et al., 2025a), an LLM and reinforcement learning-
+GPT-5-mini (OpenAI, 2025), Gemini-3.1-                                                                                             based placement framework.
+Pro-Preview (Google DeepMind, 2025b),                                                                                                 Implementation of LMMs Agentic Frame-
+Gemini-2.5-Flash-Lite (Google DeepMind, 2025a),                                                                                    work. We design a multi-modal, multi-agent, and
+Claude-Sonnet-4.6 (Anthropic, 2026), LLaMA-4-                                                                                      multi-round agentic evaluation framework where
+Maverick (Meta AI, 2025), Mistral-Medium-3.5                                                                                       LMMs are provided with the board boundary,
+(128B) (Mistral AI, 2025), Qwen3.5-9B (Qwen                                                                                        netlist, component dimensions, and schematic dia-
+Team, 2026b), and Qwen3.6-35B-A3B (Qwen                                                                                            gram, and equipped with three tools: layout visu-
+Team, 2026a). We evaluate these models alongside                                                                                   alization for rendering the current placement state,
+two commercial and five open-source PCB                                                                                            overlap checking for reporting constraint violations,
+placement baselines. We conduct two studies:                                                                                       and routability verification for estimating routing
+(i) Zero-shot Evaluation, where all LMMs are                                                                                       conflicts. At each step, the LMM observes the
+prompted once without intermediate interaction to                                                                                  rendered layout and iteratively refines component
+Table 2: Oneshot evaluation of LMMs on PCB component placement. OO denotes total overlapping area
+between components; OoB denotes components placed outside the board boundary; RT denotes inference time
+in seconds; HPWL denotes half-perimeter wirelength; NC denotes number of crossings; NS denotes average net
+separation distance; PRWL denotes predicted routed wirelength; RR denotes fraction of successfully routed nets;
+#Vias denotes number of vias; Sch. SW-Net denotes spatial-weight netlist extracted from schematic; Sch. Img
+denotes schematic image; Sch. Sem. denotes schematic semantic attributes for components; Sch. and Ref. denote
+electrical functionality scores against schematic and reference layout respectively.
+Model                              Size      Input               Geometric Legality                                      Routability                              Electrical Functionality
+                                             Data        OO      OoB        RT     P-Pass    HPWL        NC        NS         PRWL      RR     #Vias    R-Pass   Sch.    Ref.     E2E Pass
+                                                                                 Commercial Chatbot Systems
+                                            Zeroshot     0.07     0.17    130.07    72.04    628.78    177.61    29514.95     479.03    0.90   12.47    15.52    1.189   0.521      15.23
+GPT-5.5                             -     Sch. SW-Net.   0.08     0.17    150.19    64.84    623.91    181.50    28731.48     390.10    0.92   8.98     52.75    0.937   0.593      34.27
+                                           Sch. Sem.     0.08     0.17    150.56    64.07    619.65    178.54    28141.41     432.88    0.83   7.05     79.56    63.71   0.578      49.08
+                                            Sch. Img     0.07     0.17    144.93    72.04    628.78    177.61    29514.95     435.99   0.91    10.91    59.55    1.120   0.559      42.83
+                                            Fewshot      0.07     0.19    122.46    99.01    745.75    298.28    39938.09     282.75    0.95   1.00       –      1.063   0.535        –
+                                            Zeroshot     0.48     0.24     87.77    98.99    912.87    307.64   127023.27     271.62    0.84    6.40    41.60    1.288   0.486      41.11
+GPT-5-mini                          -     Sch. SW-Net.   0.54     0.24     70.53    98.93    870.62    285.57   105211.90     195.09    0.85   4.40     44.58    0.924   0.531      44.08
+                                           Sch. Sem.     0.54     0.24     71.85    99.29    871.02    289.87   106020.51     253.41    0.81   3.92     60.00    97.03   0.514      56.22
+                                            Sch. Img     0.48     0.24     72.48    98.99    912.87    307.64   127023.27     213.99   0.79     4.87    39.56    1.148   0.494      38.91
+                                            Fewshot      0.38     0.26     66.33     5.95    915.73    303.91    79087.22     115.58    0.77   0.20       –      1.530   0.437        –
+ Claude                                     Zeroshot     0.49     0.23     10.67    90.18    700.57    177.63    42531.39     245.46    0.76    5.65    43.21    1.161   0.486      27.84
+                                    -     Sch. SW-Net.   0.49     0.23     10.35    90.30    696.30    177.49    44589.04     209.44    0.86   4.32     50.30    0.923   0.578      45.33
+Sonnet 4.6                                 Sch. Sem.     0.49     0.23     10.38    90.30    702.26    177.88    45734.27     284.77    0.83   4.11     63.19    88.34   0.548      55.56
+                                            Sch. Img     0.49     0.23     10.08    90.18    700.57    177.63    42531.39     253.40   0.85     5.04    49.90    1.041   0.539      44.97
+                                            Fewshot      0.42     0.25     11.47     5.95    939.47    313.46    69042.98     190.43    0.54   0.00       –      1.315   0.487        –
+Gemini 3.1                                  Zeroshot     0.26     0.10    116.10    42.89    672.20    199.23    32692.88     419.16   0.340    1.00      –      1.260   0.502        –
+                                    -     Sch. SW-Net.   0.13     0.18    127.28    99.64    772.24    281.62    61503.09     387.57    0.91   9.02     58.32    1.275   0.552      58.18
+Pro-Preview                                Sch. Sem.     0.16     0.19    129.34    99.58    747.65    268.01    52865.44     353.77    0.63   4.75       –      1.102   0.552        –
+                                            Sch. Img     0.24     0.20    118.15    99.52    658.02    207.08    32931.45     316.27   0.92     6.68    54.94    1.031   0.577      54.61
+                                            Fewshot      0.16     0.22    127.48     5.95    836.68    332.20    56154.95      97.65    0.73   0.80       –      1.199   0.550        –
+Gemini 2.5                                  Zeroshot     0.61     0.32      6.50    89.53   1080.87 285.58      523166.68     192.76   0.204    5.12      –      1.165   0.486        –
+                                    -     Sch. SW-Net.   0.57     0.33      6.57    86.67   1085.53 326.74      313629.50     138.05    0.79   3.05     41.37    1.196   0.482      35.51
+ Flash-lite                                Sch. Sem.     0.58     0.33      6.21    86.44   1118.50 334.70      361803.42     285.80    0.21   4.79       –      1.369   0.456        –
+                                            Sch. Img     0.61     0.32     8.43     89.53   1080.87 285.58      523166.68     164.08   0.83     3.56    40.20    1.026   0.503      35.51
+                                            Fewshot      0.51     0.38      4.81     5.83   1354.06 332.89      180152.54     131.82    0.62   0.50       –      1.530   0.452        –
+                                                                                    Open-Source MLLMs
+LLaMA 4                                     Zeroshot     0.54     0.28     40.67    99.46   1037.73 261.07      368557.83     225.27    0.82    5.15    43.60    1.494   0.478      43.37
+                                   400B   Sch. SW-Net.   0.53     0.27     32.32    99.64   1054.92 274.45      226205.34     195.67    0.83    4.27    38.89    1.296   0.490      38.73
+Maverick                                   Sch. Sem.     0.54     0.27     32.91    99.64    990.15    269.40   384300.14     251.62    0.83    4.06    58.54    97.38   0.508      55.44
+                                            Sch. Img     0.54     0.28     30.77    99.46   1037.73 261.07      368557.83     226.32   0.83     4.87    40.47    1.244   0.507      40.15
+                                            Fewshot      0.50     0.29     27.94     5.95   1080.05 326.79      109768.57      15.86    1.00    0.50      –      1.547   0.449         –
+Ministral                                   Zeroshot     0.58     0.30     17.33    99.52   1018.66 281.81      269168.06     182.98    0.85    4.12    34.77    1.172   0.493      34.62
+                                   14B    Sch. SW-Net.   0.59     0.29     23.79    99.35    960.08    279.51   207435.41     186.27    0.84    4.21    35.97    1.115   0.504      35.69
+ 14B                                       Sch. Sem.     0.57     0.30     25.42    99.35    946.81    274.31   163720.97     236.36    0.83    3.72    49.55    97.09   0.495      45.69
+                                            Sch. Img     0.58     0.30     19.23    99.52   1018.66 281.81      269168.06     177.81   0.85     4.08    41.70    1.234   0.486      41.23
+                                            Fewshot      0.52     0.36     17.24     5.95   1047.79 319.97      117151.31     548.91    1.00    2.00      –      1.350   0.474         –
+                                            Zeroshot     0.59     0.26    460.47     1.61    460.30     90.59    28168.13     279.67   0.308    6.00    0.00     1.520   0.402       0.00
+Qwen3.5-9B                         9B     Sch. SW-Net.   0.64     0.24    598.24     5.77    891.03    247.08    70491.50     208.04    0.77    2.92    36.36    1.318   0.576       2.14
+                                           Sch. Sem.     0.64     0.22    380.75     6.96    912.23    269.19    92222.56     255.94    0.84    2.92    35.45     6.96   0.521       2.32
+                                            Sch. Img     0.60     0.27    574.55     5.18    591.87    141.90    51896.65     115.39   0.84     3.22    37.93      –       –         1.96
+                                            Fewshot      0.43     0.48    389.54     0.83   1646.13 934.79      186513.73     174.26    0.81    0.33      –      1.245   0.449         –
+Qwen3.6-35B-                                Zeroshot     0.64     0.13    456.81    13.21    603.41    159.19    42572.41     250.81   0.305    1.50      –      1.164   0.516         –
+                                   35B    Sch. SW-Net.   0.62     0.21    343.63    51.22    594.01    169.56    46996.45     147.36    0.81    3.83    45.07    0.642   0.571      22.84
+   A3B                                     Sch. Sem.     0.62     0.20    286.55    48.07    634.59    160.86   154873.07     186.55    0.80    3.00    59.33    46.76   0.522      27.42
+                                            Sch. Img     0.61     0.22    255.28    51.04    620.16    174.54    70062.54     202.15   0.83     3.79    48.24    0.981   0.477      24.45
+                                            Fewshot      0.35     0.21    324.74     5.53    767.92    310.12   56298.48      462.58    0.76    1.50      –      1.108   0.537         –
+                                                                                   Commercial PnR Tools
+Quilter (Quilter, 2026)             -          -         0.023   0.019   5841.00       –     553.48     46.37     1.65        194.28   0.84    163.27     –      1.24    0.57         –
+                                                                                   Open-Source PnR Tools
+PCBAgent (Chen et al., 2025a)       -          -         0.41     0.24    316.57       –    1077.03 372.44      109405.37     244.79   0.42     5.51      –      0.30    0.41         –
+SA-PCB (OpenROAD, 2024)             -          -         0.22     0.28    40.94        –    1098.81 334.60      129177.56     165.09   0.25     3.44      –      4.22    0.39         –
+NS-Place (Naylor et al., 2001)      -          -         0.73     0.23    10.87        –    1010.54 295.80       89299.07     168.45   0.23     3.85      –      1.84    0.38         –
+Cypress (Zhang et al., 2025a)       -          -         0.24     0.18    26.83        –     994.54    332.59   128294.67     300.61   0.33     4.90      –      4.68    0.49         –
+Chen et al. (Chen et al., 2025b)    -          -         0.19     0.20    131.37       –     602.21    130.03    22950.45     369.99   0.62     6.11      –      3.19    0.86         –
+Human Engineer (Ref. Layout)        -          -         0.01     0.14       –     100.00    579.91    114.98    19664.86     140.89   1.00     15.4      –      1.01    1.00         –
+
+
+positions, orientations, and layer assignments until                                            dimensional spatial organization in PCB design.
+all constraints are satisfied or the maximum number                                                • Routability. LMMs exhibit substantial weak-
+of steps is reached.                                                                            ness in routability-aware placement, treating com-
+5.2 Main Results and Findings                                                                   ponent arrangement as a purely spatial packing
+Evaluation results of zero-shot study and agentic                                               problem while neglecting circuit connectivity. Al-
+study are shown in Table 2 and Table 3. Implemen-                                               though zeroshot LMMs achieve promising score in
+tation details are provided in Appendix C due to                                                overlap of less than 10% and out of boundary of
+space constraints. Overall, the dense component                                                 less than 10%, their placements consistently result
+placement performance of LMMs remains signifi-                                                  in poor routing outcomes reflected in higher PRWL
+cantly below that of human engineers, highlighting                                              and lower RR, suggesting a fundamental gap in
+their limited capability in comprehensive layout                                                understanding the relationship between component
+design. Evaluation results reveal consistent limita-                                            placement and downstream routing feasibility.
+tions across multiple layout design capabilities.                                                  • Electrical Functionality. LMMs achieve an
+   • Geometric Legality. While LMMs demon-                                                      average similarity score below 60% when compar-
+strate promising performance on simple PCB lay-                                                 ing predicted placements against reference layout
+outs with fewer than 40 components per design,                                                  designs, indicating that component positions devi-
+their performance degrades significantly as com-                                                ate substantially from both the schematic diagram’s
+plexity and component density increase. Further-                                                visual topology and the expert-designed reference
+more, LMMs exhibit poor spatial utilization, plac-                                              in terms of relative spatial distances. This quantita-
+ing 80% of components on the top layer rather                                                   tive gap reflects a fundamental deficiency: LMMs
+than distributing them across available routing lay-                                            lack a structured understanding of circuit hierar-
+ers, suggesting a limited understanding of three-                                               chy and functional grouping, and consequently fail
+Table 3: Agentic evaluation of LMMs on PCB component placement. OO denotes total overlapping area between
+components; OoB denotes components placed outside the board boundary; RT denotes inference time in seconds;
+HPWL denotes half-perimeter wirelength; NC denotes number of crossings; NS denotes average net separation
+distance; PRWL denotes predicted routed wirelength; RR denotes fraction of successfully routed nets; #Vias denotes
+number of vias; Visualization denotes layout visualization by our custom EDA rendering engine; Geo. Check
+denotes offline overlap checking via geometric algorithm; Routing Score denotes HPWL-based routing quality
+feedback as tool output; All Tools denotes the setting where all aforementioned tools are provided simultaneously;
+Sch. and Ref. denote electrical functionality scores against schematic and reference layout respectively.
+ Model          Size       Input           Geometric Legality                           Routability                        Electrical Functionality   Agentic
+                           Data         OO      OoB       RT        HPWL         NC        NS     PRWL      RR     #Vias   Sch.          Ref.          Step
+                                                                Commercial Chatbot Systems
+                       Visualization    0.000   0.000   327.869     622.557    58.700    0.959    113.94   0.591   0.00    0.966        0.586          3.375
+ GPT-5.5         -      Geo. Check      0.000   0.000   295.334     276.094     2.250     0.918   201.28   0.631   8.00    0.893        0.538          2.200
+                       Routing Score    0.000   0.000   517.918    281.964     17.250     0.953   163.17   0.735   2.00    1.000        0.552         4.750
+                         All Tools      0.007   0.019    351.385   279.563      5.167     0.723   551.83   0.509   2.00    0.675        0.569          4.510
+                       Visualization    0.026   0.000   146.935     664.691   102.600     3.702   387.20   0.370   2.00    1.336        0.499          3.080
+ GPT-5-mini      -      Geo. Check      0.036   0.000   813.394     492.606   100.000     1.882   222.05   0.347   7.00    1.569        0.465         16.800
+                       Routing Score    0.001   0.000   522.033    573.106     25.000     2.223   530.78   0.200   8.00    1.633        0.429         12.400
+                         All Tools      0.021   0.011   1447.600   241.864     39.250     4.624   204.42   0.300   5.00    1.327        0.400         29.840
+  Claude               Visualization    0.017   0.000   186.806     288.944    43.857    3.923    132.57   0.540   3.67    1.344        0.553          4.680
+                 -      Geo. Check      0.002   0.000   546.897     352.707    31.667     1.519   380.68   0.506   7.00    1.029        0.515         11.000
+ Sonnet 4.6            Routing Score    0.043   0.009    509.824   339.054     41.000     1.728   270.42   0.614   2.00    1.093        0.519         14.000
+                         All Tools      0.004   0.014   857.961    455.474     46.125     1.728   343.92   0.638   5.50    1.829        0.411         18.806
+ Gemini 3.1            Visualization    0.050   0.000   211.613     306.256    13.500    1.779     84.35   0.586   0.00    0.920        0.713          2.125
+                 -      Geo. Check      0.007   0.000   417.642     385.542    34.000     1.662   347.12   0.484   5.00    0.852        0.553          3.400
+ Pro-Preview           Routing Score    0.015   0.013    441.500   1145.583 436.667       1.724   112.59   0.480    4.3    0.942        0.525          3.000
+                         All Tools      0.000   0.000    555.006   370.560     -3.000     0.617    50.45   0.455   1.00    1.070        0.520          5.041
+ Gemini 2.5            Visualization†   0.094   0.118    345.710    238.111    10.000     3.127   147.81   0.667   4.00    1.372        0.404          6.818
+                 -      Geo. Check      0.091   0.000    29.649     306.526    31.500     1.256   197.88   0.677   7.00    0.957        0.505          1.000
+  Flash-lite           Routing Score    0.081   0.000   864.272    220.130     27.000     1.965   130.44   0.274   5.00    2.084        0.406         20.000
+                        All Tools‡      0.000   0.000    104.002    121.400    24.000    16.032    49.83   0.172   6.87    1.137        0.760         12.378
+                                                                  Open-Source MLLMs
+ LLaMA 4               Visualization    0.111   0.141   178.135     373.654    79.600    3.525    142.07   0.248   4.33    1.413        0.527          4.909
+                400B    Geo. Check      0.099   0.040   579.333     369.272    23.000     1.696   108.29   0.599   3.00    2.308        0.362         19.667
+ Maverick              Routing Score    0.107   0.040    831.474   391.170     44.250     2.404   175.97   0.562   4.50    2.282        0.371         19.800
+                         All Tools      0.059   0.167   1521.404   516.834     21.000     1.433   43.92    0.287   1.00    0.986        0.545         46.940
+ Ministral             Visualization    0.130   0.047    72.987     691.764    51.714    17.187   126.68   0.252   0.50    1.237        0.470          2.870
+                14B     Geo. Check      0.004   0.038   249.803     572.982    25.000     2.359   541.25   0.167   8.00    2.056        0.418          9.750
+  14B                  Routing Score    0.067   0.074    169.451   437.925     70.667     2.356   179.62   0.530   2.50    1.576        0.421          8.250
+                         All Tools      0.060   0.027   1320.835   708.056    115.400     4.152   276.47   0.449   3.00    2.012        0.377         41.673
+                       Visualization      –       –         –          –          –         –       –        –       –       –            –              –
+ Qwen3.5-9B     9B      Geo. Check        –       –         –          –          –         –       –        –       –       –            –              –
+                       Routing Score      –       –         –          –          –         –       –        –      –        –            –              –
+                         All Tools        –       –         –          –          –         –       –        –      –        –            –              –
+ Qwen3.6-35B-          Visualization      –       –         –          –          –         –       –        –       –       –            –              –
+                35B     Geo. Check        –       –         –          –          –         –       –        –       –       –            –              –
+    A3B                Routing Score      –       –         –          –          –         –       –        –      –        –            –              –
+                         All Tools        –       –         –          –          –         –       –        –      –        –            –              –
+
+
+to preserve the spatial relationships of subcircuits                           rapidly, saturating performance around 5 iterations,
+during placement.                                                              whereas Qwen models fail to converge even at the
+   • Ablation Study Analysis. We conduct an ab-                                maximum limit of 50 iterations, suggesting funda-
+lation study examining the contribution of three                               mental differences in spatial reasoning efficiency
+input modalities: schematic diagram, netlist with                              and constraint satisfaction across model families.
+spatial weights, and semantic component attributes.                            Notably, Qwen3.5-9B and Qwen3.6-35B-A3B fail
+Among these, fewshot yields the greatest perfor-                               to produce structured outputs entirely.
+mance improvement, highlighting its importance
+                                                                               6      Conclusion
+in guiding layout reasoning. Additionally, few-
+shot prompting consistently yields significant per-                            We introduce OmniLayout, a benchmark for evalu-
+formance gains across models, demonstrating the                                ating LMMs on PCB layout geometric reasoning,
+benefit of in-context layout examples.                                         consisting of 1,681 real-world PCB layouts cou-
+   • Agentic Spatial & Routing Reasoning. By in-                               pled with fine-grained annotations and structured
+corporating layout visualization, geometric legality                           evaluation protocols. We evaluate state-of-the-art
+checking, and routability feedback into a multi-                               LMMs under both end-to-end and tool-augmented
+agent framework, agentic interaction improves                                  settings, alongside open-source and commercial
+placement performance by reducing component                                    PCB placement tools as baselines. Our analysis
+overlap and out-of-boundary violations, while lay-                             reveals critical limitations of current LMMs, in-
+out visualization feedback contributes to improved                             cluding weak geometric reasoning, poor spatial un-
+routing performance compared to direct generation                              derstanding, limited routability optimization, and
+baselines.                                                                     inability to satisfy electrical connectivity and func-
+   • Spatial Reasoning Steps. More iterations lead                             tional constraints defined by the schematic.
+to improved placement performance, as models
+have greater opportunity to resolve constraint vio-
+lations. Gemini 3.1 Pro-Preview models converge
+Limitations                                             and open-source designs, unknown biases inherited
+                                                        from these sources may influence evaluation out-
+The agentic evaluation does not contain more than
+                                                        comes and limit the benchmark’s coverage of more
+50 turn iterations, primarily due to the substantial
+                                                        advanced PCB designs. We tried to mitigate this
+computational cost and resource requirements of
+                                                        by incorporating diverse PCB designs from various
+iterative agentic inference, and thus may miss eval-
+                                                        sources, and we encourage the community to use
+uating placement refinement scenarios that require
+                                                        this benchmark as a foundation to drive future re-
+longer iterative convergence.
+                                                        search toward developing models better suited for
+   We evaluate each of the three tools (layout visu-
+                                                        practical PCB layout design.
+alization, overlap checking, and routability verifi-
+                                                        Ai Assistants. We used AI-assisted tools to support
+cation) in isolation as well as in full combination
+                                                        proofreading and improve the clarity, grammar, and
+to assess their individual and collective impact on
+                                                        readability of the manuscript. All technical con-
+placement quality. The benchmark does not cover
+                                                        tent, analysis, and final revisions were carefully
+all possible tool combination settings for agentic
+                                                        reviewed and validated by the authors.
+evaluation; for example, partial subsets such as
+pairing layout visualization with overlap checking
+are not explored in this work. It is an extensive re-   References
+search direction and beyond the scope of this work.     Adafruit Industries. 2026. Adafruit industries. https:
+However, as the benchmark is open-source, we plan         //www.adafruit.com.
+to extend it to include broader agentic evaluation
+                                                        Momina Liaqat Ali, Muhammad Abid, Muhammad
+settings in the future.
+                                                         Saqlain, and Jose M Merigo. 2025.       Neuro-
+   This work focuses on spatial reasoning for PCB        symbolic control with large language models for
+component placement, and thus does not study the         language-guided spatial tasks.   arXiv preprint
+routing performance of LMMs directly. Instead, we        arXiv:2512.17321.
+employ FreeRouting as a fixed backbone to evalu-        Anthropic. 2026. Claude opus 4.7. https://www.
+ate the quality of placements produced by LMMs,           anthropic.com.
+isolating placement as the primary variable of inter-
+                                                        Arduino. 2026. Arduino: Open-source electronics plat-
+est. Routing optimization remains an important and        form. https://www.arduino.cc.
+complementary research direction that we leave for
+future work.                                            Autodesk Inc. 2024. Autodesk eagle: Pcb design and
+                                                          schematic software. https://www.autodesk.com/
+                                                          products/eagle. Accessed: 2026-03-05.
+Ethics Statement
+                                                        Wenxiao Cai, Iaroslav Ponomarenko, Jianhao Yuan, Xi-
+Intended usage. We aim for the benchmark                  aoqi Li, Wankou Yang, Hao Dong, and Bo Zhao.
+to serve as a comprehensive evaluation platform           2025. Spatialbot: Precise spatial understanding with
+for assessing both frontier commercial and open-          vision language models. In 2025 IEEE International
+                                                         Conference on Robotics and Automation (ICRA),
+source LMMs and state-of-the-art commercial and
+                                                          pages 9490–9498. IEEE.
+academic PnR tools on real-world PCB layout de-
+sign at scale. The code and dataset are publicly        Boyuan Chen, Zhuo Xu, Sean Kirmani, Brain Ichter,
+released under the CC-BY-4.0 license, consistent          Dorsa Sadigh, Leonidas Guibas, and Fei Xia. 2024.
+                                                          Spatialvlm: Endowing vision-language models with
+with the licensing terms of all constituent datasets      spatial reasoning capabilities. In Proceedings of the
+incorporated in the benchmark.                            IEEE/CVF Conference on Computer Vision and Pat-
+Accessibility and Potential Misuse. The main              tern Recognition, pages 14455–14465.
+goal of our work is to encourage the community to       Lin Chen, Ran Chen, Shoubo Hu, Xufeng Yao, Zhen-
+use the benchmark to advance PCB layout design            tao Tang, Shixiong Kai, Siyuan Xu, Mingxuan Yuan,
+research and to highlight the current limitations         Jianye Hao, Bei Yu, and 1 others. 2025a. Pcbagent:
+of existing LMMs and PnR tools on real-world              An agent-based framework for high-density printed
+                                                          circuit board placement. In Proceedings of the 30th
+placement challenges. Our evaluations reveal that         Asia and South Pacific Design Automation Confer-
+existing LMMs achieve notably poor performance            ence, pages 781–787.
+on PCB layout design tasks, underscoring a sig-
+                                                        Yan-Jen Chen, Wei-Kai Huang, Chung-Ting Tsai,
+nificant gap between current model capabilities           Chiao-Yu Ou, and Yao-Wen Chang. 2025b.
+and the demands of real-world PCB design. How-            Clearance-constrained pcb global placement with het-
+ever, as the dataset is primarily sourced from DIY        erogeneous components. In 2025 62nd ACM/IEEE
+  Design Automation Conference (DAC), pages 1–7.          Wufei Ma, Haoyu Chen, Guofeng Zhang, Yu-Cheng
+  IEEE.                                                    Chou, Jieneng Chen, Celso de Melo, and Alan Yuille.
+                                                           2025. 3dsrbench: A comprehensive 3d spatial rea-
+An-Chieh Cheng, Hongxu Yin, Yang Fu, Qiushan Guo,          soning benchmark. In Proceedings of the IEEE/CVF
+  Ruihan Yang, Jan Kautz, Xiaolong Wang, and Sifei         International Conference on Computer Vision, pages
+  Liu. 2024. Spatialrgpt: Grounded spatial reasoning       6924–6934.
+  in vision-language models. Advances in Neural In-
+  formation Processing Systems, 37:135062–135093.         Meta AI. 2025. LLaMA 4 Maverick. https://ai.
+                                                           meta.com/llama.
+Chung-Kuan Cheng, Chia-Tung Ho, and Chester Holtz.
+  2022. Net separation-oriented printed circuit board     Roshanak Mirzaee, Hossein Rajaby Faghihi, Qiang
+  placement via margin maximization. In 2022 27th           Ning, and Parisa Kordjamshidi. 2021. Spartqa: A
+  Asia and South Pacific Design Automation Confer-          textual question answering benchmark for spatial rea-
+  ence (ASP-DAC), pages 288–293. IEEE.                      soning. In Proceedings of the 2021 Conference of
+                                                            the North American Chapter of the Association for
+DeepPCB. 2026. Deeppcb: Pure ai-powered, cloud-             Computational Linguistics: Human Language Tech-
+  native pcb routing. https://deeppcb.ai/. Ac-              nologies, pages 4582–4598.
+  cessed: 2026.
+                                                          Roshanak Mirzaee and Parisa Kordjamshidi. 2022.
+Freerouting. 2024.   Freerouting: Advanced pcb              Transfer learning with synthetic corpora for spatial
+  auto-router. https://github.com/freerouting/              role labeling and reasoning. In Proceedings of the
+  freerouting. Accessed: 2024.                              2022 conference on empirical methods in natural
+                                                            language processing, pages 6148–6165.
+GitHub, Inc. 2026. Github: Software development plat-
+  form. https://github.com.                               Mistral AI. 2025. Mistral Medium 3.5 (128B). https:
+                                                            //mistral.ai.
+Google DeepMind. 2025a.     Gemini 2.5 Flash-
+  Lite. https://deepmind.google/technologies/             Spyridon Mouselinos, Henryk Michalewski, and Ma-
+  gemini.                                                   teusz Malinowski. 2024. Beyond lines and circles:
+                                                            Unveiling the geometric reasoning gap in large lan-
+Google DeepMind. 2025b. Gemini 3 Pro. https:                guage models. In Findings of the Association for
+  //deepmind.google/technologies/gemini. Ac-                Computational Linguistics: EMNLP 2024, pages
+  cessed: 2025.                                             6192–6222.
+Yaohui Han, Beichen Li, Rongliang Fu, Qunsong Ye,         William C Naylor, Ross Donelly, and Lu Sha. 2001.
+  Zhiyuan Lu, Junchen Liu, Bei Yu, Tsung-Yi Ho, and         Non-linear optimization system and method for wire
+  Tinghuan Chen. 2026a. Pcb-migrator: Automated             length and delay optimization for an automatic elec-
+  pcb pnr migration. In Proc. DATE, pages 1–7.              tric circuit placer. US Patent 6,301,693.
+Yaohui Han, Beichen Li, Mingyang Zhao, Rongliang          OpenAI. 2025. GPT-5-mini. https://openai.com.
+  Fu, Qunsong Ye, Tinghuan Chen, Bei Yu, and Tsung-         Accessed: 2025.
+  Yi Ho. 2026b. Moduplace: Llm-assisted modular
+  pcb placement via preference-optimized constraint       OpenAI. 2026. Gpt-5.5. https://www.openai.com.
+  graph generation.
+                                                          OpenROAD. 2024. SA-PCB: Simulated annealing for
+Ian Huang, Yanan Bao, Karen Truong, Howard Zhou,            printed circuit board placement. https://github.
+   Cordelia Schmid, Leonidas Guibas, and Alireza Fathi.     com/The-OpenROAD-Project/SA-PCB.
+   2025. Fireplace: Geometric refinements of llm com-
+   mon sense reasoning for 3d object placement. In Pro-   ProtoCentral. 2026. Protocentral: Open source medical
+   ceedings of the IEEE/CVF conference on computer          electronics. https://protocentral.com.
+   vision and pattern recognition, pages 13466–13476.
+                                                          Quilter. 2026. Quilter technology: Automated cir-
+Cooper Jones. 2023. Distributed Monte Carlo Tree            cuit board design. https://www.quilter.ai/
+  Search With Applications To Chip Design. Ph.D.            product/technology.
+  thesis, Massachusetts Institute of Technology.
+                                                          Qwen Team. 2026a. Qwen3-35b-a3b. https://
+Samuel P Kuo. 2006. PCB Design and Simulation              huggingface.co/Qwen/Qwen3.5-35B-A3B.
+  Using Cadence Allegro 15.5. Ph.D. thesis, University
+  of Illinois at Urbana-Champaign.                        Qwen Team. 2026b. Qwen3.5-9B. https://qwenlm.
+                                                           github.io.
+Taiting Lu, Kaiyuan Lin, Yuxin Tian, Yubo Wang,
+  Muchuan Wang, Sharique Khatri, Akshit Kartik, Yixi      Fedor Rodionov, Abdelrahman Eldesokey, Michael
+  Wang, Amey Santosh Rane, Yida Wang, and 1 others.         Birsak, John Femiani, Bernard Ghanem, and Peter
+  2026. Omnisch: A multimodal pcb schematic bench-          Wonka. 2025. Floorplanqa: A benchmark for spatial
+  mark for structured diagram visual reasoning. arXiv       reasoning in llms using structured representations.
+  preprint arXiv:2604.00270.                                arXiv preprint arXiv:2507.07644.
+Seeed Technology Co., Ltd. 2026. Seeed studio. https:
+  //www.seeedstudio.com.
+Zhengxiang Shi, Qiang Zhang, and Aldo Lipani. 2022.
+  Stepgame: A new benchmark for robust multi-hop
+  spatial reasoning in texts. In Proceedings of the
+  AAAI conference on artificial intelligence, volume 36,
+  pages 11321–11329.
+SparkFun Electronics. 2026. Sparkfun electronics.
+  https://www.sparkfun.com.
+
+Jihan Yang, Shusheng Yang, Anjali W Gupta, Rilyn
+   Han, Li Fei-Fei, and Saining Xie. 2025. Thinking
+   in space: How multimodal large language models
+   see, remember, and recall spaces. In Proceedings of
+   the Computer Vision and Pattern Recognition Con-
+   ference, pages 10632–10643.
+Niansong Zhang, Anthony Agnesina, Noor Shbat, Yu-
+  val Leader, Zhiru Zhang, and Haoxing Ren. 2025a.
+  Cypress: Vlsi-inspired pcb placement with gpu ac-
+  celeration. In Proceedings of the 2025 International
+  Symposium on Physical Design, pages 31–41.
+Weichen Zhang, Zile Zhou, Xin Zeng, Xuchen Liu, Jian-
+  jie Fang, Chen Gao, Yong Li, Jinqiang Cui, Xinlei
+  Chen, and Xiao-Ping Zhang. 2025b. Open3d-vqa:
+ A benchmark for comprehensive spatial reasoning
+ with multimodal large language model in open space.
+  arXiv preprint arXiv:2503.11094.
+     Data         Industrial EDA                    Proposed EDA Layout Rendering Engine                             OmniLayout
+    Source      Layout & Schematic                   Our EDA Rendering Engine
+                 Source XML Code                       Automatic Annotation
+                                                                                                                      Dataset
+                                                                                                                                    …                 Schematic
+
+                                                      Layout Rendering                                                                                  Netlist
+
+
+                                                                                                                     …             IC2
+                                                                                                                                          𝝆sch
+                                                                                                                                                 R1
+
+
+                                                        Pad Rendering
+                                                                                                                                     R2
+                                                                                                              𝐆𝒔𝒄𝒉 = 𝑵𝒔𝒄𝒉 , 𝑫𝒔𝒄𝒉
+
+                                                       Board Rendering                                                              …                  Layout
+
+                                                                                                Our EDA
+                                                                                                                                                       Netlist
+
+                                                                                                                                          𝝆brd
+                                                             Netlist                          Layout Engine          …             IC2           R1
+
+
+
+
+                                                                                                              𝐆𝐛𝐫𝐝 = 𝑵𝒃𝒓𝒅 , 𝑫𝒃𝒓𝒅     R2
+
+
+
+
+                                                    Spatial-Weight Netlist Export Pipeline
+                                                           Industrial EDA                 Specctra DSN                Layout Object
+
+                                                                                          Comp. Placement          Schematic Object
+
+                                                                                              Netlist                 Netlist Object
+
+                                                                                              Routing               Layout Diagram
+
+                                                                                               ……                           .......
+
+Figure 5: Automated PCB layout annotation pipeline for OmniLayout. We directly export Specctra DSN files
+from industrial EDA tools and leverage our EDA layout rendering engine to automatically generate PCB layout
+annotations, including component placements, orientations,
+                    Specctra DSNSpecctra DSN
+                                                           board geometry, routing information, and spatial-aware
+                                                        Component Object
+netlists.   𝓖 = 𝑵, 𝑫
+
+                                                                       Component Name   Component Value
+                                               𝝆𝟏
+A     Data Collection                                           and junctions, along with structural metadata re-
+                                              Placement Position               Placement Layer
+                                                                quired for downstream topology reasoning. These
+A.1 Automatic   Data Annotation Pipeline Comp. Name: IC2 schematic annotations serve as reference signals
+                                                              Component    Example
+                                                                              Comp. Value: DS3231
+              Alignm                        Comp. Type: Real Time Clock IC Comp. Orientation: 90°
+To support scalable
+                 ent   benchmark construction,      we [12.3825, 10.287] Pad List: [9, …]electrical functionality preservation
+                                            Comp. Position:
+                                                                for   evaluating
+develop a source-driven annotation pipelineComp.
+                                              thatOverall       inTop-side
+                                            Comp. Placement Layer:
+                                                     ex-Dimension:  placement results.
+                                                                   11.2 x 10.4 mm
+tracts all required ground-truth information directly
+from EAGLE XML project files, covering both
+schematic-side and layout-side annotations without              Layout Annotation. For layout-side annotations,
+manual image-space labeling. Our pipeline oper- we develop a dedicated PCB layout rendering
+ates on the XML-based format used by Autodesk                   engine that parses ground-truth placement infor-
+EAGLE 9.6.2, which explicitly encodes compo- mation directly from EAGLE XML layout files.
+nent instances, symbol and footprint definitions, Given a layout project, the engine first recov-
+pin attributes, net topology, layer assignments, ori- ers the complete placement representation includ-
+entations, and board frame geometry as structured               ing component instance names, reference foot-
+data.                                                           print definitions, pad-level block dimensions, net
+                                                                topology, and per-component position and rota-
+Schematic Annotation. For schematic-side an- tion attributes. Each component instance is as-
+notations, we adopt the rendering engine from Om- sociated with its footprint definition, from which
+niSch (Lu et al., 2026), which parses EAGLE XML we extract block-level geometry including pad
+schematic files to produce high-fidelity schematic              type (smd/pad/hole), physical dimensions, and
+diagrams paired with pixel-aligned annotations. layer assignment (front/back/through). Board
+Given a schematic project, the engine recovers the              frame geometry is separately recovered from DXF-
+hierarchical circuit structure including symbol li- encoded boundary primitives embedded in the lay-
+braries, instance placements, pin attributes, and               out file, from which we compute the bounding ex-
+net topology, and programmatically reconstructs                 tents used to constrain all placement coordinates.
+the schematic diagram by reproducing the native                 The engine then programmatically reconstructs the
+EDA visualization of symbols, wires, and text el- PCB layout diagram, with each rendered element
+ements. Since each rendered visual primitive re- remaining linked to its underlying semantic en-
+mains linked to its underlying semantic entity dur- tity, enabling automatic extraction of pixel-aligned
+ing image generation, the pipeline automatically                annotations for component bounding boxes, pad
+extracts image-aligned annotations for symbol in- locations, layer assignments, rotation codes, net
+stances, pins, textual attributes, net labels, wires, connections, and board boundary primitives.
+                                                                                                                             Layer legend
+                                                                                                                            Board
+                  C2                                                                                                        TH pads
+      ECC1        R7
+                                                                                                                            Top-side components
+                                                                                                                            Top-side SMD pads
+                                                                                                                            Back-side components
+                               X1
+                  R8
+                                                                                                                            Back-side SMD pads
+                                                       JP5                                                 JP2
+                                                SJ6SJ5SJ7CS_JMP                     IRQ_JMPG0_JMPRST_JMPSD_JMP
+                                                                                                                                  FID1
+                                                                                                                        RX_JMPTX_JMP
+
+                                                JP10 JP9 JP11 JP1
+                                                                          R4         JP6 JP8 JP7 JP12                   JP13JP14
+                                      U2
+                                                FID3
+
+
+
+                                    IC1 R2 Q3
+
+
+
+                       X2                                                                                                         SJ4
+                                                                                                                                  SJ3
+                                                                                                                                  SJ2
+
+
+             C6           C5
+      D1     C7           C4
+                                R5R1R6
+
+                                                                   JP3                                            JP4
+                                C3 IC4 C1
+      SW2                                                                                                                          FID2
+
+
+
+ M1
+
+ (a) Layout Diagram by Custom EDA Layout Engine                                                                                                    (b) Layout Diagram by Industrial EDA Layout Engine
+                                                                                                                             Layer legend
+                                                                                                                           Board
+                                                                                                                           TH pads
+                                    JP2                                                                                    Top-side components
+                                                                                                                           Top-side SMD pads
+                                                                                                                           Back-side components
+                                                                          R17 R18              C6
+  STANDOFF1                                                                                                      STANDOFF2 Back-side SMD pads
+
+                                                                          R13          R12
+                   FID1                                                                               R14
+                                                                     R11               R10            C7
+
+                                                             R1          C4                           C5
+                                                             R3
+                                                                                                                 R20
+                                                                                     U1                          R19
+      JP1                                                    R4
+                                                             R2          C2
+                                                             R5                C3            R8           R9
+                                                             R16
+                                                                               R7             C1
+                               D1
+                                                                               R6
+
+                                                                                                                 FID2
+
+  STANDOFF4 SJ4                                                                                                  STANDOFF3
+                                      JP3                                                          R15
+
+
+
+
+ (c) Layout Diagram by Custom EDA Layout Engine                                                                                                    (d) Layout Diagram by Industrial EDA Layout Engine
+                                                                                                      Layer legend
+                                            L                                                      Board U$34
+      TP3                                                    X1                                                           TP4
+                                                                              C14     C9
+                                            R1                                         X2          TH pads
+                                          C16                                                      Top-side components
+                                       TP6 R2                  R3 R4                               Top-side SMD pads
+                                                                                                        R14components
+                  SW1
+                                           R11 U1 C4C11
+                                                      C2
+                                                       C13
+                                                         R12 C21
+                                                                                                   Back-side
+                                                                                                                    CONN1
+                                                                                                   Back-side SMD pads
+                                           D3C5          C1
+                                                               C15 C7
+                                                                 C17
+
+                                             C10
+                                                              IC3                C8
+                                                                               C12
+                                                                                              U2       PTC1
+                                                                                                      C6                     SW2
+                                                   R6                                                            TP5
+                                             R10 Y1C20
+                                                    C31C3
+                                              C19
+                   LED3                                      LED2          R8
+                                                                            C30R9             C24
+                                                                                              C29
+                                                                                                          LED1           IC1R7
+             U$12                                      U$13                 C18R5
+                                                                          C33
+                                                                            R15                     U$40
+                                                                               U3
+                                                                         C32 C34
+                   LED6                     C25              LED5             SP2                         LED4
+
+             U$41                                      U$42                                         U$43
+                                            C28
+
+
+
+
+                   LED9                     C22              LED8                                         LED7
+
+                  U$4                                   U$5                                            U$6
+                                            C26
+
+
+
+
+      TP1                                                                                                                 TP2
+                  LED12                     C23              LED11                                       LED10
+                                                                                                                               U$80
+                  U$3                                   U$2                                            U$1
+                                            C27
+
+
+
+
+      U$35
+
+
+
+
+ (e) Layout Diagram by Custom EDA Layout Engine                                                                                                    (f) Layout Diagram by Industrial EDA Layout Engine
+
+Figure 6: Qualitative examples of our custom PCB layout rendering pipeline. Each row corresponds to one layout
+example. The left column shows layouts rendered by our custom EDA engine, and the right column shows the
+corresponding reference layouts produced by industrial EDA tools.
+Unified Pipeline. Both annotation streams are             placement, measuring the degree to which compo-
+processed within a unified pipeline that aligns           nents physically conflict with one another on the
+schematic-side connectivity signals with layout-          board.
+side placement ground truth through shared com-              Out-of-Boundary (OoB) refers to the ratio of
+ponent instance identifiers. This cross-file corre-       component area placed outside the board bound-
+spondence enables automatic construction of paired        ary B, capturing whether the predicted placement
+training and evaluation samples covering spatial,         respects the spatial extent of the board.
+routability, and electrical functionality dimensions         Half-Perimeter Wirelength (HPWL) refers to
+without any manual intervention. Compared with            the sum of bounding box perimeters over all nets,
+purely manual image-space annotation, this source-        serving as a pre-routing proxy for the total wiring
+driven strategy improves annotation consistency,          cost of the predicted placement. Lower HPWL
+eliminates geometric ambiguity arising from dense         indicates more compact and routing-friendly com-
+component layouts, and scales efficiently to large        ponent arrangement.
+benchmark collections. Beyond static annotation              Net Crossing (NC) refers to the total number of
+extraction, the layout rendering engine additionally      intersections between net connections in the pre-
+serves as an interactive visualization tool within our    dicted placement, where a lower count indicates
+agentic evaluation framework, rendering the cur-          fewer routing conflicts and a cleaner signal topol-
+rent placement state as visual feedback to support        ogy.
+iterative placement refinement by large multimodal           Net Separation (NS) refers to the average spa-
+models.                                                   tial distance between electrically connected pins
+                                                          across all nets, measuring how well the placement
+A.2 Visualization Example of Custom Layout                clusters connected components together.
+    Engine                                                   Predicted Routed Wirelength (PRWL) refers
+To qualitatively illustrate the capability of our cus-    to the actual total wirelength after routing via
+tom EDA layout rendering engine, we provide rep-          FreeRouting (Freerouting, 2024), capturing the true
+resentative examples in Figure 6. For each exam-          routing cost of the predicted placement.
+ple, we show the corresponding industrial EDA                Routability Ratio (RR) refers to the fraction
+layout rendered by Autodesk EAGLE alongside               of nets successfully routed by FreeRouting (Freer-
+the synthesized layout rendered by our custom             outing, 2024), directly measuring whether the pre-
+engine. This side-by-side comparison highlights           dicted placement supports complete electrical con-
+the fidelity of our rendering pipeline in reproduc-       nectivity.
+ing component placements, pad geometries, board              Number of Vias (#Vias) refers to the total num-
+boundaries, and routing traces. In particular, the        ber of vias introduced during routing, where a
+examples demonstrate that our synthesized layouts         lower count indicates a more layer-efficient place-
+faithfully preserve the structural and spatial charac-    ment with fewer inter-layer transitions.
+teristics of the original industrial designs, while ad-      Schematic Distance (Dsch ) refers to the aver-
+ditionally enabling dense instance-level annotation       age pairwise relative distance deviation between
+of component bounding boxes, pad locations, layer         the predicted layout and the schematic diagram
+assignments, net connections, and board boundary          over all component pairs within the same subcir-
+primitives.                                               cuit, measuring whether the predicted placement
+                                                          preserves the visual subcircuit topology of the cir-
+B     Task Formulation Protocol                           cuit schematic.
+                                                             Reference Distance (Dref ) refers to the average
+In this section we introduce the definition of each       pairwise relative distance deviation between the
+task, and evaluation metrics for each task.               predicted layout and the expert-designed reference
+                                                          layout, measuring the degree to which the predicted
+B.1    Task Definition
+                                                          placement aligns with professional component ar-
+We formulate PCB component placement evalua-              rangement decisions.
+tion across the following metrics, each targeting a          Constraint Satisfaction Rate (CSR) refers to
+distinct aspect of layout quality.                        the ratio of geometric and electrical constraints
+   Overlap (OO) refers to the normalized intersect-       satisfied at the final placement iteration, measuring
+ing area between component pairs in the predicted         the overall correctness of the agentic placement
+outcome.                                                   where eni and enj denote the straight-line connec-
+   Step Efficiency (SE) refers to the average num-         tions of nets ni and nj respectively, and ⊮[·] is
+ber of tool-use steps required to reach a valid place-     the indicator function that equals 1 when two net
+ment, where a lower value indicates more efficient         connections intersect.
+constraint-aware spatial reasoning.                           Net Separation (NS). NS measures the average
+   Placement Refinement Quality (PRQ) refers               spatial distance between electrically connected pins
+to the fraction of iterations in which the placement       across all nets:
+improves over the previous step, capturing whether                            1 X 1 X
+the agent consistently makes progress toward a                   NS(P) =                      ∥pi − p̄n ∥2 (7)
+                                                                             |N |     |n|
+valid placement across iterations.                                              n∈N       i∈n
+
+
+B.2   Evaluation Metrics                                   where pi denotes the position of pin i and p̄n de-
+                                                           notes the centroid of net n.
+Once the component placement is predicted, we
+                                                              Routability Ratio (RR). RR is defined as the
+compute the following evaluation metrics across
+                                                           fraction of successfully routed nets obtained via
+four complementary dimensions.
+                                                           FreeRouting (Freerouting, 2024):
+   Overlap (OO). Given a predicted placement P
+with components {c1 , c2 , . . . , cN }, the normalized                               |Nrouted |
+                                                                          RR(P) =                          (8)
+overlapping area between components is computed                                         |N |
+as:                 P
+                       i<j Area(ci ∩ cj )                  where |Nrouted | denotes the number of successfully
+         OO(P) =                                     (3)
+                                                           routed nets and |N | denotes the total number of
+                         P
+                              i Area(ci )
+                                                           nets.
+where ci ∩ cj denotes the intersecting area between
+                                                             Predicted Routed Wirelength (PRWL) refers
+components i and j. Lower values indicate fewer
+                                                           to the actual total wirelength after routing via
+physical conflicts between components.
+                                                           FreeRouting (Freerouting, 2024), capturing the true
+  Out-of-Boundary (OoB). The ratio of compo-
+                                                           routing cost of the predicted placement:
+nent area placed outside the board boundary B is
+computed as:                                                                         X X
+                                                                     PRWL(P) =                ∥e∥2         (9)
+                       P
+                          i Area(ci \ B)
+                                                                                    n∈N e∈Rn
+          OoB(P) = P                             (4)
+                             i Area(ci )                   where Rn denotes the set of routed wire segments
+where ci \ B denotes the area of component i out-          for net n, and ∥e∥2 denotes the Euclidean length of
+side the board boundary. Lower values indicate             wire segment e.
+better spatial containment within the board.                  Number of Vias (#Vias). #Vias records the total
+   Half-Perimeter Wirelength (HPWL). For a set             number of vias introduced during routing, where a
+of nets N , HPWL is computed as:                           lower count indicates a more layer-efficient place-
+                                                           ment.
+                   X                                         Schematic Distance (Dsch ). Since PCB compo-
+    HPWL(P) =           max xi − min xi
+                            i∈n        i∈n                 nent placement does not admit a unique ground
+                   n∈N
+                                                   (5)    truth solution, we measure the visual relative
+                         + max yi − min yi                 distance between the predicted layout and the
+                             i∈n        i∈n
+                                                           schematic diagram S:
+where (xi , yi ) denotes the position of pin i in net n.                      1 X
+Lower HPWL indicates more compact and routing-               Dsch (P, S) =        |dP (i, j) − dS (i, j)|
+                                                                             |G|
+friendly component placement.                                                   (i,j)∈G
+
+   Net Crossing (NC) refers to the total number of                                                         (10)
+intersections between net connections in the pre-          where G denotes the set of component pairs within
+dicted placement, where a lower count indicates            the same subcircuit, and dP (i, j), dS (i, j) denote
+fewer routing conflicts and a cleaner signal topol-        the pairwise distances between components i and
+ogy:                                                       j in the predicted layout and schematic diagram
+                                                           respectively.
+                X X
+                                                              Reference Distance (Dref ). We further measure
+                                                
+  NC(P) =                     ⊮ eni ∩ enj ̸= ∅ (6)
+              ni ∈N nj ∈N ,j>i                             the component-level relative placement distance
+against the expert-designed reference layout R:        by supplying rendered schematic images as addi-
+                                                       tional visual input, allowing the model to lever-
+                   1 X                                 age visual circuit structure as a reference for func-
+ Dref (P, R) =         |dP (i, j) − dR (i, j)|
+                  |G|                                  tional grouping and relative placement hints. •
+                        (i,j)∈G
+                                               (11)    Graph-Augmented (Schematic Graph-Guided)
+where dR (i, j) denotes the pairwise distance be-      This variant injects a secondary schematic graph
+tween components i and j in the reference layout.      JSON encoding symbol-level connectivity with spa-
+   Constraint Satisfaction Rate (CSR). CSR mea-        tial distance weights on pin-pin edges, guiding the
+sures the ratio of geometric and electrical con-       model to keep strongly-related components closer
+straints satisfied at the final placement iteration    together on the board. • Full-Graph (Spatial-
+T:                                                     Semantic Graph-Guided) This variant further en-
+                               |Csat |                 riches the graph representation by retaining per-
+                 CSR(PT ) =                    (12)
+                                |C|                    node semantic attributes for symbols, pins, nets,
+                                                       and text annotations alongside the spatial edge
+where |Csat | and |C| denote the number of satisfied
+                                                       weights, enabling the model to jointly exploit both
+and total constraints respectively.
+                                                       structural connectivity and semantic context. •
+  Placement Refinement Quality (PRQ). PRQ              Few-Shot (Example-Guided) This variant aug-
+measures whether successive placement iterations       ments the baseline with one concrete placement
+progressively reduce constraint violations:            example demonstrating an effective layout strategy,
+               T −1
+                                                       instructing the model to mimic the observed spatial
+            1 X                                        reasoning patterns while adapting coordinates to
+    PRQ =           ⊮ [V(Pt+1 ) < V(Pt )] (13)
+          T −1                                         the current board and component set.
+                  t=1
+
+where V(Pt ) denotes the total number of constraint
+                                                          #Oneshot_prompt (Baseline Task):
+violations at iteration t.                                You are an expert PCB layout engineer. Your
+   Step Efficiency (SE). SE measures the average          task is to place all components
+number of tool-use steps required to reach a valid        on a PCB board optimally.
+placement, where a lower value indicates more             Board Boundary:
+efficient constraint-aware reasoning.                     Overall Board boundary extents: (x0 , y0 ) to
+                                                          (x1 , y1 ), size W mm × H mm.
+                                                          Board     outline   is   defined   only    by
+C     Experiment                                          board_boundary.dxf_details.
+                                                          Use this outline to constrain all placements
+C.1    Prompt Template                                    inside the board.
+                                                          Board      boundary    dxf_details   (JSON):
+We use task-specific prompt templates to guide the        {dxf_details_json}
+model under different PCB layout settings. Rather
+                                                          Component Block Dimensions:
+than using a single generic instruction, each task        For each component, block_dimension is a
+is associated with a tailored prompt that consoli-        list of blocks inside the component that
+dates the placement objective, board boundary con-        cannot overlap with blocks from other
+                                                          components.    Each block has: position
+straints, component block dimensions, netlist con-        (relative to component center), width,
+nectivity, allowed rotation codes, placement rules,       length, type (smd/pad/hole), and layer
+and required output format into a single unified          (front/back/through).
+                                                          Allowed rotation codes:     R0: front side,
+instruction. The model is expected to parse all           0° R180: front side, 180° R270: front
+spatial and structural information within this self-      side, 270°
+contained prompt and produce a valid, constraint-         MR0: back side (mirrored), 0° MR180: back
+                                                          side (mirrored), 180° MR270: back side
+satisfying placement in a single pass. In the fol-        (mirrored), 270°
+lowing, we present representative prompt examples
+used in our layout evaluation framework.                 Components (name and block dimensions):
+                                                         - COMP_NAME: type (layer) W mm × L mm at
+Oneshot Evaluation Prompt Template. We de-               (x, y)
+sign five prompt variants to systematically evaluate     - ···
+the impact of different auxiliary inputs on LLM-         Netlist (connections):
+based PCB placement. • Multimodal (Schematic             - Net ‘NET_NAME’: element:pad, element:pad,
+Image-Guided) This variant extends the baseline
+...
+                                                - COMP_NAME: type (layer) W mm × L mm at
+- ···
+                                                (x, y)
+                                                - ···
+Placement Rules:
+1. Coordinates must be inside the board
+                                                Netlist (connections):
+boundary
+                                                - Net ‘NET_NAME’: element:pad, element:pad,
+(x0 ≤ x ≤ x1 , y0 ≤ y ≤ y1 ).
+                                                ...
+2.      CRITICAL: Block dimensions from
+                                                - ···
+different components must NOT overlap.
+Blocks within the same component are
+                                                Placement Rules:
+already non-overlapping by design.
+                                                1. Coordinates must be inside the board
+3. Components CAN share the same center
+                                                boundary
+position, but their
+                                                (x0 ≤ x ≤ x1 , y0 ≤ y ≤ y1 ).
+block_dimensions must not overlap in 2D.
+                                                2.      CRITICAL: Block dimensions from
+4. Choose placement side (R* vs MR*) to
+                                                different components must NOT overlap.
+avoid block collisions       while respecting
+                                                Blocks within the same component are
+layer constraints.
+                                                already non-overlapping by design.
+                                                3. Components CAN share the same center
+Output Format (strictly follow this):
+                                                position, but their block_dimensions must
+Return ONLY a valid JSON object, no
+                                                not overlap in 2D.
+explanation, no markdown fences.
+                                                4. Choose placement side (R* vs MR*) to
+{
+                                                avoid block collisions
+“placements”: [
+                                                while respecting layer constraints.
+{“name”: “COMP”, “x”: X, “y”: Y, “rotation”:
+                                                5. Use the provided schematic image(s) as
+“R0| · · · ”},
+                                                reference for functional grouping      and
+···
+                                                relative placement hints between connected
+]
+                                                components.
+}
+Every component must appear exactly once.
+                                                Output Format (strictly follow this):
+Coordinates are in millimeters.
+                                                Return ONLY a valid JSON object, no
+Place component CENTER at (x, y).
+                                                explanation, no markdown fences.
+                                                {
+                                                “placements”: [
+#Multimodal_prompt (Schematic Image-Guided      {“name”: “COMP”, “x”: X, “y”: Y, “rotation”:
+Layout Task):                                   “R0| · · · ”},
+You are an expert PCB layout engineer. Your     ···
+task is to place all components                 ]
+on a PCB board optimally.                       }
+                                                Every component must appear exactly once.
+You are also given schematic image(s)           Coordinates are in millimeters.
+as multimodal input in this request.            Place component CENTER at (x, y).
+Treat them as reference for functional
+grouping and relative placement hints.
+
+Board Boundary:                                 #Graph-Augmented_prompt          (Schematic
+Overall Board boundary extents:       (x0 ,     Graph-Guided Layout Task):
+y0 ) to (x1 , y1 ), size W mm × H               You are an expert PCB layout engineer. Your
+mm.    Board outline is defined only by         task is to place all components on a PCB
+board_boundary.dxf_details.     Use this        board optimally.
+outline to constrain all placements inside
+the board.     Board boundary dxf_details       You are also provided with a schematic graph
+(JSON): {dxf_details_json}                      (JSON) extracted from the schematic file,
+                                                which encodes symbol-level connectivity
+Component Block Dimensions:                     and relative spatial relationships among
+For each component, block_dimension is a        components. Use it as an auxiliary signal
+list of blocks inside the component that        to guide functional grouping and placement
+cannot overlap with blocks from other           decisions.
+components.    Each block has: position
+(relative to component center), width,          Board Boundary:
+length, type (smd/pad/hole), and layer          Overall Board boundary extents:       (x0 ,
+(front/back/through).                           y0 ) to (x1 , y1 ), size W mm × H
+Allowed rotation codes:     R0: front side,     mm.    Board outline is defined only by
+0° R180: front side, 180° R270: front           board_boundary.dxf_details.     Use this
+side, 270°                                      outline to constrain all placements inside
+MR0: back side (mirrored), 0° MR180: back       the board.     Board boundary dxf_details
+side (mirrored), 180° MR270: back side          (JSON): {dxf_details_json}
+(mirrored), 270°
+Components (name and block dimensions):         Component Block Dimensions:
+For each component, block_dimension is a       ]
+list of blocks inside the component that       }
+cannot overlap with blocks from other          Every component must appear exactly once.
+components.    Each block has: position        Coordinates are in millimeters.
+(relative to component center), width,         Place component CENTER at (x, y).
+length, type (smd/pad/hole), and layer
+(front/back/through).
+Allowed rotation codes:
+R0: front side, 0° R180: front side, 180°      #Full-Graph_prompt        (Spatial-Semantic
+R270: front side, 270°                         Graph-Guided Layout Task):
+MR0: back side (mirrored), 0° MR180: back      You are an expert PCB layout engineer. Your
+side (mirrored), 180° MR270: back side         task is to place all components
+(mirrored), 270°                               on a PCB board optimally.
+                                               You are also provided with a secondary
+Components (name and block dimensions):        schematic graph (JSON) extracted from
+- COMP_NAME: type (layer) W mm × L mm at       the schematic file, which jointly encodes
+(x, y)                                         symbol-level connectivity with
+- ···                                          relative spatial distance weights and
+                                               per-node semantic attributes for
+Netlist (connections):                         symbols, pins, nets, and text annotations.
+- Net ‘NET_NAME’: element:pad, element:pad,    Use both signals together as
+...                                            auxiliary guidance for functional grouping
+- ···                                          and placement decisions.
+Secondary Schematic Graph Input (JSON):        Board Boundary:
+{sch_graph_json}                               Overall Board boundary extents:       (x0 ,
+                                               y0 ) to (x1 , y1 ), size W mm × H
+How to interpret this schematic graph:         mm.    Board outline is defined only by
+- Netlist information extracted from the       board_boundary.dxf_details.     Use this
+schematic (.sch) file.                         outline to constrain all placements inside
+- Edges with type symbol_pin indicate which    the board.     Board boundary dxf_details
+symbol each pin belongs to.                    (JSON): {dxf_details_json}
+- Edges with type pin-pin indicate
+connectivity among symbols                     Component Block Dimensions:
+through their pins.                            For each component, block_dimension is a
+- For pin-pin edges, the weight is a           list of blocks inside the component that
+relative distance signal on                    cannot overlap with blocks from other
+the schematic image. Smaller weight means      components.    Each block has: position
+symbols are relatively                         (relative to component center), width,
+closer on the schematic.                       length, type (smd/pad/hole), and layer
+- Use this relative-distance signal to         (front/back/through).
+improve placement decisions:                   Allowed rotation codes:
+keep strongly-related symbols relatively       R0: front side, 0° R180: front side, 180°
+close when possible.                           R270: front side, 270°
+                                               MR0: back side (mirrored), 0° MR180: back
+Placement Rules:                               side (mirrored), 180° MR270: back side
+1. Coordinates must be inside the board        (mirrored), 270°
+boundary
+(x0 ≤ x ≤ x1 , y0 ≤ y ≤ y1 ).                  Components (name and block dimensions):
+2.      CRITICAL: Block dimensions from        - COMP_NAME: type (layer) W mm × L mm at
+different components must NOT overlap.         (x, y)
+Blocks within the same component are already   - ···
+non-overlapping by design.
+3. Components CAN share the same center        Netlist (connections):
+position, but their                            - Net ‘NET_NAME’: element:pad, element:pad,
+block_dimensions must not overlap in 2D.       ...
+4. Choose placement side (R* vs MR*) to        - ···
+avoid block collisions
+while respecting layer constraints.            Secondary Schematic Graph Input (JSON):
+                                               {sch_graph_json}
+Output Format (strictly follow this):
+Return ONLY a valid JSON object, no            How to interpret this schematic graph:
+explanation, no markdown fences.               - Extracted from the schematic (.sch) file;
+{                                              contains both structural
+“placements”: [                                edges and per-node semantic attributes.
+{“name”: “COMP”, “x”: X, “y”: Y, “rotation”:   - Edges with type symbol_pin indicate which
+“R0| · · · ”},                                 symbol each pin belongs to.
+···                                            - Edges with type pin-pin indicate
+connectivity among symbols                      Component Block Dimensions:
+through their pins.                             For each component, block_dimension is a
+- For pin-pin edges, the weight is a relative   list of blocks inside the
+distance signal on       the schematic image.   component that cannot overlap with blocks
+Smaller weight means symbols are relatively     from other components.
+closer on the schematic.                        Each block has: position (relative to
+- Use this relative-distance signal to          component center), width, length,
+improve placement decisions:                    type     (smd/pad/hole),      and   layer
+keep strongly-related symbols relatively        (front/back/through).
+close when possible.                            Allowed rotation codes:
+- Node attributes (for symbols/pins/nets)       R0: front side, 0° R180: front side, 180°
+and text annotations provide                    R270: front side, 270°
+semantic context; use them as auxiliary         MR0: back side (mirrored), 0° MR180: back
+hints for functional grouping.                  side (mirrored), 180° MR270: back side
+                                                (mirrored), 270°
+Placement Rules:
+1. Coordinates must be inside the board         Components (name and block dimensions):
+boundary                                        - COMP_NAME: type (layer) W mm × L mm at
+(x0 ≤ x ≤ x1 , y0 ≤ y ≤ y1 ).                   (x, y)
+2.      CRITICAL: Block dimensions from         - ···
+different components must NOT overlap.
+Blocks within the same component are already    Netlist (connections):
+non-overlapping by design.                      - Net ‘NET_NAME’: element:pad, element:pad,
+3. Components CAN share the same center         ...
+position, but their                             - ···
+block_dimensions must not overlap in 2D.
+4. Choose placement side (R* vs MR*) to         Placement Rules:
+avoid block collisions                          1. Coordinates must be inside the board
+while respecting layer constraints.             boundary
+                                                (x0 ≤ x ≤ x1 , y0 ≤ y ≤ y1 ).
+Output Format (strictly follow this):           2.      CRITICAL: Block dimensions from
+Return ONLY a valid JSON object, no             different components must NOT overlap.
+explanation, no markdown fences.                Blocks within the same component are already
+{                                               non-overlapping by design.
+“placements”: [                                 3. Components CAN share the same center
+{“name”: “COMP”, “x”: X, “y”: Y, “rotation”:    position, but their
+“R0| · · · ”},                                  block_dimensions must not overlap in 2D.
+···                                             4. Choose placement side (R* vs MR*) to
+]                                               avoid block collisions
+}                                               while respecting layer constraints.
+Every component must appear exactly once.
+Coordinates are in millimeters.                 Few-Shot Examples (mimic strategy, adapt
+Place component CENTER at (x, y).               coordinates to current board):
+                                                Example 1: Two ICs with nearby decoupling
+                                                capacitors
+                                                Input: Board 40×30 mm. Components: U1(MCU),
+#Few-Shot_prompt (Example-Guided Layout         U2(SENSOR), C1, C2, J1.
+Task):                                          Nets:         U1:VCC–C1:1,     U2:VCC–C2:1,
+You are an expert PCB layout engineer. Your     U1:SCL–U2:SCL, U1:IO–J1:1.
+task is to place all components on a PCB        Output: {“placements”: [{U1 at (16,16,R0)},
+board optimally.                                {U2 at (24,16,R0)},
+                                                {C1 at (16,12.5,R0)}, {C2 at (24,12.5,R0)},
+You are also provided with three placement      {J1 at (35,15,R180)}]}
+examples that demonstrate effective layout      ···
+strategies. Mimic the placement reasoning
+and spatial patterns shown in the examples,     Output Format (strictly follow this):
+while adapting exact coordinates to the         Return ONLY a valid JSON object, no
+current board and component set.                explanation, no markdown fences.
+                                                {
+Board Boundary:                                 “placements”: [
+Overall Board boundary extents: (x0 , y0 ) to   {“name”: “COMP”, “x”: X, “y”: Y, “rotation”:
+(x1 , y1 ), size W mm × H mm.                   “R0| · · · ”},
+Board     outline   is   defined   only    by   ···
+board_boundary.dxf_details.                     ]
+Use this outline to constrain all placements    }
+inside the board.                               Every component must appear exactly once.
+Board      boundary    dxf_details   (JSON):    Coordinates are in millimeters.
+{dxf_details_json}
+   Place component CENTER at (x, y).                      candidate is saved and rendered.
+
+                                                          Strict priority order:
+Agentic Evaluation Prompt Template. We de-                1. Return schema-valid JSON only. Include
+                                                          every required component exactly once.
+sign four prompt variants to systematically evaluate      2. Repair deterministic geometry problems
+the impact of different feedback signals on LLM-          first: out_of_boundary, then overlap.
+based agentic PCB placement. • HPWL-Guided                3.   Use HPWL/routability risk to guide
+                                                          compactness only after the placement is
+(Routability Risk Feedback) This variant replaces         geometrically valid.
+the raw half-perimeter wirelength metric with a
+learned routability risk score as the iterative feed-     Board Boundary:
+                                                          Extents: x ∈ [x0 , x1 ], y ∈ [y0 , y1 ] millimeters.
+back signal, allowing the agent to optimize toward        Exact    outline        primitives         are    in
+congestion-aware placement objectives rather than         board_boundary.dxf_details                 (summary:
+                                                          {dxf_summary}).
+purely geometric wire minimization. • Overlap-
+Guided (Constraint Violation Feedback) This               Iteration:
+variant exposes only the overlap inspection tool          Current iteration: {iteration} / Maximum
+                                                          iterations: {max_iterations}.
+during each iteration, providing the agent with bi-       If iteration == max_iterations, return
+nary constraint violation signals that directly indi-     your best candidate and do not request
+cate whether placed components physically inter-          unnecessary actions.
+sect, guiding the model to prioritize feasibility over    Required components (exactly once each):
+optimality in its revision decisions. • Boundary-         {names_json}
+Guided (Out-of-Boundary Feedback) This vari-
+                                                          Component Block Dimensions:
+ant restricts feedback to out-of-boundary detec-          The placement coordinate (x, y) is the
+tion results, supplying the agent with spatial le-        component CENTER in millimeters.
+gality signals that indicate whether components ex-       block_dimension      lists  the    physical
+                                                          blocks/pads/holes inside each component.
+ceed board extents, encouraging the model to learn        Blocks from different components must not
+boundary-respecting placement revisions through           overlap on the same board side.
+                                                          - COMP_NAME: pad:smd (front) W mm × L mm
+iterative self-correction. • Multimodal-Guided            at (bx, by) rot=R0; . . .
+(Visual Feedback) This variant furnishes the agent
+with rendered placement images as its sole inspec-        Source Rotation Operations (read-only
+                                                          source orientation records):
+tion signal at each iteration, requiring the model to     {source_rotation_operations_json}
+interpret spatial quality and identify layout deficien-
+cies directly from visual observations rather than        Netlist:
+                                                          - Net ‘NET_NAME’: element:pad, . . .
+from structured numeric or symbolic outputs. •
+Full-Feedback (All-Tools Adaptive) This variant           Safe Center Range Hints (keep               center
+grants the agent unrestricted access to all available     inside these ranges per rotation):
+                                                          {fit_hints_json}
+inspection tools — routability risk, overlap detec-
+tion, out-of-boundary checking, and visual render-        Allowed rotation codes:
+                                                          R0: front, 0° R90: front, 90° R180:
+ing — at each iteration, allowing the model to au-        front, 180° R270: front, 270°
+tonomously select the most informative feedback           MR0: back mirrored, 0° MR90: back mirrored,
+signals based on its current placement state and          90° MR180: back mirrored, 180° MR270:
+                                                          back mirrored, 270°
+self-assessed quality, rather than being constrained
+to a single fixed feedback modality throughout the        Previous Context:
+optimization loop.                                        {previous_context_json}
+
+                                                          Recent History:
+   #Agentic_prompt Variation 1 — HPWL-Guided              {history_summary_json}
+   (Routability Risk Feedback):
+   You are an expert PCB layout engineer and              How to use previous context:
+   placement-decision agent.                              -      previous_inspection_results     are
+   You must do two jobs in one response:                  observations from the previous saved
+   1.     Produce the next candidate PCB                  placement.
+   placement.                                             - If previous hpwl is high and geometry is
+   2.     Decide which repair actions and                 clean, apply improve_routability to reduce
+   inspection tools should be used after this             net spread.
+- HPWL slot is replaced by routability_risk:   needs a repair iteration based exclusively
+a lower score is better; compare current vs.   on block overlap violations.
+previous score before requesting another
+routability action.                            Strict priority order:
+- If geometry is still invalid, ignore         1. Return schema-valid JSON only. Include
+routability risk until out_of_boundary and     every required component exactly once.
+overlap pass.                                  2. Eliminate all block overlaps between
+                                               different components.
+Available actions:                             3. Boundary compliance and routability are
+- "fix_boundary": repair blocks outside the    secondary; focus on overlap-free placement
+board outline.                                 above all else.
+- "fix_overlap":    repair block overlaps
+between different components.                  Board Boundary:
+- "improve_routability": reduce routability    Extents: x ∈ [x0 , x1 ], y ∈ [y0 , y1 ] millimeters.
+risk / net spread only after geometry is       Outline summary: {dxf_summary}.
+clean.
+- "adjust_visual_layout": improve visual       Iteration:
+plausibility (not applicable in this           Current iteration: {iteration} / Maximum
+variation; omit or leave empty).               iterations: {max_iterations}.
+- Return action=[] if no further iteration
+is needed.                                     Required   components,    Component   Block
+                                               Dimensions, Source Rotation
+Available     inspection_tools     (exactly    Operations, Netlist, Safe Center Range
+one allowed):                                  Hints, Allowed rotation codes:
+- "hpwl" — reports routability_risk score      (identical to baseline — see shared section
+for the current candidate. Lower is better.    above)
+
+Placement rules:    (same as baseline      —   Previous Context:
+boundary, overlap, netlist compactness)        {previous_context_json}
+
+Decision rules:                                Recent History:
+1.   If previous hpwl (routability_risk)       {history_summary_json}
+increased,      action     must     include
+"improve_routability" with a concrete          How to use previous context:
+move plan.                                     - If previous overlap tool returned ok:
+2. quality_score must not exceed 0.95 while    false, the errors list names the exact
+known geometry violations remain.              component pairs that collide; move those
+3. visual_feedback: say “No previous visual    pairs apart and include "fix_overlap" in
+image was provided.”     (visualize is not     decision.action.
+available in this variation).                  - Do not repeat a placement that failed
+                                               overlap    inspection  unless  you   have
+Output Format (strictly follow this):          explicitly changed the relevant component
+Return ONLY a valid JSON object, no markdown   positions.
+fences.
+{                                              Available actions:
+“placements”: [{. . . }],                      - "fix_overlap":    repair block overlaps
+“decision”: {                                  between different components.
+“action”: [ ],                                 - "fix_boundary": secondary; use only if
+“inspection_tools”: [“hpwl”],                  overlap is already clean.
+“quality_score”: 1.0,                          - "improve_routability": secondary; use
+“next_action_description”: “. . . ”,           only if overlap is clean.
+“feedback”: “. . . ”,                          - Return action=[] if overlap is expected
+“thought”: “. . . ”,                           to pass.
+“visual_feedback”:     “No previous visual
+image was provided.”                           Available     inspection_tools   (exactly
+}                                              one allowed):
+}                                              - "overlap" — deterministic local block
+                                               overlap detection. Returns per-pair error
+                                               messages when ok: false.
+
+                                               Decision rules:
+                                               1. quality_score must not exceed 0.95 while
+#Agentic_prompt Variation 2 — Overlap-Guided   any overlap error remains unresolved.
+(Constraint Violation Feedback):               2. visual_feedback: say “No previous visual
+You are an expert PCB layout engineer and      image was provided.”     (visualize is not
+placement-decision agent.                      available in this variation).
+You must do two jobs in one response:          3.    feedback must quote the specific
+1. Produce the next candidate PCB placement.   component names from the previous overlap
+2. Decide whether the current candidate
+error list and describe the move applied.              How to use previous context:
+                                                       - If previous out_of_boundary tool returned
+Output Format (strictly follow this):                  ok:    false, the errors list reports
+Return ONLY a valid JSON object, no markdown           each violating block with its oob_area
+fences.                                                value; move the component center into the
+{                                                      safe_center_ranges for its rotation and
+“placements”: [{. . . }],                              include "fix_boundary" in decision.action.
+“decision”: {                                          - SAFE_CENTER_RANGE_HINTS gives pre-computed
+“action”: [ ],                                         safe center ranges per rotation per
+“inspection_tools”: [“overlap”],                       component; prefer those ranges to avoid
+“quality_score”: 1.0,                                  polygon violations.
+“next_action_description”: “. . . ”,
+“feedback”: “. . . ”,                                  Available actions:
+“thought”: “. . . ”,                                   - "fix_boundary": move violating component
+“visual_feedback”:     “No previous visual             centers into their safe range so all blocks
+image was provided.”                                   lie inside the board polygon.
+}                                                      - "fix_overlap": secondary; use only if
+}                                                      boundary is already clean.
+                                                       - "improve_routability": secondary; use
+                                                       only if boundary is clean.
+                                                       - Return action=[] if out_of_boundary is
+                                                       expected to pass.
+#Agentic_prompt      Variation       3     —           Available     inspection_tools     (exactly
+Boundary-Guided (Out-of-Boundary Feedback):            one allowed):
+You are an expert PCB layout engineer and              - "out_of_boundary" — deterministic polygon
+placement-decision agent.                              boundary detection.      Reports per-block
+You must do two jobs in one response:                  oob_area when ok: false.
+1. Produce the next candidate PCB placement.
+2. Decide whether the current candidate                Decision rules:
+needs a repair iteration based exclusively             1. quality_score must not exceed 0.95 while
+on out-of-boundary violations.                         any boundary error remains unresolved.
+                                                       2. visual_feedback: say “No previous visual
+Strict priority order:                                 image was provided.”     (visualize is not
+1. Return schema-valid JSON only. Include              available in this variation).
+every required component exactly once.                 3.    feedback must state the violating
+2. Keep every transformed block strictly               component names and which rotation + center
+inside the board outline polygon.                      coordinate was chosen to move them inside
+3. Overlap avoidance and routability are               bounds.
+secondary; spatial legality is the single
+convergence criterion in this variation.               Output Format (strictly follow this):
+                                                       Return ONLY a valid JSON object, no markdown
+Board Boundary:                                        fences.
+Extents: x ∈ [x0 , x1 ], y ∈ [y0 , y1 ] millimeters.   {
+Exact     polygon          outline         is     in   “placements”: [{. . . }],
+board_boundary.dxf_details                 (summary:   “decision”: {
+{dxf_summary}).                                        “action”: [ ],
+CRITICAL: use the polygon outline, not just            “inspection_tools”: [“out_of_boundary”],
+the bounding box, for boundary legality; a             “quality_score”: 1.0,
+component center inside the bbox can still             “next_action_description”: “. . . ”,
+have blocks outside an irregular outline.              “feedback”: “. . . ”,
+                                                       “thought”: “. . . ”,
+Iteration:                                             “visual_feedback”:     “No previous visual
+Current iteration: {iteration} / Maximum               image was provided.”
+iterations: {max_iterations}.                          }
+                                                       }
+Required   components,    Component   Block
+Dimensions, Source Rotation
+Operations, Netlist, Safe Center Range
+Hints, Allowed rotation codes:
+(identical to baseline — see shared section
+above)
+                                                       #Agentic_prompt      Variation       4     —
+Previous Context:                                      Multimodal-Guided (Visual Feedback):
+{previous_context_json}                                You are an expert PCB layout engineer and
+                                                       placement-decision agent.
+Recent History:                                        You must do two jobs in one response:
+{history_summary_json}                                 1. Produce the next candidate PCB placement.
+                                                       2. Decide whether the current candidate
+needs a visual improvement iteration based             Available     inspection_tools      (exactly
+exclusively on the rendered placement image.           one allowed):
+                                                       - "visualize" — render the current candidate
+Strict priority order:                                 as a PNG image. The rendered image becomes
+1. Return schema-valid JSON only. Include              the visual feedback for the next iteration.
+every required component exactly once.
+2. Use the attached rendered image from                Decision rules:
+the previous iteration as the primary                  1. visual_feedback is mandatory and must
+feedback signal; analyze spatial density,              describe specific layout deficiencies
+component clustering, and obvious visual               observed in the previous image (e.g.,
+irregularities.                                        component clustering, large empty zones,
+3. Numeric metrics (overlap counts, boundary           suspected overlapping bodies).
+violations, HPWL) are not available in this            2.    If no image was provided (first
+variation; all quality judgements must be              iteration), write “No previous visual image
+derived from visual observation.                       was provided.”    and propose an initial
+                                                       spread layout.
+Board Boundary:                                        3.    quality_score reflects your visual
+Extents: x ∈ [x0 , x1 ], y ∈ [y0 , y1 ] millimeters.   confidence only; do not assume geometry
+Outline summary: {dxf_summary}.                        correctness.
+Iteration:                                             Output Format (strictly follow this):
+Current iteration: {iteration} / Maximum               Return ONLY a valid JSON object, no markdown
+iterations: {max_iterations}.                          fences.
+If a rendered image is attached, it belongs            {
+to iteration {iteration−1}; your visual                “placements”: [{. . . }],
+analysis applies to that image and your new            “decision”: {
+placement must address any deficiencies you            “action”: [ ],
+observe.                                               “inspection_tools”: [“visualize”],
+                                                       “quality_score”: 0.9,
+Required   components,    Component   Block            “next_action_description”: “. . . ”,
+Dimensions, Source Rotation                            “feedback”: “. . . ”,
+Operations, Netlist, Safe Center Range                 “thought”: “. . . ”,
+Hints, Allowed rotation codes:                         “visual_feedback”: “Observed crowding near
+(identical to baseline — see shared section            board center . . . ”
+above)                                                 }
+                                                       }
+Previous   Context    (including  attached
+rendered image):
+{previous_context_json}
+Note: previous_visualize_note — a rendered
+image from the previous iteration is
+attached. Any visual problems you identify             #Agentic_prompt Variation 5 — Full-Feedback
+belong to that previous image; write your              (All-Tools Adaptive):
+analysis in decision.visual_feedback for               You are an expert PCB layout engineer and
+the current iteration and update the new               placement-decision agent.
+placement accordingly.                                 You must do two jobs in one response:
+                                                       1. Produce the next candidate PCB placement.
+Recent History:                                        2. Autonomously select the most informative
+{history_summary_json}                                 inspection tools and repair actions based
+                                                       on your current assessment of the placement
+How to use previous context:                           quality.
+- Inspect the attached rendered image
+for crowding, isolated components, long                Strict priority order:
+diagonal ratsnest lines, and unbalanced                1. Return schema-valid JSON only. Include
+empty zones.                                           every required component exactly once.
+- Move components to address the visual                2. Repair deterministic geometry problems
+deficiencies    you   identify;     include            first: out_of_boundary, then overlap.
+"adjust_visual_layout" in decision.action.             3. Use visual feedback to improve obvious
+- Do not request overlap or out_of_boundary            layout issues after deterministic geometry
+tools; they are not available in this                  is addressed.
+variation.                                             4. Use HPWL/netlist compactness only after
+                                                       the placement is geometrically valid.
+Available actions:
+- "adjust_visual_layout": improve visual               Board Boundary:
+plausibility using the previous rendered               Extents: x ∈ [x0 , x1 ], y ∈ [y0 , y1 ] millimeters.
+image.                                                 Exact    outline        primitives         are    in
+- Return action=[] if the visual layout                board_boundary.dxf_details                 (summary:
+appears satisfactory.                                  {dxf_summary}).
+Iteration:                                       risk areas of your current candidate.
+Current iteration: {iteration} / Maximum         2. If geometry is uncertain, always include
+iterations: {max_iterations}.                    overlap and out_of_boundary.
+If iteration == max_iterations, return           3. Add visualize when you want rendered
+your best candidate and do not request           feedback for the next iteration.
+unnecessary actions.                             4. Add hpwl only after geometry is confirmed
+                                                 clean.
+Required   components,    Component   Block      5.   If no further iteration is needed,
+Dimensions, Source Rotation                      select the minimal set that would confirm
+Operations, Netlist, Safe Center Range           the candidate’s final quality.
+Hints, Allowed rotation codes:
+(identical to baseline — see shared section      Decision rules:
+above)                                           1. If previous deterministic inspection
+                                                 failed, action must include the matching
+Previous Context:                                repair action.
+{previous_context_json}                          2. quality_score must not exceed 0.95 while
+Note: if "visualize" was selected in the         known overlap or boundary failures remain
+previous iteration, a rendered image is          unresolved.
+attached. Any visual problems you identify       3.     visual_feedback must analyze the
+belong to that previous image; write your        previous rendered image if one was provided;
+analysis in decision.visual_feedback and         otherwise say “No previous visual image was
+update the new placement accordingly.            provided.”
+
+Recent History:                                 Output Format (strictly follow this):
+{history_summary_json}                          Return ONLY a valid JSON object, no markdown
+                                                fences.
+How to use previous context:                    {
+- If previous overlap failed, move the          “placements”: [{. . . }],
+involved components apart and include           “decision”: {
+"fix_overlap" in decision.action.               “action”: [ ],
+- If previous out_of_boundary failed, move      “inspection_tools”:              [“overlap”,
+the violating component center into its         “out_of_boundary”],
+safe range and include "fix_boundary".          “quality_score”: 1.0,
+- If previous hpwl is high but geometry is      “next_action_description”:    “Finish with
+still invalid, ignore hpwl until geometry       current placement if selected inspections
+is clean.                                       pass.”,
+- If a rendered image is attached, inspect      “feedback”: “Concrete repair instructions
+it now and summarize visual deficiencies in     if another iteration is needed. Empty if
+decision.visual_feedback.                       done.”,
+                                                “thought”: “Concise reason for selected
+Available actions:                              actions and tools.”,
+- "fix_boundary": repair blocks outside the     “visual_feedback”: “Visual analysis of the
+board outline.                                  previous rendered image, or ‘No previous
+- "fix_overlap":    repair block overlaps       visual image was provided.’ ”
+between different components.                   }
+- "adjust_visual_layout": improve visual        }
+plausibility using the previous rendered
+image.
+- "improve_routability": reduce HPWL / net    C.1.1 Implementation of Routing Tool
+spread only after geometry is clean.          We evaluate the generated PCB placements by test-
+- Return action=[] if no further iteration
+is needed.                                    ing whether they can support a complete down-
+                                              stream routing workflow after automated post-
+Available inspection_tools (select all        processing. For each generated placement, we first
+that apply):
+- "visualize": render the current candidate   instantiate the component locations in the Eagle
+image for visual feedback in the next         board file and then export the design to the routing
+iteration.                                    pipeline. The resulting board is converted into a
+- "hpwl": compute routability / compactness
+metric.    Lower is better; compare with      DSN-compatible format and routed using an au-
+previous iterations.                          torouter without manual adjustment. All routing
+- "overlap": deterministic block overlap
+detection.
+                                              experiments are conducted under the same design-
+- "out_of_boundary": deterministic polygon    rule settings to ensure a fair comparison across
+boundary detection.                           placements. Specifically, the routing setup uses a
+Tool selection rules:                         two-layer board with routing enabled on both the
+1. Select the tools needed to verify the      top and bottom layers. The via/pad rule is config-
+                                              ured with a round shape and a radius of 16 mil.
+The spacing rule follows the same clearance ma-
+trix for all experiments: the default clearance is
+8 mil, the boundary clearance is 10 mil, and the
+clearances among vias, SMD pads, pins, and cop-
+per areas are set between 8 and 10 mil according
+to the design-rule matrix.
+   We use routing success as the main functional
+metric, since a placement is only practically use-
+ful if the nets can be completed under the board
+constraints. Specifically, we report the number of
+successfully processed placements, the number of
+placements that complete routing, the routed net
+count, the total net count, and the routing com-
+pletion ratio. We also track failures at each stage,
+including invalid component placement and routing
+failure. These metrics quantify not only whether
+the model can generate syntactically valid place-
+ments, but also whether those placements are geo-
+metrically and electrically feasible for downstream
+PCB routing.
+

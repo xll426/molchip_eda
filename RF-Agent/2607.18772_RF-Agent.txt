@@ -1,0 +1,383 @@
+                                               RF-Agent: A Practical Framework for Building
+                                                    Language Agents for RFIC Design
+                                            Yueqi Xing1* , Houbo He1* , Jolie Wang1 , Erin Ni1 , Shikai Wang2 , Qiufeng Li2 , Weidong Cao2 , Taiyun Chi1
+                                                  *
+                                                    Equally Credited Authors (ECAs) 1 ECE Department, Rice University, Houston, TX, USA
+                                                          2
+                                                            ECE Department, The George Washington University, Washington, D.C., USA
+                                                {xy67, hh68, jw161, ejn5, taiyun.chi}@rice.edu, {shikai.wang, qiufeng.li, weidong.cao}@gwu.edu
+
+                                            Abstract—Large language models (LLMs) have driven rapid          recognition, S-parameter analysis, impedance matching, and
+                                         progress in electronic design automation (EDA), yet their appli-    more, which requires domain-specific analytical skills beyond
+                                         cation to radio-frequency (RF) circuit design remains limited       what general pretraining offers [13]. Third, while recent bench-
+                                         by the scarcity of domain-specific datasets and standardized
+                                         benchmarks. We present RF-Agent, which addresses this gap           marks have been released for analog circuits evaluation, no
+                                         through textbook-driven knowledge distillation. A multi-agent       standardized RF benchmark exists, and no prior work has
+                                         Question–Thinking–Solution–Answer (QTSA) pipeline converts a        simultaneously addressed RF-domain dataset and benchmark
+                                         subsection-level corpus from seven canonical RF textbooks into      development, and evaluation of domain-adaptation strategies.
+                                         the first-of-its-kind RF-domain reasoning dataset (over 11,000         In this work, we present RF-Agent, a framework that
+                                         samples) with a dedicated multiple-choice benchmark. On this
+                                                                                                             addresses this gap through two complementary strate-
+arXiv:2607.18772v1 [cs.CL] 21 Jul 2026
+
+
+
+
+                                         benchmark we study two adaptation strategies: supervised fine-
+                                         tuning (SFT) and three retrieval-augmented generation (RAG)         gies: (1) constructing the first RF-domain reasoning
+                                         configurations (semantic, keyword, hybrid). Across multiple LLM     dataset and benchmark via a multi-agent QTSA (Ques-
+                                         families, domain-specific SFT significantly improves RF rea-        tion–Thinking–Solution–Answer) distillation pipeline, and (2)
+                                         soning, especially for small and medium-sized models; among         developing and evaluating RAG systems for RF-specific
+                                         RAG configurations, semantic retrieval performs best, indicating
+                                         embedding-based context alignment suits RF reasoning better         knowledge grounding. Our dataset and code are publicly
+                                         than naive fusion. The dataset and benchmark provide a reusable     available at https://github.com/Nina-nina123/RF-Agent. Our
+                                         foundation for future work on LLM-aided RF circuit design.          main contributions are:
+                                                                                                                • Open RF reasoning dataset and benchmark: The first
+                                                                I. I NTRODUCTION
+                                                                                                                  RF-domain QTSA dataset with five-perspective question
+                                            Large language models (LLMs) have demonstrated re-                    diversity and dual multiple-choice (mcQTSA) / normal
+                                         markable capabilities in natural language understanding, code            dialog (ndQTSA) formats, yielding over 11,000 reasoning
+                                         generation, and scientific reasoning, and their adoption in              samples. The mcQTSA subset forms the standardized
+                                         EDA has grown rapidly. Recent work spans analog circuit                  RF multiple-choice benchmark, providing an objective
+                                         synthesis and topology design [1]–[5], parameter optimiza-               evaluation resource previously absent from RF domain.
+                                         tion [6]–[9], and RTL generation for digital design [10]–[12].         • RF-specific retrieval augmentation: A systematic com-
+                                         However, recent evaluations show that general-purpose LLMs               parative evaluation of three retrieval configurations, se-
+                                         still exhibit significant deficiencies in circuit reasoning for          mantic embedding-based, keyword-based, and hybrid,
+                                         both analog [13], [14] and digital circuits [12], [15], with             for RF-domain knowledge grounding, conducted on a
+                                         these limitations growing more severe as circuit complexity              corpus of 950 peer-reviewed papers and 7 canonical RF
+                                         and domain specialization increase. A growing body of work               textbooks across multiple model families.
+                                         addresses this through domain-adapted QA and reasoning                 • Cross-model domain adaptation analysis: A systematic
+                                         agents that ground model responses in circuit knowledge via              study across multiple LLM families (0.6B–4B) and state-
+                                         domain-specific fine-tuning and RAG [12], [16]–[21].                     of-the-art models including GPT, DeepSeek and Qwen,
+                                            The RF-specific gap. RF circuits form the backbone of                 demonstrating that targeted domain adaption consistently
+                                         modern wireless systems, from 5G transceivers to radars and              improves RF reasoning and enables small fine-tuned
+                                         satellite links [22]–[24], making their efficient design critical        models to approach the performance of large models.
+                                         to continued advances in connectivity and sensing [25]–[27].
+                                         Despite progress in analog and digital EDA, and despite                    II. RF-D OMAIN DATASET AND B ENCHMARK
+                                         machine-learning methods advancing inverse design of RF                Effective domain adaptation requires structured supervision
+                                         building blocks [28]–[32], RF domain remains substantially          that captures multi-step reasoning, not simply raw text corpora.
+                                         underexplored for LLM-based design assistance [33]. Three           Prior work has shown that chain-of-thought (CoT) distillation
+                                         factors contribute to this gap. First, RF circuit knowledge is      from authoritative sources transfers reasoning capability more
+                                         concentrated in specialized textbooks and proprietary design        effectively than answer-only supervision [34], [35]. Multiple-
+                                         notes, with no curated open repositories. Second, RF reasoning      choice benchmarks from expert-curated content further pro-
+                                         requires structured multi-step derivation, spanning topology        vide objective, automatically verifiable evaluation at low an-
+                                         979-8-3195-1246-8-0/26/$31.00 ©2026 IEEE
+Fig. 1. Multi-agent QTSA distillation pipeline. The Question Agent generates perspective-diverse mcQTSA and ndQTSA questions from each original
+subsection. The Answer Agent produces structured CoT traces. The Process Agent normalizes and validates all outputs.
+notation cost, a critical advantage in domains where expert              tractors drawn from the same subsection, targeting understand-
+labeling is scarce [36], [37].                                           ing rather than surface recall. To promote reasoning diversity,
+   Building on these insights, we construct the RF-specific              five independent executions are performed under distinct rea-
+reasoning dataset and benchmark using a multi-agent QTSA                 soning perspectives, ensuring that repeated runs over the same
+distillation pipeline that produces two complementary formats.           subsection produce meaningfully different questions rather
+mcQTSA pairs each question with four answer options and a                than paraphrases of one another. It is motivated by findings that
+full Question–Thinking–Solution–Answer quadruple, making                 reasoning-type diversity in distilled data significantly improves
+it suitable for both SFT training and objective evaluation.              downstream performance [35]. To confirm this, we manually
+ndQTSA generates open-ended question-answer pairs for ex-                reviewed generated question sets across multiple subsections
+planatory reasoning. Our framework introduces three targeted             and verified that questions produced under distinct dimensions
+extensions over prior QTSA work [19]: (1) five-perspective               are meaningfully different from one another.
+question generation to maximize coverage across reasoning                   2) Answer Agent: The Answer Agent (GPT-5-mini) gen-
+types; (2) a reasoning-oriented answer model that produces               erates the Thinking, Solution, and Answer fields using a
+richer CoT traces for thinking-mode SFT; and (3) the dual                reasoning-oriented model. Given the multi-step analytical na-
+mcQTSA/ndQTSA design that serves training and evaluation                 ture of RF problems, using a reasoning model rather than a
+within a single pipeline. Fig. 1 illustrates the overall pipeline.       standard instruction model produces substantially richer CoT
+                                                                         supervision [34].
+A. RF Corpus Construction
+                                                                            3) Process Agent: A deterministic agent (GPT-4.1-mini)
+   The quality of training data matters as much as its quan-             enforces JSON compliance, validates field completeness, and
+tity: prior work has shown that training on textbook-quality             strips corpus-specific references (equation numbers, figure
+content enables small models to achieve strong performance               indices), ensuring the generated samples are self-contained and
+compared to models trained on larger but noisier corpora [38].           distributable independently of the sources.
+Motivated by this finding, we ground our dataset construction
+in seven canonical RF textbooks spanning foundational theory,            C. Dataset Composition and Value
+amplifier design, system analysis, and transceiver architecture,            The pipeline yields over 11,000 QTSA samples for multiple-
+topics that are largely absent from prior analog-focused cor-            choice and open-ended reasoning. As shown later with experi-
+pora and concentrated in expert-authored texts. Each book is             ments, mixed-format training outperforms either format alone.
+parsed at the subsection level into self-contained conceptual               The QTSA format supervises full reasoning trajectory rather
+units, yielding a corpus of 1,108 subsections.                           than the final answer alone, aligning training directly with the
+                                                                         inference behavior of thinking-mode models. The mcQTSA
+B. Multi-Agent QTSA Distillation
+                                                                         format further serves as a reusable RF benchmark, providing
+   We adopt a three-agent pipeline that converts each subsec-            objective multiple-choice evaluation grounded in expert RF
+tion into QTSA quadruples. This pipeline is executed five in-            knowledge. This fills a critical gap, where no standardized RF
+dependent times per subsection, with each execution targeting            LLM benchmark previously existed [36], [37].
+a distinct reasoning perspective, to encourage diversity while
+remaining grounded in the source content.                                                          III. M ETHODS
+   1) Question Agent: The Question Agent (GPT-4.1-mini)                     To adapt general-purpose language models to RF circuit
+generates mcQTSA and ndQTSA questions strictly grounded                  reasoning, we pursue two complementary strategies: SFT
+in the provided subsection. For mcQTSA, each question in-                on the QTSA dataset constructed in Section II, and RAG
+cludes one correct answer and three technically plausible dis-           grounded in an authoritative RF knowledge base. SFT encodes
+domain knowledge directly into model parameters, improving          A. Supervised Fine-Tuning Across Model Series
+the model’s ability for RF-specific analytical reasoning without       We evaluate the effectiveness of the proposed QTSA dataset
+external support at inference time. RAG, by contrast, decou-        through supervised fine-tuning across multiple model families.
+ples reasoning from parametric memory, allowing the model              1) mcQTSA and ndQTSA Provide Complementary Supervi-
+to reference verified domain sources at inference time without      sion: To investigate the effect of dataset format, we fine-tune
+retraining, and unlike SFT applies even to API-only foundation      Llama3.2-1B-Instruct using three 5M-token subsets: mcQTSA,
+models. Together, they provide a flexible framework that can        ndQTSA, and a randomly mixed dataset. Training on mcQTSA
+be applied to models of varying sizes and capability levels.        alone achieves 54.9%, outperforming ndQTSA-only training at
+                                                                    45.9%, as it directly trains the model to compare and select
+A. Supervised Fine-Tuning (SFT) on QTSA Data
+                                                                    answers. The mixed dataset achieves the best performance at
+   1) Training Data Format: We train directly on the QTSA           59.0%, suggesting the two formats provide complementary
+samples from Section II. Reasoning-capable models (e.g.,            supervision signals: mcQTSA sharpens answer selection while
+Qwen3 in thinking mode) learn the full Q+T+SA format,               ndQTSA strengthens reasoning and explanatory depth.
+with the thinking trace T as a separate generation phase;              Accordingly, all subsequent fine-tuning experiments adopt a
+standard instruction-tuned models learn a Q+TSA format that         mixed-format training set of 17M tokens, comprising the full
+concatenates thinking, solution, and answer into a single           ndQTSA corpus and the non-benchmark partition of mcQTSA.
+sequence, teaching non-reasoning models explicit reasoning          Table I summarizes the results, where -T and -NT denote
+patterns. The full training schema is provided in the repository.   thinking and non-thinking inference modes.
+   2) Model Families and Configurations: We evaluate SFT                                          TABLE I
+across two model families, LLaMA-3.2 [39] and Qwen3 [40],                     F INE - TUNING R ESULTS ON THE RF B ENCHMARK
+spanning 0.6B–4B parameters and including both base and
+instruction-tuned variants, enabling a systematic study of how      Model                   Base      Avg.   Fine-tuned   Avg.
+model capacity and prior alignment interact with domain-                                    Acc.    Time (s)    Acc.    Time (s)
+specific supervision. For Qwen3, we evaluate both thinking-         Llama3.2-1B-Base     24.7%        1.34       54.4%       18.80
+enabled and thinking-disabled inference: the former generates       Llama3.2-1B-Instruct 34.2%        3.75       59.3%       31.10
+an explicit CoT trace before the answer, mirroring the QTSA
+training format, while the latter produces a direct response,       Llama3.2-3B-Base     37.1%       42.64       70.5%       45.64
+trading accuracy for inference efficiency.                          Llama3.2-3B-Instruct 71.3%       2.49        74.7%       16.50
+
+                                                                    Qwen3-0.6B-T            63.6%    62.98       70.2%       35.87
+B. Retrieval-Augmented Generation over RF Knowledge Base
+                                                                    Qwen3-0.6B-NT           62.9%     4.57       67.7%       16.22
+   1) Knowledge Base Construction: Our retrieval corpus con-
+sists of 950 RF-related peer-reviewed papers and 7 canonical        Qwen3-1.7B-T            70.3%    68.47       75.3%       41.61
+RF textbooks, forming a dense RF knowledge base. All doc-           Qwen3-1.7B-NT           66.5%     2.29       71.3%       17.94
+uments are split into overlapping text chunks and embedded          Qwen3-4B-T              82.6%    112.78      83.5%       53.14
+with BGE-M3 [41] into a ChromaDB vector database. Re-               Qwen3-4B-NT             78.2%     5.06       80.5%       32.59
+flecting the multimodal nature of RF literature [42], diagrams
+(schematics, Smith charts, S-parameter plots) are additionally         2) Domain Fine-Tuning Consistently Improves RF Reason-
+extracted via GPT-4o into textual descriptions and indexed in       ing: Domain-specific fine-tuning improves model performance
+the same store. Details are in the repository.                      across all architectures and sizes, with gains ranging from
+   2) Retrieval Pipeline: We implement three retrieval config-      modest improvements on already-capable models to dramatic
+urations: two single-method baselines, semantic and keyword         lifts on smaller base models. For instance, Llama3.2-3B-Base
+retrieval, and a hybrid configuration that combines both. The       improves from 37.1% to 70.5%, demonstrating that QTSA
+semantic configuration embeds the query with BGE-M3 and             provides effective supervision for adapting general-purpose
+retrieves the top-3 chunks by cosine similarity. The keyword        language models to RF-domain reasoning, consistent with
+configuration retrieves the top-3 chunks by BM25 [43] lexical       prior work for the digital domain [20] and analog domain [19].
+overlap, capturing exact component names, topologies, and              3) Thinking Mode Boosts Accuracy While Fine-Tuning
+abbreviations that dense embeddings underweight in technical        Cuts Latency: Qwen3-T models consistently outperform their
+domains [17], [18]. The hybrid configuration (Fig. 2) retrieves     Qwen3-NT counterparts before and after fine-tuning. This
+the top-15 candidates from each, merges them via Reciprocal         aligns with the Q+T+SA training format of QTSA, which
+Rank Fusion (RRF) [44], re-ranks with BGE-ReRanker-V2-              supervises the full reasoning trajectory rather than the final
+M3 [41], and passes the top-3 chunks as context. The retrieved      answer alone [34]. Notably, fine-tuning has opposite effects
+chunks are prepended to the model’s input prompt.                   on inference time depending on the inference mode. For NT
+                      IV. E XPERIMENTS                              and base models, inference time increases after fine-tuning as
+                                                                    the model learns to generate structured reasoning chains rather
+  All models are evaluated on a fixed 1,000-sample mcQTSA           than short or degenerate outputs, for example, Qwen3-1.7B-
+benchmark with deterministic greedy decoding; an answer             NT increases from 2.29 s to 17.94 s. In contrast, T models
+extractor maps the outputs to a choice in {A, B, C, D}.
+                                           Fig. 2. Hybrid RAG pipeline for RF knowledge retrieval.
+
+become faster after fine-tuning: Qwen3-1.7B-T from 68.47 s                 2) Retrieval Quality and Model Scaling: To confirm the
+to 41.61 s. This suggests that domain supervision focuses in-           gains stem from retrieval quality rather than incidental context
+ternal reasoning process and reduces unnecessary exploration,           injection, we run a hit-and-miss experiment on 100 questions
+yielding accuracy and efficiency gains for T models.                    across three Qwen3 sizes: a hit uses the top-3 retrieved chunks,
+   4) Instruction Tuning and Domain Fine-Tuning Are Com-                a miss the next three (ranks 4–6) from the same run. As shown
+plementary: Instruction-tuned variants consistently exhibit             in Table III, hit chunks consistently outperform miss chunks
+higher pre-fine-tuning accuracy than their base counterparts,           across all configurations and sizes, confirming retrieval quality
+confirming that general instruction alignment helps models              drives the gains. Hit accuracy under semantic RAG also rises
+interpret question–answer style inputs. After fine-tuning, this         with model size, from 81% (0.6B) to 84% (1.7B) to 92% (4B).
+gap narrows substantially, for example, Llama3.2-1B-Base                                                TABLE III
+reaches 54.4% versus 59.3% for the instruct variant, suggest-                H IT- AND -M ISS R ETRIEVAL VALIDATION ACROSS M ODEL S IZES
+ing domain-specific supervision partially compensates for the
+absence of prior instruction tuning.                                     Model             Semantic RAG Keyword RAG Hybrid RAG
+   5) Fine-Tuning Gains Diminish for Larger, Stronger Mod-                                  Hit       Miss   Hit      Miss     Hit    Miss
+els: For larger models such as Qwen3-4B, which already
+                                                                         Qwen3-0.6B-T 81%              65%   74%      73%     71%     65%
+achieve strong baseline performance, fine-tuning yields only
+                                                                         Qwen3-1.7B-T 84%              75%   80%      75%     80%     75%
+marginal gains (<2.5%). Further improvement likely requires              Qwen3-4B-T   92%              83%   86%      82%     85%     80%
+larger or more diverse training data [45]. A scaling study on
+Llama3.2-1B confirms that accuracy saturates near 9M tokens,             Avg. ∆                +10.3%              +3.3%         +5.0%
+indicating that the 17M-token QTSA provides sufficient head-
+                                                                           3) Comparative Analysis of Retrieval Configurations: Ta-
+room for small models (≤1B parameters) while larger models
+                                                                        bles II and III consistently rank semantic retrieval highest,
+(≥4B parameters) may benefit from additional data.
+                                                                        then keyword, then hybrid, with the hit–miss gap corroborating
+B. RAG Results                                                          the order (+10.3%, +3.3%, +5.0%). Keyword underperforms
+   Because our QA benchmark contains no diagram figures, in-            because RF reasoning favors conceptual, derivation-level rele-
+cluding diagram-derived chunks changed accuracy by <0.5%.               vance that dense embeddings capture better than lexical over-
+Reported results therefore exclude them.                                lap. Hybrid underperforms because merging dense and sparse
+   1) RAG Improves SOTA Model Performance: Table II re-                 candidates before re-ranking injects noisier context than the
+ports QA accuracy for three state-of-the-art LLMs with and              focused semantic top-3; RRF [44] ranks by position to mitigate
+without our three RAG configurations. All three configurations          score mismatch, but re-ranking cannot fully recover precision
+improve accuracy over the no-RAG baseline, demonstrating                when the pool contains low-quality BM25 candidates.
+that the RF knowledge base provides domain-specific ground-
+ing that benefits even large models. Semantic retrieval yields                                       V. C ONCLUSION
+the strongest absolute gains, bringing GPT-4o from 89.6% to                We presented RF-Agent, a framework for LLM domain
+93.0%, Qwen3-235B from 87.9% to 91.2%, and DeepSeek-                    adaptation in RF circuit design, contributing the RF-domain
+V3.2-T from 89.1% to 93.7%.                                             QTSA dataset, a standardized multiple-choice benchmark, and
+                                                                        a systematic study of SFT and RAG adaptation strategies for
+                               TABLE II                                 RF reasoning. Several directions remain open. The current
+E VALUATION OF S TATE - OF - THE -A RT LLM S W ITH AND W ITHOUT RAG
+                                                                        benchmark may limit discrimination among stronger models,
+Model                   No RAG Semantic Keyword Hybrid                  motivating harder tasks beyond multiple-choice QA toward
+                                                                        agentic design scenarios. RLHF with domain experts could
+GPT-4o                    89.6%      93.0%       92.1%      91.2%       provide richer supervision than distillation alone, and expert
+Qwen3-235B-A22B-T         87.9%      91.2%       90.9%      90.8%
+                                                                        evaluation of model-generated reasoning would validate prac-
+DeepSeek-V3.2-T           89.1%      93.7%       93.0%      91.6%
+                                                                        tical utility beyond automated benchmarks.
+                          ACKNOWLEDGMENT                                           [17] L. Shi, M. Kazda, B. Sears, N. Shropshire, and R. Puri, “Ask-EDA: A
+                                                                                        Design Assistant Empowered by LLM, Hybrid RAG and Abbreviation
+   The authors thank Xin Zhang, Luyao Shi, Prashanth Vi-                                De-hallucination,” in 2024 IEEE LLM Aided Design Workshop (LAD),
+jayaraghavan, and Ehsan Degan of IBM Research for their                                 2024, pp. 1–5.
+insightful discussions and feedback throughout this work.                          [18] P. Abbineni, S. Aldowaish, C. Liechty, S. Noorzad, A. G. Ghalati, and
+                                                                                        M. Fayazi, “MuaLLM: A Multimodal Large Language Model Agent for
+                                                                                        Circuit Design Assistance with Hybrid Contextual Retrieval-Augmented
+                               R EFERENCES                                              Generation,” in 2026 31st Asia and South Pacific Design Automation
+ [1] J. Gao, W. Cao, J. Yang, and X. Zhang, “AnalogGenie: A generative                  Conference (ASP-DAC), 2026, pp. 646–652.
+     engine for automatic discovery of analog circuit topologies,” in              [19] Z. Chen, J. Zhuang, J. Shen, X. Ke, X. Yang, M. Zhou, Z. Du,
+     Proceedings of the 13th International Conference on Learning                       X. Yan, Z. Wu, Z. Xu, J. Huang, L. Shang, X. Zeng, and
+     Representations (ICLR), 2025. [Online]. Available: https://openreview.             F. Yang, “AnalogSeeker: An Open-source Foundation Language
+     net/forum?id=jCPak79Kev                                                            Model for Analog Circuit Design,” 2025. [Online]. Available:
+ [2] C.-C. Chang, Y. Shen, S. Fan, J. Li, S. Zhang, N. Cao, Y. Chen, and                https://arxiv.org/abs/2508.10409
+     X. Zhang, “LaMAGIC: Language-model-based topology generation for              [20] L. Shi, M. Kazda, C. Schmitter, and H. Gupta, “Improving LLM-
+     analog integrated circuits,” in Proceedings of the 41st International              Powered EDA Assistants with RAFT,” in 2025 IEEE International
+     Conference on Machine Learning, ser. Proceedings of Machine                        Conference on LLM-Aided Design (ICLAD), 2025, pp. 9–15.
+     Learning Research, vol. 235. PMLR, 2024. [Online]. Available:                 [21] Y. Shi, Z. Tao, Y. Gao, T. Zhou, C. Chang, Y. Wang, B. Chen,
+     https://dl.acm.org/doi/10.5555/3692070.3692311                                     G. Zhang, A. Liu, Z. Yu, T.-J. Lin, and L. He, “AMSnet-KG: A Netlist
+ [3] Y. Lai, S. Lee, G. Chen, S. Poddar, M. Hu, D. Z. Pan, and P. Luo,                  Dataset for LLM-based AMS Circuit Auto-design Using Knowledge
+     “AnalogCoder: Analog Circuit Design via Training-Free Code Genera-                 Graph RAG,” ACM Trans. Des. Autom. Electron. Syst., vol. 30, no. 6,
+     tion,” in Proc. AAAI Conference on Artificial Intelligence, vol. 39, no. 1,        Oct. 2025. [Online]. Available: https://doi.org/10.1145/3736166
+     2025, pp. 379–387.                                                            [22] X. Zhang, R. Wang, Q. Zhou, H. Guo, C. Shi, and T. Chi, “A 24-
+ [4] H. Zhang, S. Sun, Y. Lin, R. Wang, and J. Bian, “AnalogXpert:                      to-29GHz Compact Transmit/Receive Front-End Module Featuring an
+     Automating Analog Topology Synthesis by Incorporating Circuit Design               Asymmetric Doherty Power Amplifier and 0.22mm2 Area,” in 2025
+     Expertise into Large Language Models,” in 2025 International Sympo-                IEEE International Solid-State Circuits Conference (ISSCC), vol. 68,
+     sium of Electronics Design Automation (ISEDA). IEEE, 2025.                         2025, pp. 1–3.
+ [5] S. Wang, Q. Li, H. He, J. Gao, Z. Wang, Y. Sun, X. Zhang, T. Chi,             [23] Q. Zhou, Y. Su, H. Guo, Y. Hu, K. Yang, and T. Chi, “A 28GHz
+     and W. Cao, “Invited Paper: Multi-Agent Generative Synthesis for Ana-              Frequency-Diverse Sub-Array TX with Secret Phase Keys and Antenna
+     log/RF Circuit: from Scalable Topology Generation to Efficient Inverse             Subset Modulation for Eavesdropping-Resilient Wireless Communi-
+     Design,” in 2025 IEEE/ACM International Conference On Computer                     cation,” in 2026 IEEE International Solid-State Circuits Conference
+     Aided Design (ICCAD), 2025, pp. 1–9.                                               (ISSCC), vol. 69, 2026, pp. 92–94.
+ [6] Y. Yin, Y. Wang, B. Xu, and P. Li, “ADO-LLM: Analog Design Bayesian           [24] H. Wang, H. Guo, X. Zhang, and T. Chi, “A Packaged D-Band Transmit-
+     Optimization with In-Context Learning of Large Language Models,”                   ter with a Multifeed Lens Antenna Achieving 25.3dBm Single-Element
+     in Proceedings of the 43rd IEEE/ACM International Conference on                    EIRP for 2-D Scalable Arrays,” in 2025 IEEE Custom Integrated
+     Computer-Aided Design (ICCAD). ACM, 2024. [Online]. Available:                     Circuits Conference (CICC), 2025, pp. 1–3.
+     https://doi.org/10.1145/3676536.3676816                                       [25] X. Zhang, H. Guo, and T. Chi, “A Millimeter-Wave Four-Way Doherty
+ [7] D. V. Kochar, H. Wang, A. P. Chandrakasan, and X. Zhang, “LEDRO:                   Power Amplifier With Over-GHz Modulation Bandwidth,” IEEE Journal
+     LLM-Enhanced Design Space Reduction and Optimization for Analog                    of Solid-State Circuits, vol. 59, no. 12, pp. 3898–3914, 2024.
+     Circuits,” in 2025 IEEE International Conference on LLM-Aided Design
+                                                                                   [26] H. Guo, Y. Hu, and T. Chi, “A 9.05-to-37.0GHz LO Generator
+     (ICLAD). IEEE, 2025, pp. 141–148.
+                                                                                        with Magnetic Mode Switching and Tuning-Free Octave-Bandwidth
+ [8] C. Liu, W. Chen, H. Xu, Y. Du, J. Yang, and L. Du, “A Large
+                                                                                        Common-Mode Resonator Achieving > 190.7dBc/Hz FoM,” in 2025
+     Language Model-based Multi-Agent Framework for Analog Circuits’
+                                                                                        IEEE International Solid-State Circuits Conference (ISSCC), vol. 68,
+     Sizing Relationships Extraction,” in 2025 International Symposium of
+                                                                                        2025, pp. 560–562.
+     Electronics Design Automation (ISEDA), 2025, pp. 181–187.
+                                                                                   [27] T. Chi, Y. Hu, X. Zhang, and H. Guo, “Pushing the Performance
+ [9] Z. Wei, Z. Kong, Y. Wang, D. Z. Pan, and X. Tang, “TopoSizing:
+                                                                                        Boundaries of MmWave and Sub-THz Transceiver Circuits Through
+     An LLM-aided framework of topology-based understanding and sizing
+                                                                                        Passive Network Design Innovations,” in Proc. IEEE Int. Midwest Symp.
+     for AMS circuits,” arXiv preprint arXiv:2509.14169, 2025. [Online].
+                                                                                        Circuits Syst. (MWSCAS), 2024, pp. 759–763.
+     Available: https://arxiv.org/abs/2509.14169
+[10] S. Liu, W. Fang, Y. Lu, J. Wang, Q. Zhang, H. Zhang, and Z. Xie,              [28] C. Chu, Y. Xu, S. Fu, T.-Y. Huang, K. Manetakis, P. A. D. Fabbro,
+     “RTLCoder: Fully Open-Source and Efficient LLM-Assisted RTL Code                   and H. Wang, “AI-Assisted Data-Driven RFIC Designs: A Review of
+     Generation Technique,” IEEE Transactions on Computer-Aided Design                  Recent Progress, Design Frameworks, and Challenges,” IEEE Journal of
+     of Integrated Circuits and Systems, 2024.                                          Selected Topics in Electromagnetics, Antennas and Propagation, vol. 2,
+[11] S. Thakur, B. Ahmad, H. Pearce, B. Tan, B. Dolan-Gavitt, R. Karri,                 pp. 1–25, 2026.
+     and S. Garg, “VeriGen: A Large Language Model for Verilog Code                [29] E. A. Karahan et al., “Deep-Learning Enabled Generalized Inverse
+     Generation,” ACM Trans. Des. Autom. Electron. Syst., vol. 29, no. 3,               Design of Multi-Port Radio-Frequency and Sub-Terahertz Passives and
+     Apr. 2024. [Online]. Available: https://doi.org/10.1145/3643681                    Integrated Circuits,” Nature Communications, vol. 15, no. 1, Dec 2024.
+[12] M. Liu, T.-D. Ene, R. Kirby et al., “ChipNeMo: Domain-Adapted LLMs            [30] H. Chae, S. Chai, T. Chi, S. Li, and D. Z. Pan, “ML-Assisted RF IC
+     for Chip Design,” arXiv preprint arXiv:2311.00176, 2023.                           Design Enablement: the New Frontier of AI for EDA,” in Proc. Asia
+[13] B. Razavi, “Analog Design Experiments With AI—Part 1 [The Analog                   and South Pacific Design Automation Conf. (ASP-DAC), Jan. 2025, pp.
+     Mind],” IEEE Solid-State Circuits Magazine, vol. 17, no. 4, pp. 11–15,             683–689.
+     2025.                                                                         [31] H. He, Y. Xu, L. Xia, Y. Hu, F. Cai, and T. Chi, “MOTIF-RF:
+[14] B. Razavi, “Analog Design Experiments With AI—Part 2 [The Analog                   Multi-template On-chip Transformer Synthesis Incorporating Frequency-
+     Mind],” IEEE Solid-State Circuits Magazine, vol. 18, no. 2, pp. 8–13,              domain Self-transfer Learning for RFIC Design Automation,” in 2026
+     2026.                                                                              31st Asia and South Pacific Design Automation Conference (ASP-DAC),
+[15] M. Liu, N. Pinckney, B. Khailany, and H. Ren, “Invited Paper: Verilo-              2026, pp. 1138–1144.
+     gEval: Evaluating Large Language Models for Verilog Code Genera-              [32] Y. Hu, H. Guo, S. Wang, J. Liu, W. Cao, and T. Chi, “AdreamDCO: AI-
+     tion,” in 2023 IEEE/ACM International Conference on Computer Aided                 Driven Robust and Efficient Design Automation for Digitally Controlled
+     Design (ICCAD), 2023, pp. 1–8.                                                     Oscillators,” in 2025 62nd ACM/IEEE Design Automation Conference
+[16] C. Liu, W. Chen, A. Peng, Y. Du, L. Du, and J. Yang, “AmpAgent:                    (DAC), 2025, pp. 1–7.
+     An LLM-Based Multi-Agent System for Multi-Stage Amplifier                     [33] H. Chae, S. Kim, S. Poddar, X. Gao, S. Li, and D. Z. Pan, “Invited
+     Schematic Design from Literature for Process and Performance                       Paper: Towards Generative AI for Analog and RF IC Design: From Spec
+     Porting,” arXiv preprint arXiv:2409.14739, 2024. [Online]. Available:              to Layout,” in 2025 IEEE/ACM International Conference On Computer
+     https://arxiv.org/abs/2409.14739                                                   Aided Design (ICCAD), 2025, pp. 1–9.
+[34] N. Ho, L. Schmid, and S.-Y. Yun, “Large Language Models
+     are Reasoning Teachers,” in Proceedings of the 61st Annual
+     Meeting of the Association for Computational Linguistics (Volume
+     1: Long Papers). Toronto, Canada: Association for Computational
+     Linguistics, 2023, pp. 14 852–14 870. [Online]. Available: https:
+     //aclanthology.org/2023.acl-long.830
+[35] K. Feng, C. Li, X. Zhang, J. Zhou, Y. Yuan, and G. Wang,
+     “Keypoint-based Progressive Chain-of-Thought Distillation for LLMs,”
+     in Proceedings of the 41st International Conference on Machine
+     Learning, ser. Proceedings of Machine Learning Research, vol.
+     235. PMLR, 2024, pp. 13 241–13 255. [Online]. Available: https:
+     //proceedings.mlr.press/v235/feng24e.html
+[36] Y. Shi, Z. Zhang, H. Wang, Z. Tao, Z. Li, B. Chen, Y. Wang,
+     Z. Yu, T.-J. Lin, and L. He, “AMSBench: A comprehensive
+     benchmark for evaluating MLLM capabilities in AMS circuits,”
+     arXiv preprint arXiv:2505.24138, 2025. [Online]. Available: https:
+     //arxiv.org/abs/2505.24138
+[37] C. Zhao, Z. Shi, X. Wen, C. Liu, Y. Liu, Y. Zhou, Y. Zhao, H. Feng,
+     Y. Zhu, G.-W. Wan, X. Cheng, W. Chen, Y. Fu, C. Chen, C. Xue,
+     Y. Wang, Y. Lin, J. Yang, N. Xu, X. Wang, and Q. Xu, “MMCircuitEval:
+     A Comprehensive Multimodal Circuit-Focused Benchmark for Evaluat-
+     ing LLMs,” in 2025 IEEE/ACM International Conference On Computer
+     Aided Design (ICCAD), 2025, pp. 1–9.
+[38] S. Gunasekar et al., “Textbooks Are All You Need,” arXiv preprint
+     arXiv:2306.11644, 2023. [Online]. Available: https://arxiv.org/abs/2306.
+     11644
+[39] A. Grattafiori et al., “The Llama 3 Herd of Models,” arXiv preprint
+     arXiv:2407.21783, 2024. [Online]. Available: https://arxiv.org/abs/2407.
+     21783
+[40] A. Yang et al., “Qwen3 technical report,” arXiv preprint
+     arXiv:2505.09388, 2025. [Online]. Available: https://arxiv.org/abs/
+     2505.09388
+[41] J. Chen, S. Xiao, P. Zhang, K. Luo, D. Lian, and Z. Liu, “M3-
+     Embedding: Multi-Linguality, Multi-Functionality, Multi-Granularity
+     Text Embeddings Through Self-Knowledge Distillation,” in Findings of
+     the Association for Computational Linguistics: ACL 2024, L.-W. Ku,
+     A. Martins, and V. Srikumar, Eds. Bangkok, Thailand: Association
+     for Computational Linguistics, Aug. 2024, pp. 2318–2335. [Online].
+     Available: https://aclanthology.org/2024.findings-acl.137/
+[42] P.-H. Chen, Y.-S. Lin, W.-C. Lee, T.-Y. Leu, P.-H. Hsu, A. Dissanayake,
+     S. Oh, and C.-S. Chiu, “MenTeR: A fully-automated Multi-agenT
+     workflow for end-to-end RF/Analog Circuits Netlist Design,” in 2025                    Fig. 3. A representative mcQTSA sample for mixers.
+     IEEE International Conference on LLM-Aided Design (ICLAD), 2025,
+     pp. 124–132.
+                                                                                     Question
+[43] S. E. Robertson, S. Walker, S. Jones, M. Hancock-Beaulieu, and M. Gat-
+     ford, “Okapi at TREC-3,” in Proceedings of the Third Text REtrieval              “For a single-turn planar round inductor with mean radius a and strip width
+     Conference (TREC-3). National Institute of Standards and Technology              w, assuming w ≪ a, which expression correctly approximates its
+     (NIST), 1994.                                                                    self-inductance L?
+[44] G. V. Cormack, C. L. A. Clarke, and S. Büttcher, “Reciprocal rank               A. L ≈ μa [ ln(8a / w) − 2 ], where μ is the permeability, valid for a ≫ w
+                                                                                      B. L ≈ (μl / 2π) [ ln(4a / w) − 1 ], where l = 2πa
+     fusion outperforms Condorcet and individual rank learning methods,”
+                                                                                      C. L ≈ μ₀ l [ arcsinh(l / 2w) − 1 ], valid only for square planar inductors
+     in Proc. 32nd International ACM SIGIR Conference on Research and                 D. L ≈ μ√(ab) [ (2/k − k) K(k) − (2/k) E(k) ], k = w / (2a), K(k), E(k) elliptic
+     Development in Information Retrieval, 2009, pp. 758–759.                         integrals”
+[45] J. Hoffmann et al., “Training Compute-Optimal Large Language
+     Models,” arXiv preprint arXiv:2203.15556, 2022. [Online]. Available:            Retrieval from Hit
+     https://arxiv.org/abs/2203.15556
+                                                                                      “[S1] RF Power Amplifiers (Kazimierczuk, 2014). The                      Answer
+                       A PPENDIX A                                                    retrieved chunk derives the self-inductance of a
+                                                                                      single-turn round inductor: for a ≫ w, L ≈ μa [ ln(8a / w)              A
+            A R EPRESENTATIVE MC QTSA S AMPLE                                         − 2 ] = (μl / 2π) [ ln(8a / w) − 2 ], with l = 2πa — directly
+                                                                                      supporting option A.”
+   Fig. 3 shows a complete mcQTSA sample produced by our
+QTSA pipeline, including the question, four options, and the                         Retrieval from Miss
+full Thinking–Solution–Answer trace used as SFT supervision.                          “[S1] RF Power Amplifiers (Kazimierczuk, 2014). The
+                                                                                      retrieved chunk instead covers a square planar spiral                    Answer
+                      A PPENDIX B                                                     inductor via a modified Wheeler’s formula (in terms of N,
+                                                                                      D, and s) — related to inductor modeling but not the                    B
+        A R EPRESENTATIVE RAG H IT- VS -M ISS C ASE                                   single-turn round-inductor result the question requires,
+                                                                                      leading to the wrong choice.”
+   Fig. 4 illustrates the hit-and-miss study. For one benchmark
+question, the hit condition uses the top-3 retrieved chunks and
+                                                                                Fig. 4. A representative hit-and-miss example. The hit chunk (top) retrieves
+the miss condition uses ranks 4–6 from the same run: the hit                    the directly relevant derivation, yielding a correct answer. The miss chunk
+chunk surfaces the exact derivation (correct answer), while the                 (bottom) retrieves a related but insufficient passage from the same document,
+miss chunk returns a related but insufficient passage (incorrect                yielding an incorrect answer. Retrieved passages are summarized for brevity.
+answer).
+

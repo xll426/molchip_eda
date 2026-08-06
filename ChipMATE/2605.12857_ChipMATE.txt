@@ -1,0 +1,958 @@
+                                         ChipMATE: Multi-Agent Training via Reinforcement
+                                              Learning for Enhanced RTL Generation
+
+
+                                            Zhongkai Yu∗                Yichen Lin∗          Chenyang Zhou                Yuwei Zhang
+                                                UCSD                       UCSD             Columbia University               UCSD
+                                            La Jolla, USA              La Jolla, USA         New York, USA                La Jolla, USA
+                                          zhy055@ucsd.edu            yil384@ucsd.edu      cz2791@columbia.edu           yuz163@ucsd.edu
+arXiv:2605.12857v1 [cs.MA] 13 May 2026
+
+
+
+
+                                              Kun Zhou                    Junxia Cui            Haotian Ye              Zhengding Hu
+                                                 UCSD                        UCSD                  UCSD                     UCSD
+                                             La Jolla, USA               La Jolla, USA         La Jolla, USA            La Jolla, USA
+                                           kuzhou@ucsd.edu             jucui@ucsd.edu         h5ye@ucsd.edu           zhh068@ucsd.edu
+
+                                            Zaifeng Pan                 Ruiyi Wang              Yujie Zhao              Hejia Zhang
+                                                UCSD                       UCSD                    UCSD                     UCSD
+                                            La Jolla, USA              La Jolla, USA           La Jolla, USA            La Jolla, USA
+                                          zapan@ucsd.edu             ruw079@ucsd.edu         yuz285@ucsd.edu          hez024@ucsd.edu
+
+                                                   Jingbo Shang                  Jishen Zhao                      Yufei Ding
+                                                       UCSD                          UCSD                            UCSD
+                                                   La Jolla, USA                 La Jolla, USA                   La Jolla, USA
+                                                 jshang@ucsd.edu               jzhao@ucsd.edu                yufeiding@ucsd.edu
+
+
+
+                                                                                     Abstract
+
+                                                 Existing API-based agentic systems for RTL code generation are fundamentally
+                                                 misaligned with industrial practice: they assume a golden testbench is available
+                                                 at generation time, rely on closed-source APIs incompatible with chip vendors’
+                                                 air-gapped security requirements, and cannot be trained on vendors’ proprietary
+                                                 RTL codebases, leaving valuable internal data unused. Recent self-trained models
+                                                 address the deployment constraint but remain single-turn generators that overlook
+                                                 the critical role of verification in real industrial flows.
+                                                 To bridge these gaps, we present ChipMATE, the first self-trained multi-agent
+                                                 framework for RTL generation. Inspired by industrial practice where correctness
+                                                 emerges from cross-comparison between independently written RTL modules and
+                                                 reference models, ChipMATE pairs a Verilog agent with a Python reference-model
+                                                 agent that mutually verify each other’s outputs without any golden oracle. We
+                                                 design a backtrack-based inference workflow to prevent error propagation across
+                                                 turns, and a two-stage training pipeline that first trains each agent individually to
+                                                 saturate its code-generation capability, then trains the team jointly to collaborate
+                                                 effectively. To support the training, we further build a hybrid data-generation
+                                                 framework that produces 64.4K high-quality reference model training samples.
+                                                 ChipMATE achieves 75.0% and 80.1% pass@1 on VerilogEval V2 with 4B and
+                                                 9B base models, outperforming all existing self-trained models and even DeepSeek
+                                                 V4 with 1600B parameters. Our code and model weights are publicly available in
+                                                 https://github.com/zhongkaiyu/ChipMATE.
+
+                                           ∗ Equal   contribution.
+1   Introduction
+
+Large Language Models (LLMs) excel at general-purpose programming but struggle with Register-
+Transfer Level (RTL) code generation, a cornerstone of modern chip design, largely due to the scarcity
+of high-quality RTL data in public corpora. To improve RTL generation quality, recent agentic
+workflows like MAGE [35] and VerilogCoder [8] orchestrate LLMs through task decomposition and
+iterative self-correction, achieving promising results on academic benchmarks.
+Despite these advances, current agentic RTL pipelines are fundamentally misaligned with industrial
+chip-design practice in three coupled ways, preventing their adoption by chip vendors. First, existing
+workflows require a golden testbench to drive self-correction, which does not hold for industrial
+settings. In real production, testbenches are written by dedicated verification engineers and do not
+exist before the RTL is written. Moreover, even when a testbench exists, it is often imperfect and
+may itself contain bugs, making it unsuitable to serve as a golden oracle. Second, these workflows
+depend on LLM APIs, which conflict with the security posture of chip vendors. RTL code is treated
+as first-class intellectual property, and core development servers are routinely air-gapped to prevent
+any data leakage to third-party endpoints. Third, the API-centric design wastes chip companies’
+most valuable asset for LLM improvement: their internal RTL codebases. Years of production-grade
+RTL, far superior to any publicly available training data, remain entirely unused because API-based
+LLMs cannot be fine-tuned on proprietary code.
+To address these constraints, recent efforts such as QiMeng-CodeV-R1 [37] and RTLSeek [33] train
+open-source LLMs that run on chip vendors’ local servers, removing the dependency on external APIs
+and enabling training with in-house codebases. Moreover, these models generate code in a single
+turn, eliminating the need for golden testbenches. While this avoids the above issues, single-turn
+generation offers no mechanism for the model to check or correct its own output, resulting in low
+code accuracy. This is unsurprising, as even a senior design engineer rarely writes correct RTL in one
+attempt. Indeed, chip design industry has realized this problem and does not ensure code correctness
+by demanding perfection from any single engineer, but through a cross-verification workflow between
+design engineers and verification engineers. Specifically, design engineers implement a module in
+RTL while verification engineers independently write a reference model in a high-level language (e.g.,
+Python, SystemC, or C++) that predicts the RTL module’s cycle-accurate behavior. Since neither
+side is assumed correct, the two parties iteratively compare outputs, locate bugs, and apply fixes until
+the design is verified. This industrial workflow directly inspires our work ChipMATE, a multi-agent
+system in which one agent generates Verilog in the role of a design engineer and another generates
+a Python reference model in the role of a verification engineer. The two agents work as a team,
+iteratively cross-verifying each other to produce high-quality RTL code.
+However, building such a self-trained multi-agent workflow introduces three key challenges. (C1)
+Error propagation without a golden oracle. Since neither agent generates perfect code, a mismatch
+between the design agent and the verification agent does not reveal which side is wrong. Naively
+asking one agent to “correct” the other can compound errors turn by turn, producing worse results
+than a single-model baseline. (C2) Weak individual capability and lack of collaboration. Off-
+the-shelf open-source models such as Qwen3.5-4B/9B achieve below 45% accuracy on both Verilog
+generation and reference-model generation, even on simple benchmarks like VerilogEval V2 [19].
+Each agent’s individual capability must therefore be strengthened through dedicated training before
+any meaningful collaboration can occur. Beyond individual competence, the two agents must also
+learn to work as a team, a skill that standard single-model training does not provide. (C3) No training
+data for reference-model generation. Reference-model generation is a largely unexplored task with
+no publicly available training data. One might hope to bootstrap a dataset by distilling from strong
+API-based LLMs, but even DeepSeek-R1 achieves below 20% pass@1 when converting the Verilog-
+based QiMeng training set into Python reference models, making direct distillation impractical. The
+poor performance stems from the unique demands of reference-model generation, which requires
+predicting cycle-accurate hardware behavior and adhering to two’s-complement arithmetic patterns,
+tasks that LLMs are never exposed to during pretraining.
+We present ChipMATE, the first self-trained multi-agent framework for RTL generation that supports
+fully offline deployment.
+
+      1. Cross-verification multi-agent workflow (C1). We propose an agentic workflow in which
+         a Verilog agent and a Python reference-model agent mutually verify each other’s outputs.
+
+
+                                                   2
+       Step1: RTL and Ref Model Gen                             Step2: Cross Verification                         Step3: Multi-Turn Self-Correction
+                                                                                                                                              Backtrack Mechanism
+       Verilog Agent                       xN
+                                                                                                                  Prompt with
+                                           ...
+        Sys Prompt                                                                                               mismatch info
+                       Verilog Agent                                                                                                          1           2             3     4
+       Python Agent                        xN                   Cross-Verify
+                                           ...                                            Mismatch                Prompt with                  Turn1        Turn2        Turn3
+        Sys Prompt                                                 Tool      Waveform
+                                                                                             Info                mismatch info               60% Match    70% Match    65% Match
+                       Python Agent
+         Each agent samples N candidates from its           Compare Verilog code with Python code           Agents self-correct using mismatch info. A correction is accepted
+              system prompt independently.                      and generate mismatch info.                 only if it strictly improves the match rate (backtrack mechanism).
+
+
+                                                                (a) Cross-verification multi-agent workflow
+
+                                                                                                                                                       Python Agent
+                    Stage1: Single-Agent Training                                         Stage2: Multi-Agent Training                               Training Data Gen
+              SFT            RL Data Filtering      Single-Agent RL             MA-RL Data Filtering              Multi-Agent RL                                      Open-source
+    Verilog               SFT Data    RL Data                                                                                                                         Verilog Data
+
+
+                                                                                                                                                         LLM API Distillation
+    Python                  pass@10∈ [0.1, 0.9]
+                                                                                     Filtering                                                           IR-Based Conversion
+                                                                                 pass@10∈ [0.1, 0.9]
+                                                                                                                                                          Category Specific
+                                                                                                                                                           Augmentation
+      SFT imparts basic domain knowledge to each agent. Data filtering
+      ensures productive RL signal. Single-agent RL refines generation            The two agents are trained jointly so they learn how
+                 quality through reward-driven exploration.                                        to collaborate.                                                    Python Ref
+                                                                                                                                                                      Model Data
+
+                                                    (b) Two-stage training pipeline                             (c) Python ref model train data generation
+
+Figure 1: Overview of ChipMATE. (a) ChipMATE introduces multi-agent cross-verification with a
+backtrack mechanism. (b) The training pipeline of ChipMATE has two stages, and we build a hybrid
+reference-model data generation framework.
+
+
+                To prevent error propagation across turns, we introduce a backtrack mechanism that auto-
+                matically reverts to a previous turn whenever the current turn produces worse results. To
+                support this workflow, we build cross-language comparison tools that align Verilog and
+                Python outputs, along with error-explanation tools that translate raw waveform mismatches
+                into natural-language diagnostics the agents can act on. We also design structured sys-
+                tem prompts with code skeletons and detailed implementation guidance to deliver clear
+                instructions and enhance model performance.
+          2. Two-stage training pipeline (C2). We design a two-stage training pipeline with dedicated
+             dataset curation and reward functions. In Stage 1, we train each agent separately with
+             SFT followed by RL to strengthen its individual capability on Verilog module and Python
+             reference-model generation, since multi-agent collaboration requires each constituent agent
+             to be sufficiently competent. In Stage 2, we introduce a multi-agent RL algorithm paired with
+             a multi-level reward function that trains the two agents jointly, teaching them to collaborate
+             effectively and further boosting end-to-end generation quality.
+          3. Hybrid data-generation framework for reference models (C3). To address the complete
+             absence of reference-model training data, we develop a hybrid data-generation framework
+             that combines agentic API-based synthesis with IR-level code conversion, transforming
+             existing Verilog datasets into high-quality, chain-of-thought-augmented Python reference-
+             model samples. We further apply targeted augmentation on task categories where LLM
+             performance is weakest, ensuring balanced and comprehensive training coverage.
+          4. Open-source release. We have released all model weights for the ChipMATE series (4B
+             and 9B) and the complete multi-agent workflow implementation to facilitate future research.
+
+
+2      Methods
+
+2.1      Overview
+
+As shown in Figure 1, ChipMATE consists of three components: a cross-verification multi-agent
+workflow (subsection 2.2) in which a Verilog agent and a Python reference-model agent iteratively
+refine their outputs through cross-verification, a two-stage training pipeline (subsection 2.3) that
+first trains each agent individually and then jointly via multi-agent RL, and a hybrid data generation
+framework (subsection 2.4) that creates reference-model training data from scratch.
+
+
+                                                                                     3
+Group Num (K) = 3                          Reward                  Reward         Highest Reward                  Reward                     Verilog Agent
+                                                                                  Reward
+                                                                                                                                              V0   V1 V2
+        a0 0   S1 0   a1 0   S2 0   a2 0    S3 0         a0 0   S100 S101 S102    a1 0   S200 S201 S202    a2 0    S3 0
+
+
+
+
+                                                                                                                           Python Agent
+                                                                                                                                          P0 Si00 Si01 Si02
+ S0     a0 1   S1 1   a1 1   S2 1   a2 1    S3 1    S0   a0 1   S110 S111 S112    a1 1   S210 S211 S212    a2 1    S3 1
+                                                                                                                                          P1 Si10 Si11 Si12
+
+        a0 2   S1 2   a1 2   S2 2   a2 2    S3 2         a0 2   S120 S121 S122    a1 2   S220 S221 S222    a2 2    S3 2                   P2 Si20 Si21 Si22
+
+ (a) Normal GRPO only works for sparse reward                   (b) X-GRPO to support the multi-agent RL in ChipMATE and our KxK sampling
+
+Figure 2: (a) Standard GRPO collapses to group size 1 across multi-turn rollouts when dense per-turn
+rewards are used. (b) X-GRPO, extending AT-GRPO [34], restores meaningful group variance: both
+agents independently sample K candidates per turn, paired index-wise into K × K candidate pairs,
+of which the best-scoring pair is selected as the shared prefix for the next turn.
+
+
+2.2    Cross-Verification Multi-Agent Workflow
+
+Multi-turn cross-verification workflow. As shown in Figure 1(a), our workflow proceeds in three
+steps. In the first step, a Verilog agent and a Python reference-model agent each sample N candidate
+implementations from the same natural-language specification, working independently without access
+to each other’s output. We use Python rather than SystemC as the reference-model language because
+open-source LLMs are substantially more proficient in it. In the second step, a cross-language
+comparison tool simulates both outputs on 1000 randomly generated stimuli, records waveforms,
+and produces structured mismatch diagnostics. In the third step, if outputs disagree, each agent
+receives the mismatch information and self-corrects over multiple turns. Crucially, agents never see
+each other’s code and must independently judge whether their own implementation is at fault. To
+prevent error compounding across turns, we enforce a backtrack mechanism [16, 24, 3]: a correction
+is accepted only if it strictly improves the match rate; otherwise the agent reverts to its last accepted
+version. The loop terminates when outputs agree or the turn limit is reached.
+
+Comparison and feedback infrastructure. The cross-verification tool compiles the Verilog mod-
+ule via Icarus Verilog and executes the Python reference model, then compares their cycle-by-cycle
+outputs. Since raw waveform files are difficult for LLMs to parse, we additionally build a waveform-
+to-natural-language converter that locates the first divergent cycle and packages the surrounding
+input/output context into a structured description that agents can directly understand and act upon.
+
+Prompt design. We structure the system prompt to mirror the combinational/sequential separation
+found in standard RTL textbooks, since LLMs already partially internalize this decomposition from
+pretraining. Each prompt contains four sections: (1) a code skeleton with the exact module name
+and parameterized port list, fixing the interface and preventing naming drift across rollouts. This
+does not constitute an unrealistic advantage, as in industrial practice the input and output signals of
+every module are strictly defined in specification documents and can be directly converted into a
+code skeleton. (2) Combinational-logic guidelines covering latch avoidance and full case coverage;
+(3) sequential-logic guidelines covering reset handling and non-blocking assignment conventions; and
+(4)a few-shot example demonstrating the desired reasoning-then-code format. This structured prompt
+alone improves first-attempt pass rate by approximately 1-5% when applied to frontier LLMs via
+API, confirming it as a model-agnostic source of gain. Full prompt text is provided in Appendix A.
+
+2.3    Two-Stage Training Pipeline
+
+As shown in Figure 1, we propose a two-stage pipeline: the first stage trains each agent indepen-
+dently to maximize individual competence, and the second stage trains both agents jointly to learn
+collaborative behavior within the cross-verification workflow.
+
+Stage 1: Single-agent training. We train the Verilog agent and the Python agent separately on their
+respective datasets using SFT followed by RL. SFT teaches each agent general knowledge about its
+target task and enables correct code generation, but with high variance, as evidenced by a large gap
+between pass@1 and pass@10. To close this gap, we apply GRPO [22], which samples a group of K
+candidate outputs for each query and derives group-relative advantages to guide policy optimization.
+We carefully curate the RL training set by retaining only problems whose post-SFT pass@10 lies in
+
+
+                                                                       4
+[0.1, 0.9], ensuring that each group produces a productive mix of successes and failures. Problems
+that are always solved or never solved yield zero-variance advantages and provide no learning signal.
+We adopt full-parameter fine-tuning rather than LoRA [10] for both SFT and RL. This choice is
+critical because multi-agent RL in the second stage can only succeed if both participating agents are
+already strong. If either agent generates consistently poor code, the cross-verification loop produces
+noisy rewards that prevent meaningful collaboration learning.
+
+Stage 2: Multi-agent RL. After Stage 1, both agents already excel at their respective code-
+generation tasks. Stage 2 teaches them to collaborate within the cross-verification workflow. Specifi-
+cally, when a mismatch arises, each agent must analyze the diagnostic information, determine whether
+the fault lies in its own code or the other agent’s, and apply self-correction only when it identifies a
+genuine error in its own implementation. We introduce two techniques for this stage.
+X-GRPO trajectory sampling. Standard GRPO is ill-suited to a multi-turn, multi-agent setting [15].
+As illustrated in Figure 2(a), assigning a dense reward at the end of each turn causes the effective group
+size for every turn beyond the first to collapse to one, making group-relative advantage estimation
+degenerate. To address this, we draw inspiration from Tree-of-Thought [31] and AT-GRPO [34] and
+propose X-GRPO, a variant of GRPO that restores meaningful within-group variance across turns.
+Concretely, at each turn, both agents independently generate K candidates outputs, forming K × K
+candidate pairs as the evaluation group. After evaluating all pairs, we select the best-performing one
+as the shared prefix for the next turn and repeat the process. Because all candidates at a given turn
+share the same prefix, each agent’s K outputs constitute a proper GRPO group that exhibits sufficient
+reward variance, keeping the advantage estimation informative throughout the entire trajectory.
+                                                                           (c)
+Formally, for a group g at turn t, we sample K candidate actions {at }K        c=1 , evaluate each with a
+                                                                                          (c)
+rule-based reward R(·), and compute a mean-centered, normalized advantage Ag (at ). Each agent
+                      (i)
+has its own policy θ , trained on a minibatch Bi that pools only that agent’s groups. The clipped
+surrogate loss is
+                                 "     K
+                                                                                              #
+                 (i)                1 X       
+                                                  (c,i) (c)        (c,i)
+                                                                                      (c) 
+            L(θ ) = − Eg∈Bi                min rg Ag , clip rg , 1−ε, 1+ε Ag                    ,       (1)
+                                   K c=1
+        (c,i)          (c)                (c)
+where rg = πθ(i) (ag | og ) / πθ(i) (ag | og ) is the importance ratio. This formulation separates the
+                                   old
+two policies’ gradients while still letting them collaborate at rollout time.
+Hierarchical reward design. Our reward design directly serves the ultimate training goal: teaching
+both agents to learn from mismatch information and generate better code through multi-turn iteration.
+                          (t)
+The per-agent reward Ra is composed of three components. (1) Local reward (Rlocal ), which
+independently evaluates each agent’s code correctness through turn-over-turn improvement. It
+follows a multi-tiered design where the score s ∈ {0, 0.1, 0.2, 0.2 + 0.8c} corresponds to compile
+failure, runtime error, I/O port mismatch, and partial pass rate c, respectively. An agent receives
+the next tier of reward only after clearing all previous tiers, encouraging syntactically correct, high-
+pass-rate code. (2) Correct-fix bonus (Rfix ), a sparse binary reward for successfully resolving a
+previously mismatched stimulus. It is awarded only when a mismatch from the previous turn is fixed,
+and both agents produce the correct output at that stimulus cycle. If the two agents agree but their
+shared output is wrong, this reward is withheld. This teaches agents to fix mismatches correctly rather
+than to merely converge on an arbitrary answer. (3) Team-match reward (Rmatch ), a dense reward
+proportional to the overall match ratio between the two agents’ outputs, providing a smooth gradient
+toward mutual agreement. The aggregate reward is
+                                            (t)               (t)              (t)
+                          Ra(t) = δlocal · Rlocal,a + δfix · Rfix + δmatch · Rmatch ,                  (2)
+where we set δlocal = 10, δfix = 0.2, and δmatch = 0.5. The large δlocal makes individual code
+improvement the dominant training signal, the binary δfix provides rare but high-quality debugging
+reward, and the moderate δmatch acts as a dense regularizer that steers both agents toward agreement
+without dominating the optimization.
+
+2.4   Hybrid Reference-Model Data Generation
+
+The two-stage training pipeline requires substantial data for both agents. Existing public datasets with
+chain-of-thought annotations already meet the need for Verilog agent training, but no comparable
+
+
+                                                      5
+resource exists for the Python reference-model agent. To bridge this gap, we build a hybrid generation
+framework combining three complementary pipelines, as illustrated in Figure 3.
+
+LLM-API agentic distillation. We call a frontier LLM to generate a Python reference model for
+each Verilog module, then verify it against the golden Verilog with our cross-language comparator.
+When mismatches are detected, diagnostic information is fed back for iterative self-correction. This
+pipeline produces samples with CoT reasoning, but suffers from high cost and low yield: on the
+87K-sample QiMeng-CodeV [37] dataset, DeepSeek-R1 [6] achieves only 17% single-turn and 35%
+two-turn success rates. Processing the full dataset with four API keys in parallel costs over $2,000
+and more than 200 hours, ultimately producing only about 25K verified samples.
+
+IR-based conversion. Since 25K samples alone are insufficient to train a strong model, we introduce
+a deterministic conversion pipeline for the remaining 62K samples. The low LLM success rate likely
+arises because LLMs are never explicitly trained to replicate Verilog semantics in Python. Our pipeline
+sidesteps this difficulty by operating at the abstract syntax tree (AST) level, reserving LLM calls
+solely for appending chain-of-thought [29] annotations to already-correct code. The pipeline proceeds
+in three stages. (1) Parsing. We parse the reference Verilog with P Y V ERILOG [25] and normalize its
+structures, including ports, signals, continuous assignments, combinational and sequential blocks
+into a uniform intermediate representation (IR). (2) Behavioral lowering. Each combinational
+block is converted into a pure Python function whose output depends solely on its current inputs.
+Each sequential block, triggered on posedge clk, becomes a per-cycle update function that applies
+explicit bit-width masks to preserve two’s-complement semantics. (3) Top-module wrapping. The
+translated functions are assembled into a TopModule class whose port interface mirrors the original
+Verilog module, enabling it to be directly tested with our cross-verification tool. This pipeline is
+cost-free, completes in under two hours, and yields 36K additional verified samples. Its principal
+limitation is the unreal CoT appended by LLM after the Python module is generated and verified.
+
+                                                                                        Category-specific augmentation.
+                                         $2K      > 200h          Real CoT
+                                                                                        The  two pipelines above yield approx-
+             LLM-API Agentic Distillation
+                 LLM-API
+                                                                                        imately   61K samples, sufficient in
+                                          Verify
+                                                     Pass?                              quantity but not in coverage. After
+                                                                      ≈ 25K             training Qwen3.5-4B on this dataset
+             IR-Based Conversion                  Free   < 2h   Unreal CoT
+                                                                                        and evaluating on VerilogEval, we
+  Existing
+Verilog Data
+                                                 LLM-API
+                                                              Add CoT
+                                                                                        find that most failures concentrate in
+                                                 Pass?
+                   AST-Tree IR                                        ≈ 36K
+                                                                                        three categories: finite-state machines,
+                                       Abandoned
+                                                                             Python Ref multi-cycle protocol blocks (e.g.
+                                               W
+
+
+
+
+                                                                             Model Data
+                                                or
+
+
+
+
+             Category-Specific Augmentation
+                                                                                        counters and FIFOs), and bit-level
+                                                  kfl
+                                                   ow
+
+
+
+
+                    FSM
+                                    Contamination Filter                                arithmetic. We collect additional
+                                                        Re
+                                                          us
+
+
+
+
+                    Protocol
+                                                                                        Verilog   examples targeting these
+                                                            e
+
+
+
+
+                +−                                                    ≈ 3.4K
+                × ÷ Arithmetic
+ Web Search
+                                                                                        categories via web search, convert
+                                                                                        them with the IR-based conversion
+Figure 3: Hybrid data generation framework combining
+                                                                                        pipeline and apply a contamination
+LLM-API distillation, IR-based conversion, and category-
+                                                                                        filter to exclude any overlap with
+specific augmentation to produce the reference-model train-
+                                                                                        benchmark test cases. This adds
+ing corpus.
+                                                                                        approximately 3.4K targeted samples,
+                                                                                        shifting the three categories’ share
+from approximately 15% to 28% and strengthening the model on precisely the task types where it is
+weakest.
+
+3     Experiments
+3.1    Implementation Details
+
+We obtain ChipMATE by applying our two-stage training pipeline (subsection 2.3) to the
+Qwen3.5 [26] base model (4B and 9B). Stage 1 comprises single-agent SFT followed by single-
+agent RL, and Stage 2 performs multi-agent RL. For SFT, we use LLaMA-Factory [36] to fine-tune
+Qwen3.5. The Verilog agent is trained on the 87K-sample dataset released with QiMeng CodeV-
+R1 [37], and the Python agent is trained on 64.4K reference-model samples generated by our hybrid
+
+
+                                                                6
+Table 1: Pass@k (%) for Verilog generation on four benchmarks. Within each column, 1st (Gold),
+ 2nd (Silver), and 3rd (Bronze) are highlighted.
+                                           VerilogEval v2 RTLLM v2 ChipBench-SC CVDP cid03
+   Type     Model                   Size
+                                           P @1   P @5    P @1    P @5   P @1   P @5    P @1   P @5
+
+           GPT-4o                    –     64.1    73.7    56.5   70.3   20.0   33.3    39.0   40.4
+           GPT-5.5                   –     84.7    90.4    63.2   68.0   30.7   36.7    44.0   48.7
+Foundation Claude Opus 4.7           –     86.9    90.4    64.8   68.0   31.3   46.7    42.8   47.9
+ Models    DeepSeek Coder          236B    68.5    80.8    57.6   70.0   16.7   30.0    22.3   37.2
+           DeepSeek V4             1.6T    67.3    80.1    58.8   66.0   18.0   36.7    21.5   34.6
+           DeepSeek R1             671B    77.5    84.7    64.7   75.8   26.7   40.0    27.7   42.1
+Specialized CodeV-R1 (distill)      7B     65.2    75.2    57.2   71.9   13.3   26.7    26.2   42.1
+ Models     CodeV-R1                7B     68.8    78.2    68.0   78.2   30.0   40.0    26.8   43.3
+   Base     Qwen3.5-4B              4B     41.7    60.9    34.3   49.7    6.7   10.0    11.8   13.9
+  Models    Qwen3.5-9B              9B     48.5    66.6    36.1   57.8   13.3   20.0    13.3   21.5
+         ChipMATE-Verilog-4B        4B     67.4    71.8    68.0   74.6   26.7   33.3    24.7   39.2
+ChipMATE ChipMATE-Agents-4B         4B     75.0    76.3    74.6   77.3   33.3   43.3    32.1   41.3
+  (Ours) ChipMATE-Verilog-9B        9B     75.3    77.6    71.9   75.8   30.0   36.7    28.1   42.1
+         ChipMATE-Agents-9B         9B     80.1    82.4    75.8   77.3   36.7   43.3    40.4   44.6
+
+
+
+
+framework (subsection 2.4). Both agents are trained for 6 epochs with a learning rate of 1×10−5 , a
+global batch size of 64, and a context length of 16,384 tokens. For single-agent RL, we use verl [23]
+with GRPO [22]. We set the global batch size and minibatch size to 128, the GRPO group size
+to 16, and the learning rate to 1×10−6 . Training runs for 300 steps with a rollout temperature of
+1.0, an instruction length of 2,048, and a response length of 16,384. The reward function is the
+same local reward used in multi-agent RL. For multi-agent RL, we build on a modified version of
+PettingLLMs [34] with verl as the backbone. Both agents are updated for an additional 200 steps at
+the same learning rate. The 9B model is trained on two nodes of 8×H200 (141 GB each), and the 4B
+model on a single 8×H100 node.
+We evaluate ChipMATE on four widely used RTL generation benchmarks: VerilogEval v2 [19],
+RTLLM v2 [14], ChipBench-SC (the self-contained subset of ChipBench (78 cases) [32]), and
+CVDP cid03 [20]. The maximum context length is 16,384 tokens for all benchmarks. The generation
+temperature is set to 0.6 for the SFT-only checkpoint and 1.0 for the + RL and agentic checkpoints.
+We generate 10 responses per query and report pass@k [1] for k ∈ {1, 5}.
+
+
+
+3.2   End-to-End Results
+
+Table 1 reports pass@k on the four benchmarks against large-scale foundation LLMs (GPT, Claude,
+and DeepSeek), hardware-specialized baselines (CodeV-R1 [37]), and open-source base models. The
+top-3 results in each column are highlighted with gold, silver, and bronze cells.
+Compared with the previous state-of-the-art self-trained model, QiMeng CodeV-R1, ChipMATE-
+Agents-9B achieves 6.7%–13.6% higher pass@1. Even the smaller ChipMATE-Agents-4B improves
+over CodeV-R1 by 3.3%–6.6% despite having fewer parameters (4B vs. 7B). When compared with
+state-of-the-art API-based LLMs that are 20–1000× larger, ChipMATE-Agents-9B outperforms
+all of them. The only comparable model is Claude Opus 4.7 and GPT-5.5, which achieves better
+performance on VerilogEval and CVDP but falls behind ChipMATE on RTLLM v2 and ChipBench.
+Notably, the gap between pass@5 and pass@1 for ChipMATE is considerably smaller than for other
+models. This is because the ChipMATE already self-corrects errors during inference, increasing the
+likelihood of producing correct code on the first attempt. This property aligns well with industrial
+needs, where pass@1 is the primary concern because chip design tolerates very few bugs.
+
+
+                                                  7
+Table 2: Pass@k accuracy (%) of the Python reference-model track on four hardware-code
+benchmarks. Within each column, 1st , 2nd , and 3rd are highlighted (ties share a rank). ChipMate-
+Python (ours) rows are shaded.
+                                          VerilogEval v2 RTLLM v2 ChipBench-SC CVDP cid03
+      Type    Model                Size
+                                          P @1    P @5    P @1   P @5   P @1    P @5    P @1    P @5
+
+              GPT-5.5                –    61.5    75.5    48.5   55.4   33.0    42.1     41.6   47.4
+Foundation    DeepSeek Coder       236B   60.1    73.1    42.4   50.0   28.7    40.0     21.5   35.1
+ Models       DeepSeek V4          1.6T   59.7    71.8    44.4   54.3   30.7    40.0     24.7   36.5
+              DeepSeek R1          671B   57.1    70.7    49.6   57.8   28.7    36.7     26.2   37.2
+
+Specialized   CodeV-R1 (distill)    7B    40.4    48.5    36.0   46.2   23.3    30.0     24.7   37.2
+ Models       CodeV-R1              7B    45.3    56.4    42.7   51.8   28.7    33.3     22.3   34.6
+
+   Base       Qwen3.5-4B            4B    46.8    63.7    38.2   46.1   16.7    23.3     10.2   12.7
+  Models      Qwen3.5-9B            9B    48.0    64.7    40.1   51.8   20.0    26.7     11.4   19.9
+
+ChipMate-P ChipMate-Python-4B       4B    77.6    80.1    75.3   80.1   41.3    46.7     34.2   45.3
+  (Ours)   ChipMate-Python-9B       9B    82.4    84.7    77.3   81.0   43.3    50.0     43.3   46.7
+
+
+
+3.3     Python Reference Model Generation
+
+Table 2 reports the results for Python reference-model generation. ChipMATE-Python-9B and
+ChipMATE-Python-4B both rank among the top two across all benchmarks, which we attribute to the
+quality of our synthetic dataset and training pipeline. Simulating hardware behaviour in Python is a
+fundamentally different task from general-purpose Python programming, and dedicated supervision
+turns out to be essential. Notably, ChipMATE-Python-9B achieves 5.4–15.2% higher pass@1 on
+the Python track than ChipMATE-Verilog-9B does on the Verilog track across all four benchmarks
+(+7.1% on VerilogEval v2, +5.4% on RTLLM v2, +13.3% on ChipBench-SC, and +15.2% on CVDP).
+This suggests that LLMs can readily leverage pre-trained Python priors once they receive targeted
+fine-tuning on hardware-behaviour simulation, which is precisely what our dataset and pipeline are
+designed to provide.
+Interestingly, foundation models such as DeepSeek score lower on the Python reference-model task
+than on direct Verilog generation. Given their well-established strength in general Python coding, we
+believe even lightweight fine-tuning on reference-model generation could substantially improve their
+hardware-design performance.
+
+3.4     Python vs. Verilog
+
+To understand how our multi-agent workflow improves Verilog generation, we compare the three
+ChipMATE-4B variants in Figure 4. The Python agent consistently achieves the highest accuracy
+while the Verilog agent shows the lowest, with the multi-agent workflow landing between the two
+across all benchmarks. This indicates that the workflow effectively lifts Verilog generation quality
+toward the level of the stronger Python agent. It also highlights the critical role of reference-model
+generation: its accuracy sets the upper bound for the entire multi-agent workflow, yet this task has
+been largely overlooked by prior work.
+
+3.5     Ablation Study
+
+Figure 5 presents the ablation study on VerilogEval v2 pass@1, tracing the contribution of each
+technique and training stage. Among all stages, SFT yields the largest gain (+19.2% on 4B, +22.0%
+on 9B), as it equips the LLMs with foundational Verilog generation knowledge. Single-agent RL and
+multi-agent RL then contribute a further 1.4%–6.5% improvement.
+Notably, simply applying a multi-agent workflow without backtracking leads to an unexpected
+drop of 11.6%–14.3%. We attribute this to the fact that neither agent produces perfect code, and
+
+
+                                                  8
+                                                                Verilog only                Agents (combined)                                             Python only
+
+                                      VerilogEval v2                             RTLLM v2                                              ChipBench-SC                        CVDP cid03
+                                                                                                                       50                                46.7                              45.3
+                                                            80.1                                80.1
+                             80                                     80                                                                                43.3                              41.3
+     Accuracy (%)
+                                             77.6                                       77.3                                                41.3                                     39.2
+                                                         76.3                   75.3                                                                            40
+                                          75.0                               74.6    74.6                              40
+                             75                                     75                                                                                                        34.2
+                                                    71.8                                                                                33.3       33.3                    32.1
+                             70                                     70                                                                                          30
+                                    67.4                                  68.0                                         30            26.7                               24.7
+                             65
+                                     pass@1         pass@5                pass@1        pass@5                                        pass@1       pass@5               pass@1       pass@5
+
+Figure 4: Pass@k of different variant of ChipMATE-4B. The agentic workflow consistently lands
+between the two single agents.
+
+                                                                                                                                                                                           76
+                                          Single-agent              Two-agent     Multi-agent
+                                            training                inference     RL training                                      Best-of-1 70.5     73.1 75.0 75.6 75.0
+                            90
+VerilogEval v2 pass@1 (%)
+
+
+
+
+                                                                                                       Per-turn pairing strategy
+                                                                           78.7      80.1
+                            80                           74.4                                                                      Best-of-2 71.2     73.7 74.4 75.0 75.6
+                                                                                                                                                                                           74
+
+
+
+
+                                                                                                                                                                                                pass@1 (%)
+                                             70.5
+                            70                                                       75.0
+                                                                   60.1    71.8                                                    Best-of-3 73.1     74.4 75.6 75.0 75.0
+                                                         67.4
+                            60
+                                             60.9                                                                                                                                          72
+                                   48.5                                                                                            Best-of-4 71.8     74.4 75.0 75.0 74.4
+                            50                                     55.8
+                                                                          ChipMATE-4B
+                                      41.7                                ChipMATE-9B                                              Best-of-5 71.8     73.1 73.7 74.4 73.7
+                            40
+                                    e                    )           s L
+                                 Bas e + SFT T + RL /o BT Agent MA-R                                                                           T=1 T=2 T=3 T=4 T=5
+                                                                                                                                                                                           70
+                                                       w
+                                   Bas se + SF gents (         n t s +
+                                      Ba      A            Age                                                                                     Cross-verification turns
+
+Figure 5: Ablation study on VerilogEval v2                                                             Figure 6: Exploration of multi-agent parameters
+pass@1, showing the contribution of each tech-                                                         using ChipMATE-4B on VerilogEval pass@1. The
+nique and training step. (BT: Backtracking)                                                            combination of 3 turns and 3 samples is optimal.
+
+
+naively accepting every intermediate result causes severe error propagation. Once the backtracking
+mechanism is introduced, however, performance rebounds by 16%–18.6%, surpassing the single-
+agent result by 4.3%–4.4% and demonstrating the effectiveness of multi-agent collaboration.
+
+3.6                              Exploration of the Agentic Workflow
+
+We finally study the design space of the agentic workflow by fixing the ChipMATE-4B checkpoint
+and sweeping the per-turn sampling budget (Best-of-N , N ∈ {1, . . . , 5}) and the maximum number
+of turns (T ∈ {1, . . . , 5}). As shown in Figure 6, accuracy does not increase monotonically with
+either factor, and a moderate setting of N = 3, T = 3 achieves the best result (75.6 pass@1). We
+therefore adopt Best-of-3, T = 3 as the default configuration, as it reaches the peak accuracy at
+minimal inference cost.
+
+4                            Related Work
+API-based agentic Verilog generation. A large body of work improves RTL generation by
+wrapping frontier closed-source models in agentic workflows [27, 8, 11, 17, 9, 21, 30]. MAGE [35]
+decomposes the pipeline into specialized agents for the testbench generation, candidate sampling, and
+state-checkpoint debugging. VerilogCoder [8] further adds graph-based task planning and AST-driven
+waveform analysis. All of these systems require continuous access to proprietary API endpoints,
+conflicting with the security posture of chip vendors that air-gap core design servers, and offer no
+path to training on a company’s internal RTL codebase.
+
+Self-trained models for RTL generation. A parallel line trains locally deployable models via
+supervised fine-tuning (RTLCoder [13], AutoVCoder [5], BetterV [18], OriGen [7], CraftRTL [12])
+
+
+                                                                                                   9
+or reinforcement learning with verifiable rewards (VeriReason [28], RTLSeek [33], ChipSeek-R1 [4]).
+QiMeng-CodeV-R1 [37] combines rule-based testbench generation, round-trip data synthesis, and
+adaptive DAPO to train a strong local Verilog model. RTLSeek [33] optimizes design correctness and
+diversity through multi-stage diversity-oriented RL. These works address the deployment limitations
+of API-based systems but all rely on a golden testbench or reference implementation as an oracle,
+and model only the design engineer’s role.
+Concurrent to our work, SiliconMind-V1 [2] locally deploys a self-trained multi-agent workflow for
+Verilog generation. ChipMATE differs in that it trains two independent models (Verilog and Python
+reference-model agents) and develops dedicated training data for reference-model generation, a task
+where even 671B frontier models achieve below 20% pass@1, enabling code-blind cross-verification
+that mirrors industrial design-verification practice.
+
+5   Conclusion
+We presented ChipMATE, a self-trained multi-agent framework for RTL code generation that supports
+fully offline deployment. ChipMATE pairs a Verilog agent with a Python reference-model agent that
+cross-verify outputs without any golden testbench or cloud-LLM API. Three contributions underpin
+the design: a backtracking-based workflow that enforces monotonic quality improvement across turns,
+a two-stage training pipeline tailored for multi-agent collaboration, and a hybrid data-generation
+framework that produces high-quality reference model training data. Through this work, we aim to
+demonstrate the potential of self-trained multi-agent workflows for Verilog generation, offering a
+paradigm better aligned with industrial practice where data privacy is a top priority.
+
+References
+ [1] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de Oliveira Pinto, Jared
+     Kaplan, Harrison Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, et al. Evaluating
+     large language models trained on code, 2021.
+ [2] Mu-Chi Chen et al. SiliconMind-V1: Multi-agent distillation and debug-reasoning workflows
+     for Verilog code generation, 2026.
+ [3] Xinyun Chen, Maxwell Lin, Nathanael Schärli, and Denny Zhou. Teaching large language
+     models to self-debug, 2023.
+ [4] Zhirong Chen, Ying Wang, et al. ChipSeek-R1: Generating human-surpassing RTL with LLM
+     via hierarchical reward-driven reinforcement learning, 2025.
+ [5] Mingzhe Gao, Jieru Zhao, Zhe Lin, Wenchao Ding, Xiaofeng Hou, Yu Feng, Chao Li, and
+     Minyi Guo. AutoVCoder: A systematic framework for automated Verilog code generation
+     using LLMs, 2024.
+ [6] Daya Guo, Dejian Yang, Haowei Zhang, et al. DeepSeek-R1: Incentivizing reasoning capability
+     in LLMs via reinforcement learning, 2025.
+ [7] Fan He, Jiahui Zhao, Peiyu Shi, et al. OriGen: Enhancing RTL code generation with code-
+     to-code augmentation and self-reflection. In Proceedings of the IEEE/ACM International
+     Conference on Computer-Aided Design (ICCAD), 2024.
+ [8] Yu-Ching Ho, Mark Haoxing Ren, and Brucek Khailany. VerilogCoder: Autonomous Verilog
+     coding agents with graph-based planning and abstract syntax tree (AST)-based waveform
+     tracing tool. In Proceedings of the AAAI Conference on Artificial Intelligence, 2025.
+ [9] Sirui Hong, Mingchen Zhuge, Jonathan Chen, Xiawu Zheng, Yuheng Cheng, Ceyao Zhang,
+     Jinlin Wang, Zili Wang, Steven Ka Shing Yau, Zijuan Lin, et al. MetaGPT: Meta program-
+     ming for a multi-agent collaborative framework. In International Conference on Learning
+     Representations (ICLR), 2024.
+[10] Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang,
+     Lu Wang, and Weizhu Chen. LoRA: Low-rank adaptation of large language models, 2021.
+
+
+                                                10
+[11] Mubashir ul Islam, Humza Sami, and Pierre-Emmanuel Gaillardon. AIvril: AI-driven RTL
+     generation with verification in-the-loop, 2024.
+[12] Mingjie Liu, Yun-Da Tsai, et al. CraftRTL: High-quality synthetic data generation for Verilog
+     code models with correct-by-construction non-textual representations and targeted code repair,
+     2024.
+[13] Shang Liu, Wenji Fang, Yao Lu, Qijun Zhang, Hongce Zhang, and Zhiyao Zhang. RTL-
+     Coder: Fully open-source and efficient LLM-assisted RTL code generation technique. IEEE
+     Transactions on Computer-Aided Design of Integrated Circuits and Systems, 44(4):1448–1461,
+     2025.
+[14] Shang Liu, Yao Lu, Wenji Fang, Mengming Li, and Zhiyao Xie. OpenLLM-RTL: Open dataset
+     and benchmark for LLM-aided design RTL generation. In 2024 IEEE/ACM International
+     Conference on Computer Aided Design (ICCAD). IEEE, 2024. Includes RTLLM v2.0 with 50
+     hand-crafted designs.
+[15] Ryan Lowe, Yi Wu, Aviv Tamar, Jean Harb, Pieter Abbeel, and Igor Mordatch. Multi-agent
+     actor-critic for mixed cooperative-competitive environments. In Advances in Neural Information
+     Processing Systems (NeurIPS), 2017.
+[16] Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri
+     Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, et al. Self-refine: Iterative refinement
+     with self-feedback. In Advances in Neural Information Processing Systems (NeurIPS), 2023.
+[17] Zhendong Mi, Renming Zheng, and Haowen Zhong. CoopetitiveV: Leveraging LLM-powered
+     coopetitive multi-agent prompting for high-quality Verilog generation, 2024.
+[18] Zehua Pei, Hui-Ling Zhen, Mingxuan Li, Jianye Hao, and Mingzhi Yuan. BetterV: Controlled
+     Verilog generation with discriminative guidance. In Proceedings of the International Conference
+     on Machine Learning (ICML), 2024.
+[19] Nathaniel Pinckney, Christopher Batten, Mingjie Liu, Haoxing Ren, and Brucek Khailany.
+     Revisiting VerilogEval: A year of improvements in large-language models for hardware code
+     generation. arXiv preprint arXiv:2408.11053, 2024.
+[20] Nathaniel Pinckney, Chenhui Deng, Chia-Tung Ho, Yun-Da Tsai, Mingjie Liu, Wenfei Zhou,
+     Brucek Khailany, and Haoxing Ren. Comprehensive Verilog design problems: A next-generation
+     benchmark dataset for evaluating large language models and agents on RTL design and verifica-
+     tion. arXiv preprint arXiv:2506.14074, 2025.
+[21] Chen Qian, Wei Liu, Hongzhang Liu, Nuo Chen, Yufan Dang, Jiahao Li, Cheng Yang, Weize
+     Chen, Yusheng Su, Xin Cong, et al. ChatDev: Communicative agents for software development.
+     In Proceedings of the Annual Meeting of the Association for Computational Linguistics (ACL),
+     2024.
+[22] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang,
+     Mingchuan Zhang, Y.K. Li, Y. Wu, et al. DeepSeekMath: Pushing the limits of mathematical
+     reasoning in open language models, 2024.
+[23] Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua
+     Peng, Haibin Lin, and Chuan Wu. HybridFlow: A flexible and efficient RLHF framework.
+     arXiv preprint arXiv:2409.19256, 2024.
+[24] Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Re-
+     flexion: Language agents with verbal reinforcement learning. In Advances in Neural Information
+     Processing Systems (NeurIPS), 2023.
+[25] Shinya Takamaeda-Yamazaki. Pyverilog: A python-based hardware design processing toolkit
+     for Verilog HDL. In International Symposium on Applied Reconfigurable Computing (ARC),
+     volume 9040 of Lecture Notes in Computer Science, pages 451–460. Springer, 2015.
+[26] Qwen Team. Qwen3.5: More intelligence, less compute, 2026. https://huggingface.co/
+     Qwen/Qwen3.5-9B.
+
+
+                                                11
+[27] Shailja Thakur, Baleegh Ahmad, Zhenxing Fan, Hammond Pearce, Benjamin Tan, Ramesh
+     Karri, Brendan Dolan-Gavitt, and Siddharth Garg. AutoChip: Automating HDL generation
+     using LLM feedback, 2023.
+[28] Yiting Wang et al. VeriReason: Reinforcement learning with testbench feedback for reasoning-
+     enhanced Verilog generation, 2025.
+[29] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia, Ed Chi,
+     Quoc Le, and Denny Zhou. Chain-of-thought prompting elicits reasoning in large language
+     models, 2022.
+[30] John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik
+     Narasimhan, and Ofir Press. SWE-agent: Agent-computer interfaces enable automated software
+     engineering. In Advances in Neural Information Processing Systems (NeurIPS), 2024.
+[31] Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Tom Griffiths, Yuan Cao, and Karthik
+     Narasimhan. Tree of thoughts: Deliberate problem solving with large language models. Ad-
+     vances in neural information processing systems, 36:11809–11822, 2023.
+[32] Zhongkai Yu, Chenyang Zhou, Yichen Lin, Hejia Zhang, Haotian Ye, Junxia Cui, Zaifeng
+     Pan, Jishen Zhao, and Yufei Ding. ChipBench: A next-step benchmark for evaluating LLM
+     performance in AI-aided chip design. arXiv preprint arXiv:2601.21448, 2026.
+[33] Xinyu Zhang et al. RTLSeek: Boosting the LLM-based RTL generation with multi-stage
+     diversity-oriented reinforcement learning, 2026.
+[34] Yujie Zhao, Lanxiang Hu, Yang Wang, Minmin Hou, Hao Zhang, Ke Ding, and Jishen Zhao.
+     Stronger-MAS: Multi-agent reinforcement learning for collaborative LLMs, 2025.
+[35] Yujie Zhao, Hejia Zhang, Hanxian Huang, Zhongming Yu, and Jishen Zhao. MAGE: A
+     multi-agent engine for automated RTL code generation, 2024.
+[36] Yaowei Zheng, Richong Zhang, Junhao Zhang, Yanhan Ye, and Zheyan Luo. LlamaFactory:
+     Unified efficient fine-tuning of 100+ language models. In Proceedings of the 62nd Annual
+     Meeting of the Association for Computational Linguistics (Volume 3: System Demonstrations),
+     pages 400–410, Bangkok, Thailand, 2024. Association for Computational Linguistics.
+[37] Yaoyu Zhu, Di Huang, Hanqi Lyu, Xiaoyun Zhang, Chongxiao Li, Wenxuan Shi, Yutong
+     Wu, Jianan Mu, Jinghua Wang, Yang Zhao, Pengwei Jin, Shuyao Cheng, Shengwen Liang,
+     Xishan Zhang, Rui Zhang, Zidong Du, Qi Guo, Xing Hu, and Yunji Chen. QiMeng-CodeV-R1:
+     Reasoning-enhanced Verilog generation. arXiv preprint arXiv:2505.24183, 2025.
+
+
+A     Agent Prompt Templates
+We list the system and user-message templates used by the Verilog agent and the Python reference-
+model agent during single-turn SFT and multi-agent rollouts, together with the retry-and-fix prompt
+fragments that X-GRPO injects on turns t > 0 whenever a V/P mismatch is detected. Both agents
+share a unified <think>...</think><answer>...</answer> reasoning format.
+
+A.1   Verilog Agent System Prompt
+
+    Verilog agent system prompt
+    You are a helpful assistant. The assistant first thinks about the reasoning
+    process in the mind and then provides the user with the answer. The
+    reasoning process and answer are enclosed within <think> </think> and <answer>
+    </answer> tags, respectively, i.e., <think> reasoning process here
+    </think><answer> answer here </answer>. Now the user asks you to write
+    verilog code. After thinking, when you finally reach a conclusion, enclose
+    the final verilog code in “‘verilog “‘ within <answer> </answer> tags. i.e.,
+    <answer> “‘verilog\n module top_module(in, out, ...) ... “‘ </answer>.
+
+
+
+                                                12
+Example user message. The user message gives the natural-language behaviour and a structured
+port list (no Verilog code skeleton—only the interface):
+   Example user message (Verilog agent, VerilogEval-style)
+   I would like you to implement a module named TopModule with the following
+   interface. All input and output ports are one bit unless otherwise
+   specified.
+      - input in (3 bits)
+      - output out (2 bits)
+   The module should implement a "population count" circuit that counts the
+   number of ’1’s in the input vector.
+
+
+A.2   Python Reference-Model Agent System Prompt
+
+The Python agent operates in a skeleton-completion mode: the user message contains a natural-
+language spec plus a Python class skeleton that pins the class name, method signature, and exact
+signal names / bit-widths. The agent must complete the bodies of __init__ and eval without
+renaming any identifier so that the cross-language verifier can drive the resulting class identically to
+the Verilog DUT.
+   Python reference-model agent system prompt
+   You are an expert hardware modeling assistant. Your task is to write Python
+   code that serves as a cycle-accurate reference model for a Verilog hardware
+   module. Your Python code’s outputs must match the expected outputs of the
+   Verilog circuit exactly.
+   The user will provide a natural language description of the module’s behavior
+   and a Python code skeleton. You must complete the provided skeleton. Do not
+   rename the class, method, or any signals. Use the exact signal names and
+   bit-widths from the skeleton.
+   GENERAL RULES:
+     - Use bitwise operators: & | ^ ~ » «. Each eval() call = one rising clock
+   edge. Never read clk.
+     - Mask all outputs and state variables to their correct bit-width, e.g. val
+   & ((1 « N) - 1).
+   FOR COMBINATIONAL CIRCUITS (no reset, no state):
+     - Compute outputs directly from inputs in eval().               No state variables
+   needed.
+   FOR SEQUENTIAL CIRCUITS (has reset and/or state):
+     - Declare all state variables in __init__(), initialized to 0.
+     - In eval(): if reset is asserted, set all state and outputs to 0 and
+   return.
+     - Otherwise: compute next-state from current state (self.*) and inputs,
+   compute outputs, then update self.* at the end.
+   First, think step-by-step inside <think> </think> tags. Then, provide your
+   final Python code inside <answer> </answer> tags with “‘python “‘ markers.
+
+
+Example user message (with skeleton). The user prompt injects the spec, a signal table, and a
+pre-populated class TopModule skeleton in which the state variables and the input bit-masks are
+already laid out; the agent only fills in the sequential / combinational logic and the output expression.
+   Example user message (Python agent, 3-stage pipelined ALU)
+   Design a pipelined ALU that performs a sequence of arithmetic operations in
+   three stages. The ALU should take four 10-bit inputs (a, b, c, d) and two
+   clock signals (clk1, clk2) and produce a 10-bit output (F). The operations
+   are as follows:
+     1. Stage 1: Compute a + b and c - d, and store the value of d.
+
+
+
+                                                  13
+     2. Stage 2:       Compute the sum of the results from Stage 1.
+     3. Stage 3:       Compute the product of the result from Stage 2 and the stored
+   value of d.
+   The ALU should use pipelining to ensure that each stage operates
+   independently, and the final result should be available at the output F. This
+   Python class, named alu_op, has the interface designed in a port table
+   (signal name, direction, width, description) for each of a, b, c, d, clk1,
+   clk2, and F.
+   Complete this skeleton:
+   “‘python
+   class TopModule:
+      def __init__(self):
+        self.stage1_d = 0
+        self.stage1_diff = 0
+        self.stage1_sum = 0
+        self.stage2_sum = 0
+        self.stage3_product = 0
+      def eval(self, inputs: dict) -> dict:
+        a = inputs.get("a", 0) & 0x3FF
+        b = inputs.get("b", 0) & 0x3FF
+        c = inputs.get("c", 0) & 0x3FF
+        d = inputs.get("d", 0) & 0x3FF
+        # TODO: implement sequential logic
+        return {"F": ...}
+   “‘
+   Answer:
+
+
+A.3   Retry-and-Fix Prompt Fragments (X-GRPO turns t > 0)
+
+When the previous turn’s V/P pair produced any mismatch on the random-stimuli cross-verification,
+X-GRPO appends three fragments to the user message of the next turn for the chosen best pair:
+previous code attempts ({previous_code}), the diff log ({previous_error_log}), and a one-
+sentence refinement instruction ({refine_instr}). On t = 0 all three are empty strings, recovering
+the single-turn behaviour shown above. We display the Verilog-side fragments; the Python-side is
+structurally identical (substitute verilog→python, module code→class TopModule, //→#).
+
+(a) Previous-code fragment {previous_code}. The two most recent valid attempts (truncated to
+1500 chars each) are re-injected so the agent can see its own trajectory:
+
+   Previous-code fragment (Verilog side)
+   Your previous Verilog attempts:
+   Attempt k−1:
+   “‘verilog
+   <truncated previous code, ≤ 1500 chars>
+   // ...(code truncated)...
+   “‘
+   Attempt k:
+   “‘verilog
+   <truncated previous code, ≤ 1500 chars>
+   // ...(code truncated)...
+   “‘
+
+
+(b) Verification-error fragment {previous_error_log}. A structured diff of the cross-verifier’s
+per-stimulus mismatches (truncated to 2000 chars). Crucially, the message frames the disagreement as
+mutual: the agent is told its peer might be the one at fault, preventing the V agent from over-correcting
+when the Python reference is actually wrong.
+
+
+
+                                                   14
+   Verification-error fragment (Verilog side)
+   Previous verification error:
+   Verilog vs Python: m/N mismatches across T test vectors.
+   First mismatches (got = your Verilog, exp = peer Python):
+     Test 0, signal ‘out’: got=42, exp=37
+       (inputs: a=5, b=3, clk=1)
+     Test 4, signal ‘out’: got=12, exp=8
+       (inputs: a=2, b=6, clk=1)
+     ...(up to 5 mismatches shown)...
+   Check your logic carefully. Either you or the Python agent is wrong –-
+   only change your code if you think your previous code is wrong.
+
+
+(c) Refinement instruction {refine_instr}. A short, fixed instruction emitted only on t > 0
+turns:
+   Refinement instruction
+   (Verilog side)
+   Please refine your Verilog code to improve correctness and quality.       You MUST
+   output the complete module code in “‘verilog“‘ blocks.
+   (Python side)
+   Please refine your Python code based on the mismatch feedback above.        Output
+   complete class TopModule in “‘python“‘ blocks.
+
+
+
+
+                                                15
+

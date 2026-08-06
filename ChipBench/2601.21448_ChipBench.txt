@@ -1,0 +1,939 @@
+                                            ChipBench: A Next-Step Benchmark for Evaluating LLM Performance in
+                                                                   AI-Aided Chip Design
+
+
+                                            Zhongkai Yu * 1 Chenyang Zhou * 2 Yichen Lin 1 Hejia Zhang 1 Haotian Ye 1 Junxia Cui 1 Zaifeng Pan 1
+                                                                                 Jishen Zhao 1 Yufei Ding 1
+
+
+                                                                 Abstract                                    further amplified these abilities, with systems like Claude
+                                             While Large Language Models (LLMs) show sig-                    and Cursor excelling in high-level languages such as Python
+arXiv:2601.21448v2 [cs.AI] 1 Feb 2026
+
+
+
+
+                                             nificant potential in hardware engineering, cur-                and C++ (Wang et al., 2025; Guo et al., 2025; Ishibashi
+                                             rent benchmarks suffer from saturation and lim-                 & Nishimura, 2024; Islam et al., 2024; Dong et al., 2025).
+                                             ited task diversity, failing to reflect LLMs’ perfor-           Recently, this success has extended to the semiconductor
+                                             mance in real industrial workflows. To address                  domain, where LLMs show promise in chip design (Gai
+                                             this gap, we propose a comprehensive bench-                     et al., 2025; Abdollahi et al., 2024; Swaroopa et al., 2024;
+                                             mark for AI-aided chip design that rigorously                   Hu et al., 2024; He et al., 2025; Firouzi et al., 2025; Ho
+                                             evaluates LLMs across three critical tasks: Ver-                et al., 2025; Yu et al., 2025; Thakur et al., 2024).
+                                             ilog generation, debugging, and reference model                 To evaluate LLM capabilities in chip design, benchmarks
+                                             generation. Our benchmark features 44 real-                     like VerilogEval (Liu et al., 2023b; Pinckney et al., 2025)
+                                             istic modules with complex hierarchical struc-                  and RTLLM (Lu et al., 2024; Liu et al., 2024) have been
+                                             tures, 89 systematic debugging cases, and 132                   proposed. However, these benchmarks have become inad-
+                                             reference model samples across Python, Sys-                     equate due to rapid LLM advancement. State-of-the-art
+                                             temC, and CXXRTL. Evaluation results reveal                     LLM-based Verilog generators, such as MAGE (Zhao et al.,
+                                             substantial performance gaps, with state-of-the-                2025b), have already achieved over 95% accuracy on these
+                                             art Claude-4.5-opus achieving only 30.74% on                    benchmarks, indicating saturation and highlighting the need
+                                             Verilog generation and 13.33% on Python ref-                    for more challenging and comprehensive evaluations. We
+                                             erence model generation, demonstrating signif-                  identify three critical limitations of existing benchmarks
+                                             icant challenges compared to existing saturated                 that hinder accurate assessment of LLM capabilities for
+                                             benchmarks where SOTA models achieve over                       industrial deployment:
+                                             95% pass rates. Additionally, to help enhance
+                                             LLM reference model generation, we provide an                   1. Overly simplified benchmarks overestimate LLMs’
+                                             automated toolbox for high-quality training data                capabilities for industrial deployment. Existing Verilog
+                                             generation, facilitating future research in this un-            benchmarks contain only simple functional modules ranging
+                                             derexplored domain. Our code is available at                    from 10 to 76 lines, with all modules being self-contained
+                                             https://github.com/zhongkaiyu/ChipBench.git.                    and never instantiating sub-modules. This contrasts sharply
+                                                                                                             with industrial reality, where Verilog modules typically ex-
+                                                                                                             ceed 10,000 lines with complex functionality and employ
+                                                                                                             hierarchical designs that instantiate and interact with mul-
+                                        1. Introduction
+                                                                                                             tiple sub-modules for code reuse and systematic verifica-
+                                        Large Language Models (LLMs) have demonstrated re-                   tion (Keutzer et al., 2000; Jin et al., 2025). The gap is fur-
+                                        markable capabilities in conversational AI and code gener-           ther widened by the source of these modules: most samples
+                                        ation (Cai et al., 2024; Du et al., 2024; Gu et al., 2025; Li        in existing benchmarks are derived from coding contests
+                                        et al., 2025; Liu et al., 2023a; Nadimi & Zheng, 2024; Ross          rather than real industrial projects, resulting in significant
+                                        et al., 2023; Thakur et al., 2024; Wang et al., 2023; Zhong          discrepancies in both functionality and coding style com-
+                                        & Wang, 2024). The integration of agentic techniques have            pared to production code. Consequently, even if LLMs excel
+                                           *
+                                                                                                             in existing benchmarks, they may still perform poorly in
+                                             Equal contribution 1 Department of Computer Science and         industrial-level deployment due to these substantial gaps
+                                        Engineering, University of California San Diego, La Jolla, US
+                                        2
+                                          Columbia University, New York, US. Correspondence to: First-       between benchmark scenarios and production requirements.
+                                        name1 Lastname1 <first1.last1@xxx.edu>.                              2. The exclusive focus on Verilog code generation over-
+                                        Preprint. February 3, 2026.                                          looks LLMs’ debugging capabilities, which are even
+
+                                                                                                         1
+                  ChipBench: A Next-Step Benchmark for Evaluating LLM Performance in AI-Aided Chip Design
+
+                         Verilog Gen (44)                                         Verilog Debugging (89)                            Ref Model Gen (132)         Tool Box
+
+       Self-Contain      Non-Self-Contain       CPU IP                                                  ?                                                   P        C         S
+                                                                                                                                                          Ref Model Testbench
+                            Top Module       ALU                                                                                                          Generation (Python,
+        Top Module                                                     Timing    Assignement Arithmetic    State                                          CXXRTL, SystemC)
+                           Sub-Module
+                                                                                                                                    Python CXXRTL (C++)
+                                             ALU       Reg File          Bug         Bug        Bug     Machine Bug
+                           Sub-Module
+                                                                                                                                                             xx.sv       ...
+           Challenging     Sub-Module
+                                                                                                            The module
+                                                                                                               is not
+            Problems                        Branch         Control                                          correct, xxx
+
+                                                     ...                                                                                SystemC (C++)     Ref Model Training
+                                                                       prompt.txt ref.sv   test.sv       0-Shot            1-Shot                          Data Generation
+
+
+
+
+                                                                Figure 1. Overview of our ChipBench
+
+
+more critical for industrial development. The semicon-                                               CPU submodules. As shown in Table 1, our dataset
+ductor industry’s extreme caution stems from the fact that                                           features 3.8× longer code length and 13.9× more cells
+design bugs can result in billions of dollars in losses (Price,                                      than VerilogEval. Test results show that the most pow-
+1995), making companies reluctant to adopt LLMs for com-                                             erful multi-agent system MAGE achieves only 37%
+plete code generation due to their inability to produce consis-                                      pass rate, significantly lower than its 95% pass rate on
+tently bug-free code. Given these constraints, LLM-assisted                                          VerilogEval, demonstrating our benchmark’s potential
+debugging represents a more practical and immediately de-                                            as a robust milestone for future research.
+ployable alternative that integrates seamlessly into existing
+                                                                                              • A Systematic Verilog Debugging Benchmark. We
+workflows without disrupting established safety protocols.
+                                                                                                introduce a debugging suite with 89 test cases cover-
+Despite debugging being more urgent and realistic than
+                                                                                                ing four error types: timing, arithmetic, assignment,
+full generation, existing benchmarks focus exclusively on
+                                                                                                and state machine bugs. By manually injecting these
+code generation, creating a critical gap in evaluating LLMs’
+                                                                                                errors, we create a controlled environment to evaluate
+practical utility for industrial integration.
+                                                                                                LLM repair capabilities, Test results show that LLMs
+3. The narrow focus on Verilog generation neglects ref-                                         generally demonstrate 5%-20% higher pass rates on
+erence model evaluation, which is equally vital for indus-                                      debugging than code generation, demonstrating their
+trial chip design. Reference models, typically written in                                       potential to be integrated into industrial workflows.
+high-level languages (e.g., SystemC (Panda, 2001), Python,
+and CXXRTL (Wolf et al., 2013)), serve as predictors of                                       • A Heterogeneous Reference Model Generation
+hardware behavior and enable cross-comparison to elimi-                                         Benchmark. We introduce 132 samples (44×3), en-
+nate potential bugs (Jiang et al., 2020; Zhao et al., 2025a;                                    abling evaluation of reference model generation across
+Hung & Narasimhan, 2004). In industrial workflows, ref-                                         Python, SystemC, and CXXRTL. Our self-developed
+erence model generation is even more resource-intensive                                         framework supports systematic comparison between
+than Verilog design, reflected in a 1:1 - 5:1 ratio of verifica-                                reference models and golden Verilog implementations,
+tion engineers (write reference model) to design engineers                                      and is extensible to any existing Verilog codebase.
+(write Verilog) (Foster et al., 2022). Despite this importance,                                 Evaluation reveals significant capability gaps, with
+existing benchmarks completely ignore this task, leading                                        top-tier Claude-4.5-opus (Anthropic, 2025b) achieving
+researchers to overlook this critical area and limiting LLM’s                                   only 15.93% accuracy in Python, demonstrating sub-
+potential to enhance the chip design industry.                                                  stantial performance decline compared to other Python
+                                                                                                tasks and highlighting LLMs’ unexplored potential in
+To address these gaps, we propose ChipBench, a compre-                                          this critical area.
+hensive benchmark designed to bridge the gap between
+academic datasets and industrial complexity. By expanding                                     • Automated Toolbox for Reference Model Verifica-
+evaluation beyond simple generation to include debugging                                        tion and Training Dataset Generation. To facilitate
+and reference modeling, ChipBench provides a rigorous                                           future research on reference model generation, we re-
+assessment of LLM capabilities. We summarize our contri-                                        lease an automated toolbox alongside ChipBench. This
+butions as follows:                                                                             tool automates the verification of LLM-generated ref-
+                                                                                                erence models and facilitates the generation of high-
+                                                                                                quality training datasets from existing Verilog datasets.
+   • A Challenging and Realistic Verilog Generation                                             We tested our toolbox on a subset of QiMeng CodeV-
+     Benchmark. We compile 44 modules from open-                                                R1 training dataset (Zhu et al., 2025) and have success-
+     source CPU IPs and competitive platforms, categorized                                      fully generated 2206 high-quality Python reference
+     into self-contained, non-self-contained, and real-world                                    models from 10,000 Verilog training data.
+
+                                                                                     2
+                    ChipBench: A Next-Step Benchmark for Evaluating LLM Performance in AI-Aided Chip Design
+
+         Table 1. Comparison with previous benchmarks.                          neither trivial nor overly challenging. For each test case,
+                                 Verilog Gen            V-Debug   Ref-Gen
+                                                                                we manually wrote description prompts rather than using
+ Benchmarks
+                         Code    Cells   Subs   Tests    Tests     Tests
+                                                                                LLM-generated ones to ensure accurate functional descrip-
+ Thakur et al.           16.6     7.9     0      17       ✗         ✗
+                                                                                tions, consistent with recommendations from VerilogEval
+ RTLLMV2                 46.1    33.7    0.2     50       ✗         ✗           V2 (Pinckney et al., 2025).
+ VerilogEvalV2           16.1    31.4     0     156       ✗         ✗
+ Self-Contn (ours)        47.8   323.3    0      29       ✓         ✓           To conduct a comprehensive evaluation of LLM coding
+ Not-Self-Contn (ours)   119.5   361.2   1.8      6       ✗         ✓           capabilities, we categorize the test cases into three distinct
+ Cpu-Design (ours)        68.1   862.3    0       9       ✓         ✓
+                                                                                categories. The first category consists of self-contained
+ ChipBench (ours)        61.7    438.7   0.25    44       89       132+
+                                                                                module tests, where modules operate independently without
+ Total Test Cases                               264+
+                                                                                instantiating external sub-modules. While this format aligns
+                                                                                with existing benchmarks like VerilogEval, as shown in
+                                                                                Table 1, ChipBench significantly elevates the complexity,
+                                                                                with samples averaging 47.8 lines of code and 323.3 cells
+2. ChipBench
+                                                                                compared to approximately 16.1 lines and 31.4 cells in
+In this section, we will introduce the components and work-                     VerilogEval V2, presenting a more rigorous challenge to the
+flow of ChipBench in detail.                                                    model’s logic synthesis capabilities.
+                                                                                The second category covers hierarchical modules that are
+2.1. Overview                                                                   non-self-contained. These cases require the top-level mod-
+Our proposed ChipBench extends beyond a simple Verilog                          ule to instantiate and interact with sub-modules, reflecting
+coding testbench to comprehensively evaluate LLMs across                        real-world industrial scenarios where coding standards prior-
+multiple aspects of the chip design workflow. Through this                      itize modularity and reuse to minimize verification overhead.
+benchmark, we emphasize the importance of debugging and                         To assist LLMs in understanding interface requirements, we
+reference model generation, capabilities that could elevate                     include both the description and source code of sub-modules
+AI-aided chip design to new heights. As illustrated in Fig-                     within the prompt. We only require LLMs to complete the
+ure 1 and Table 1, ChipBench encompasses three core tasks                       top module, since all models failed when tasked with gen-
+spanning over 264 test cases: 44 structurally complex and                       erating complete hierarchical designs, making such tests
+challenging Verilog generation cases, 89 Verilog debugging                      prohibitively challenging.
+cases, and 132 reference model generation cases distributed                     The third category involves CPU IP modules sourced di-
+across Python, SystemC, and CXXRTL (extension to in-                            rectly from open-source CPU projects to reflect the demands
+finite cases with our proposed toolbox). We summarized                          of high-performance computing design. We manually se-
+details of our modules in Table 7 in the Appendix.                              lected representative functional units, including ALUs, con-
+In addition to the comprehensive test suite, we provide                         trollers, branch predicters, etc, with moderate complexity
+an integrated toolbox for reference model verification and                      from larger project contexts. These test cases assess the
+automated training dataset generation. Given the current                        LLM’s ability to generate functional Verilog code that meets
+shortage of high-quality reference model training data, this                    professional engineering standards and real-world deploy-
+toolbox serves as a valuable resource for the research com-                     ment requirements.
+munity. To validate its effectiveness, we deployed the tool-                    For every test case in ChipBench, we provide a golden Ver-
+box with DeepSeek V3.2 and successfully generated over                          ilog implementation, a manually developed test file, and a
+2,200 high-quality Python reference models from 10,000                          high-quality prompt written by domain experts. The test
+Verilog training cases (Zhu et al., 2025). Given the abun-                      files utilize a robust combination of directed tests and con-
+dance of existing Verilog training datasets, including Qi-                      strained random testing (over 1,000 iterations) to ensure
+Meng CodeV (87k samples)(Zhu et al., 2025), Pyranet                             high-fidelity evaluation.
+(692k samples)(Nadimi et al., 2025), and VeriGen (50k
+samples) (Thakur et al., 2024), our toolbox has the poten-                      2.3. Verilog Debugging Tasks
+tial to generate extensive reference model datasets at scale,
+thereby significantly benefiting the research community.                        To evaluate LLMs’ error correction capabilities, we con-
+                                                                                structed debugging tasks by manually injecting faults into
+2.2. Verilog Generation Tasks                                                   golden Verilog modules. We identified four categories of
+                                                                                bugs most prevalent in hardware engineering: arithmetic
+We developed a dataset of high-quality golden Verilog code                      bugs, assignment bugs, timing bugs, and state machine bugs.
+sourced from open-source Online Judge (OJ) platforms                            As shown in Figure 2, arithmetic bugs involve errors in
+and established CPU IP projects. Each test case was care-                       operator usage, such as substituting multiplication operators
+fully selected to ensure appropriate difficulty levels that are
+
+                                                                            3
+                   ChipBench: A Next-Step Benchmark for Evaluating LLM Performance in AI-Aided Chip Design
+
+            Original                     Arithmetic Bug (24)            Assignment Bug (30)              Timing Bug (29)             State Machine Bug (6)
+
+ 1 module TopModule(                1 module TopModule(            1 module TopModule(            1 module TopModule(            1 module TopModule(
+ 2 input clk,                       2 input clk,                   2 input clk,                   2 input clk,                   2 input clk,
+ 3 input rst n,                     3 input rst n,                 3 input rst n,                 3 input rst n,                 3 input rst n,
+ 4 output reg red,                  4 output reg red,              4 output reg red,              4 output reg red,              4 output reg red,
+ ......                             ......                         ......                         ......                         ......
+ 10 );                              10 );                          10 );                          10 );                          10 );
+ ......                             ......                         ......                         ......                         ......
+ 38 s1 red:                         38 s1 red:                     38 s1 red:                     38 s1 red:                     38 s1 red:
+ 39 begin:                          39 begin:                      39 begin:                      39 begin:                      39 begin:
+ 40 p red <= 1’b1;                  40 p red <= 1’b1;              40 p red <= 1’b1;              40 p red <= 1’b1;              40 p red <= 1’b1;
+  41 p green <= 1’b0;               41 p green <= 1’b1;             41 p green <= 1’b1;           41 p green <= 1’b0;            41 p green <= 1’b0;
+ 42 p yellow <= 1’b0;               42 p yellow <= 1’b0;           42 p yellow <= 1’b0;           42 p yellow <= 1’b0;           42 p yellow <= 1’b0;
+ 43 if (cnt == 3)                   43 if (cnt == 3)               43 if (cnt == 3)               43 if (cnt == 3)               43 if (cnt == 3)
+  44 state <= s2 green;             44 state <= s2 green;          44 state <= s2 green;          44 state <= s2 green;           44 state <= s3 yellow;
+ 45 else                            45 else                        45 else                        45 else                        45 else
+ 46 state <= s1 red;                46 state <= s1 red;            46 state <= s1 red;            46 state <= s1 red;            46 state <= s1 red;
+ 47 end                             47 end                         47 end                         47 end                         47 end
+ ......                             ......                         ......                         ......                         ......
+ 71 always @(posedge clk or         71 always @(posedge clk or     71 always @(posedge clk or     71 always @(posedge clk or     71 always @(posedge clk or
+ negedge rst n)                     negedge rst n)                 negedge rst n)                 negedge rst n)                 negedge rst n)
+ 72 if(!rst n)                      72 if(!rst n)                  72 if(!rst n)                  72 if(!rst n)                  72 if(!rst n)
+ 73 cnt <= 7’d10;                   73 cnt <= 7’d10;               73 cnt <= 7’d10;               73 cnt <= 7’d10;               73 cnt <= 7’d10;
+  76 else if (!green&&p green)       76 else if (green&&p green)   76 else if (!green&&p green)   76 else if (!green&&p green)   76 else if (!green&&p green)
+ 77 cnt <= 7’d60;                   77 cnt <= 7’d60;               77 cnt <= 7’d60;               77 cnt <= 7’d60;               77 cnt <= 7’d60;
+ ......                             ......                         ......                         ......                         ......
+ 85 always @(posedge clk or         85 always @(posedge clk or     85 always @(posedge clk or     85 always @(*)                 85 always @(posedge clk or
+ negedge rst n)                     negedge rst n)                 negedge rst n)                 86 if(!rst n)                  negedge rst n)
+ 86 if(!rst n)                      86 if(!rst n)                  86 if(!rst n)                  87 begin                       86 if(!rst n)
+ 87 begin                           87 begin                       87 begin                        88 yellow = 1’d0;             87 begin
+  88 yellow <= 1’d0;                88 yellow <= 1’d0;             88 yellow <= 1’d0;             ......                         88 yellow <= 1’d0;
+ ......                             ......                         ......                         99 endmodule                   ......
+ 99 endmodule                       99 endmodule                   99 endmodule                                                  99 endmodule
+
+
+
+                                 Figure 2. Demonstration of four types of bugs injected into original golden modules.
+
+
+for addition operators. Assignment bugs refer to incorrect                           1,000 randomly generated stimuli.
+constant value assignments to wires or registers. Timing
+                                                                                     Reference Model Generation. Our framework supports
+bugs occur specifically in sequential logic, manifesting as
+                                                                                     verification of LLM-generated reference models through
+values assigned in incorrect clock cycles or misuse of block-
+                                                                                     a custom Heterogeneous Test Engine (HTE). As illus-
+ing versus non-blocking assignments. State machine bugs
+                                                                                     trated in Figure 3(b), this workflow requires a module de-
+represent logic errors within state transition mechanisms,
+                                                                                     scription file prompt.txt and a golden implementation
+where the transition logic itself is flawed.
+                                                                                     file golden.sv as input and supports multiple reference
+To simulate realistic debugging workflows, we designed two                           model languages, including Python and C++ (via SystemC
+distinct testing modes: zero-shot and one-shot evaluation.                           or CXXRTL extensions). Once the LLM generates a ref-
+The zero-shot test provides the model with the module de-                            erence model, HTE performs a syntax check followed by
+scription and buggy implementation, indicating that an error                         functional verification. To validate the reference model, we
+exists without providing localization details. The one-shot                          extract I/O signals from golden.sv and generate a het-
+test provides identical information but supplements it with                          erogeneous test harness (test.cpp). Simultaneously, the
+simulation waveform data (.vcd files). This replicates in-                           golden.sv is compiled into C++ using Verilator (Snyder
+dustrial workflows where design and verification engineers                           & contributors, 2025). The test harness then compares the
+analyze simulation waveforms to isolate and diagnose faults.                         outputs of the LLM-generated reference model against the
+                                                                                     transferred golden model using over 1,000 random stim-
+2.4. Framework workflow                                                              uli. This automated flow is theoretically extensible to any
+                                                                                     testbench, as long as a prompt and a golden Verilog imple-
+We demonstrate the workflow for the Verilog generation task                          mentation are provided.
+and the reference model generation task in Figure 3(a)(b).
+Verilog Generation. Our evaluation framework is built                                2.5. Toolbox
+upon VerilogEval, ensuring full functional compatibility. As
+                                                                                     ChipBench includes a specialized Toolbox to facilitate fu-
+shown in Figure 3(a), each test case comprises three files: a
+                                                                                     ture research in reference model generation, comprising two
+prompt.txt file describing the task, a test.sv harness
+                                                                                     primary tools shown in Figure 3(b) and (c).
+for evaluation, and a golden.sv serving as the ground
+truth. Upon generating a solution (generated.sv), the                                Tool 1: Automatic Testbench Generation. This tool auto-
+system first performs a syntax check to ensure compilability.                        mates the creation of test files of LLM-generated references
+Subsequently, we execute test.sv using iVerilog to com-                              based on the I/O signals extracted from the golden Ver-
+pare the outputs of the generated code against the golden                            ilog. It injects random input stimuli to robustly compare the
+reference. To ensure reliability, the test harness employs a                         golden implementation with the generated reference model.
+combination of manually designed corner cases and over
+                                                                                     For input signals, we carefully designed reset signal patterns
+
+                                                                                 4
+                       ChipBench: A Next-Step Benchmark for Evaluating LLM Performance in AI-Aided Chip Design
+
+                                Syntax Check                                                                                                                           VerilogEval
+  LLM                                                              Run with iVerilog
+                                                                                                   Pass            rst                                rst_n
+               generated.sv
+                                                                    RUN
+
+                                                                                                    Fail
+                                                                                                                             Reset     Normal
+                                                                                                                                      Operating
+                                                                                                                                                                            Ours
+ prompt.txt test.sv golden.sv                                                                                                Phase
+       Our Benchmark                  (a) Workflow of Verilog generation task                                                          Phase
+                                                                                                                   rst                                rst_n
+                                                                                                                         0       20               n           0   20                 n
+                                          Heterogenrous Test Engine
+  LLM
+                                     Syntax Check
+                                                     cpp
+                                                                    Output Comparison
+                                                                                                               Figure 4. Comparison of reset signal patterns between our ap-
+            generated.cpp                                                                          Pass
+           (SysC/CXXRTL)
+                                                            py              clk                                proach and VerilogEval. We toggle reset once and only compare
+                                                                            rst
+                                                            cpp          Output                                outputs during the normal operating phase to better reflect real-
+                                   Compile sv to cpp                                               Fail
+                                                                    test.cpp                                   world verification standards and eliminate false negatives.
+                generated.py        RUN
+                                                                     Gen test file with
+                                                                    Stimuli from I/O Sig
+                                   Extract I/O Signal I/O    ToolBox - Tool1
+                                    input      output Signal                        Func {
+
+
+  prompt.txt     golden.sv                                                          }
+
+
+ Any Verilog Benchmarks                                                                                        validated this workflow using DeepSeek V3.2 on 10,000
+               (b) Workflow of reference model generation task                                                 randomly selected samples from the CodeV-R1 dataset. The
+                                                                                                               process successfully generated 2,206 verified, high-quality
+                                    ToolBox - Tool2
+    LLM
+                                                                                                               reference models, demonstrating the tool’s effectiveness in
+                                      Heterogenrous                               Add to
+                                       Test Engine                           Training dataset                  constructing robust training data for AI-aided chip design.
+                 generated.py                                 Pass                           Yes
+                                            ToolBox-Tool1
+                                                                                  ≥ max turns?
+    prompt.txt      golden.sv                                     Fail                                         3. Evaluation
+    Any Verilog Training Dataset                                                             No
+                                      Add Debug Info
+                                                                                                               3.1. Evaluation Setup
+        (c) Workflow of reference model training dataset generation
+                                                                                                               Models. We evaluate ChipBench across multiples state-
+Figure 3. Workflow of ChipBench across different tasks: (a) eval-                                              of-the-art LLMs, including GPT (3.5, 4o, 5, 5.2), Claude
+uating LLM-generated Verilog code, (b) assessing LLM-generated                                                 (Haiku, Opus, Sonnet), Gemini(2.5-pro, 3-flash), Llama3.1
+reference models (supporting Python, SystemC, and CXXRTL),
+and (c) utilizing the toolbox to generate high quality training                                                (8B, 70B), DeepSeek-V3.2(coder, reasoner). The detailed
+datasets for reference models (supporting Python, SystemC, and                                                 version information for each model is listed in Table 6 in
+CXXRTL, with Python shown as an example)                                                                       the Appendix. For all models, we use the hyperparameters
+                                                                                                               recommended by VerilogEval: temperature=0.85 and
+                                                                                                               top p=0.95.
+to align with industrial verification standards. As shown                                                      Multi-Agent Workflow. In addition to single-model eval-
+in Figure 4, unlike VerilogEval test cases that toggle re-                                                     uations, we test MAGE with DeepSeek-V3.2 backbone,
+set signals frequently, our tool identifies the reset polarity                                                 a state-of-the-art multi-agent framework for Verilog gen-
+(active-high rst or active-low rst n) and asserts system                                                       eration. MAGE employs dedicated agents for sampling,
+reset for the initial 20 cycles before transitioning to con-                                                   debugging, and decision-making to enhance code quality.
+tinuous operation. To prevent spurious failures, we mask
+output comparisons during the reset phase and only com-                                                        Metrics. We report pass@1, pass@5, and pass@10 for four
+pare outputs during normal operation. This design addresses                                                    distinct tasks: Verilog generation, Verilog debugging, and
+the fundamental discrepancy between Verilog, which may                                                         Python reference model generation. For the multi-agent
+output ‘X’ (unknown) states before initialization, and high-                                                   workflow, we report only pass@1, as the workflow inher-
+level languages like Python/C++, which lack equivalent                                                         ently involves multi-turn iterations. Additionally, we track
+unknown states. This approach eliminates false negatives                                                       token consumption to estimate the API costs associated with
+and better reflects real-world verification practices.                                                         running our benchmark.
+Tool 2: Automatic Training Dataset Generation. To ad-
+                                                                                                               3.2. Primary Results
+dress the shortage of training data for reference model gener-
+ation, we extended the HTE to create an automated training                                                     We present the results for Verilog generation in Table 2, Ver-
+dataset generation pipeline. As shown in Figure 3(c), this                                                     ilog debugging in Table 4, and reference model generation
+tool is compatible with any Verilog training dataset contain-                                                  in Table 3. Our key observations are as follows:
+ing prompts (prompt.txt) and golden implementations
+                                                                                                               Significant performance drop compared to existing
+(golden.sv).
+                                                                                                               benchmarks. Despite testing on advanced models, the
+Our pipeline employs a multi-turn feedback loop: if an                                                         average pass@1 is relatively low. For instance, GPT-4o
+LLM-generated reference model fails verification, the error                                                    achieves ∼65% pass@1 on RTLLM V2 and VerilogEval
+information is fed back to the model for self-correction. We                                                   V2, but only 10.37% on our dataset. Even MAGE, which ex-
+
+                                                                                                           5
+               ChipBench: A Next-Step Benchmark for Evaluating LLM Performance in AI-Aided Chip Design
+
+            Table 2. Test results for Verilog generation (Red color denotes low pass rate, which green color denotes high)
+
+                                            CPU IP                     Non-Self-Contained                   Self-Contained                    Average
+           Model/Dataset
+                                 pass@1    pass@5     pass@10    pass@1     pass@5       pass@10   pass@1     pass@5    pass@10      pass@1   pass@5    pass@10
+           Claude 4.5 Haiku       11.11     11.11       11.11     16.67      33.33        33.33       30       36.67         36.67    19.26    27.04     27.04
+           Claude 4.5 Opus        22.22     22.22       22.22     33.33       50           50       36.67      43.33          50      30.74    38.52     40.74
+           Claude 4.5 Sonnet      11.11     11.11       11.11     16.67      33.33        33.33       10        20           26.67    12.59    21.48     23.70
+           DeepSeek-Coder         11.11     11.11       11.11      50         50           50       26.67      36.67         43.33    29.26    32.59     34.81
+           DeepSeek-R1            11.11     11.11       11.11     33.33       50           50       26.67       40           53.33    23.70    33.70     38.15
+           Gemini 2.5 Pro           0       11.11       11.11       0        16.67        16.67      3.33       10           13.33     1.11    12.59     13.70
+           Gemini 3 Flash         22.22     22.22       22.22     33.33       50           50       36.67      46.67         46.67    30.74    39.63     39.63
+           GPT-3.5 Turbo          11.11     11.11       11.11       0          0            0       13.33      26.67         26.67     8.15    12.59     12.59
+           GPT-4o                 11.11     11.11       11.11       0          0            0         20       33.33         46.67    10.37    14.81     19.26
+           GPT-5                  11.11     11.11       22.22     33.33      33.33        33.33       30        50           53.33    24.81    31.48     36.29
+           GPT-5.2                22.22     22.22       22.22     33.33      33.33         50       23.33       40            40      26.29    31.85     37.41
+           Llama 3.1 8B           11.11     11.11       11.11       0          0            0         10       13.33         16.67     7.04    8.15       9.26
+           Llama 3.3 70B          11.11     11.11       11.11       0          0            0         10       26.67          30       7.04    12.59     13.70
+           Mage (DeepSeek-V3)     22.22       -           -        50          -            -         40         -             -      37.41      -          -
+
+
+    Table 3. Test result for Python reference model generation (Red color denotes low pass rate, which green color denotes high)
+
+                                          CPU IP                      Non-Self-Contained                   Self-Contained                     Average
+           Model/Dataset
+                                pass@1    pass@5     pass@10    pass@1     pass@5    pass@10       pass@1    pass@5    pass@10       pass@1   pass@5    pass@10
+           Claude 4.5 Haiku       0         0           0         0           0            0        40          40          43.33    13.33    13.33      14.44
+           Claude 4.5 Opus        0         0           0         0           0            0        40         46.67        46.67    13.33    15.56      15.56
+           Claude 4.5 Sonnet    11.11     11.11       11.11       0           0          11.11     36.67       36.67        36.67    15.93    15.93      19.63
+           DeepSeek-Coder         0         0           0         0           0            0       36.67        40           40      12.22    13.33      13.33
+           DeepSeek-R1            0         0           0         0           0            0       43.33       43.33        43.33    14.44    14.44      14.44
+           Gemini 2.5 Pro         0         0           0         0           0            0        40         46.67        46.67    13.33    15.56      15.56
+           Gemini 3 Flash       11.11     11.11       11.11       0           0            0       33.33        50           50      14.81    20.37      20.37
+           GPT-3.5 Turbo          0         0           0         0           0            0       16.67        20          23.33    5.56     6.67        7.78
+           GPT-4o                 0         0           0         0           0            0       33.33        40           40      11.11    13.33      13.33
+           GPT-5                  0         0           0         0         11.11        11.11      40         43.33        43.33    13.33    18.15      18.15
+           GPT-5.2                0         0           0         0         11.11        11.11     43.33       43.33        43.33    14.44    18.15      18.15
+           Llama 3.1 8B           0         0           0         0           0            0       6.67        16.67         20      2.22     5.56        6.67
+           Llama 3.3 70B          0         0           0         0           0            0       26.67        30           30      8.89      10          10
+
+
+
+
+ceeds 95% accuracy on VerilogEval, achieves only 37.41%                                   erence models needed to validate Verilog code. This ad-
+on ChipBench, though it remains the top performer. These                                  vantage further diminishes as module complexity increases:
+results underscore the difficulty of our dataset and demon-                               pass@10 rates drop to below 11.11% for complex non-self-
+strate that ChipBench serves as a rigorous next-generation                                contained modules and CPU IP designs. This reveals that
+benchmark for AI-aided chip design. Notably, CPU IP de-                                   while LLMs possess strong Python syntax knowledge, they
+sign proves to be the most challenging task, with no model                                lack hardware-specific modeling capabilities. By improv-
+exceeding 22.22% accuracy, indicating that current LLMs                                   ing these capabilities, we have the potential to significantly
+require further optimization for complex Verilog generation.                              enhance LLMs’ impact in the chip design industry.
+Debugging capability exceeds generation capability.
+LLMs consistently perform better on Verilog debugging                                     3.3. One-shot debugging Analysis
+than generation when given the same Verilog module. For                                   To evaluate whether LLM can utilize waveform data for
+example, Claude-opus achieves 47.45% on debugging com-                                    debugging like human engineers, we compare zero-shot and
+pared to 30.74% on generation. This performance gap high-                                 one-shot debugging in Figure 5. In zero-shot debugging,
+lights the potential of LLMs in debugging tasks and suggests                              LLM receives only the module description and the buggy
+that multi-turn self-correction workflows could significantly                             implementation. In one-shot debugging, we additionally
+enhance generation accuracy.                                                              provide the waveform file (.vcd) in the prompt, mimicking
+Python generation outperforms Verilog on simple mod-                                      real-world workflows where engineers analyze signals to
+ules, but underperforms on complex modules. As shown                                      detect mismatches. Our results show mixed performance:
+in Table 3, for simple self-contained modules, LLMs achieve                               one-shot debugging outperforms zero-shot on 8 models but
+5%–20% higher accuracy on Python reference model gener-                                   underperforms on 13. This suggests that while waveform
+ation compared to Verilog generation, likely due to Python’s                              data contains critical debugging information, most current
+prevalence in LLM pre-training data. Although the accu-                                   LLMs lack the capability to interpret it effectively. Conse-
+racy is higher than Verilog generation, the absolute pass                                 quently, we posit that developing agentic tools for waveform
+rate remains below 50%, far from the reliable golden ref-                                 analysis and training LLMs specifically on waveform-aware
+                                                                                          debugging are promising future research directions.
+
+                                                                                     6
+                            ChipBench: A Next-Step Benchmark for Evaluating LLM Performance in AI-Aided Chip Design
+
+                         Table 4. Test results for Verilog debugging (Red color denotes low pass rate, which green color denotes high)
+
+                                         Arithmetic Bug                   Assignment Bug             State Machine Bug                           Timing Bug                      Average
+   Model/Dataset
+                                 pass@1     pass@5   pass@10      pass@1     pass@5   pass@10   pass@1          pass@5        pass@10   pass@1    pass@5      pass@10   pass@1   pass@5            pass@10
+   Claude 4.5 Haiku              41.67       62.50        66.67    50         56.67    56.67    16.67                16.67     16.67    31.03      41.38       41.38    34.84    44.30              45.35
+   Claude 4.5 Opus               58.33         75         79.17   53.33         60       70     33.33                 50       66.67    44.83      55.17       62.07    47.45    60.04              69.48
+   Claude 4.5 Sonnet             4.17        12.50        12.50   6.67         6.67      10       0                    0         0         0         0           0       2.71     4.79              5.62
+   DeepSeek-Coder-V2.5           58.33       62.50        62.50   53.33       53.33    53.33      0                  16.67     16.67    31.03      37.93       37.93    35.67    42.61              42.61
+   DeepSeek-R1                   45.83         75         79.17    50         66.67    73.33     50                   50       66.67    31.03      55.17       68.97    44.22    61.71              72.03
+   Gemini 2.5 Pro                  0            0           0     3.33         3.33     3.33      0                    0         0         0         0           0       0.83     0.83              0.83
+   Gemini 3 Flash                37.50       62.50        66.67   36.67       53.33    53.33    16.67                 50        50      27.59      41.38       41.38    29.61    51.80              52.84
+   GPT-3.5 Turbo                 16.67         25          25     6.67        26.67    46.67    16.67                33.33     33.33       0         0           0      10.00    21.25              26.25
+   GPT-4o                        16.67       29.17        33.33   6.67        36.67      40       0                    0         0       6.90      17.24       20.69     7.56    20.77              23.50
+   GPT-5                          50         66.67        70.83   43.33         60     63.33     50                   50       66.67    31.03      51.72       55.17    43.59    57.10               64
+   GPT-5.2                       45.83       62.50        66.67    40           60     66.67      0                   50        50      44.83      51.72       55.17    32.66    56.05              59.63
+   Llama 3.1 8B                  4.17         8.33        20.83   3.33        23.33    36.67    16.67                16.67     16.67     6.90      10.34       17.24     7.77    14.67              22.85
+   Llama 3.3 70B                 37.50       37.50        41.67    20         33.33    36.67    16.67                16.67     16.67    20.69      31.03       34.48    23.71    29.63              32.37
+
+
+
+
+                     Zero Avg             One Task                          StateM. Bug                              50                                  2.00                                     0.040
+                     Zero Task            Arithmetic Bug                    Timing Bug                                                                   1.75
+                     One Avg              Assign. Bug                       Average                                  45                                                                           0.035
+
+
+
+
+                                                                                                                                                                                                      Cost per Sample ($)
+                                                                                                                                                         1.50                                     0.030
+
+                                                                                                     Pass Rate (%)
+                                                                                                                     40
+
+
+
+
+                                                                                                                                                                                 Total Cost ($)
+                    70                                                                                                                                   1.25
+                    60                                                                                               35                                                                           0.025
+                                                                                                                                                         1.00
+ Pass@1 Score (%)
+
+
+
+
+                    50                                                                                                                                                                            0.020
+                                                                                                                     30                                  0.75
+                    40                                                                                                                     Pass Rate                                              0.015
+                                                                                                                     25                    Total Cost    0.50
+                    30                                                                                                                                                                            0.010
+                                                                                                                                           Cost / Sample 0.25
+                    20                                                                                               20
+                                                                                                                             1 2 3 4 5 6 7 8 9 10
+                    10                                                                                                              Max Turn
+                     0                                                                               Figure 6. Performance and cost efficiency analysis of DeepSeek
+      Llaini-2 onne5
+           ma .5-P t
+     Lla -3.1- ro
+          ma GP 8B
+   De au -3.3-T-4o
+          Se H B
+    Ge k-Co ku
+De ini- PT- er
+     Se 3-Fla .2
+        ek G sh
+       Cla-Rea PT-5
+              e-O er
+                    s
+
+
+
+
+                                                                                                     Reasoner across multiple turns. The blue line represents the cu-
+                 pu
+        m -S 3.
+
+
+
+
+      ep de- 70
+
+
+                 5
+       m G d
+
+
+            ud son
+            e ai
+    GeaudeGPT-
+
+
+
+
+                                                                                                     mulative pass rate, while the red dashed line indicates the average
+                                                                                                     cost incurred per solved instance.
+      C l
+     Cl
+
+
+
+
+  ep
+
+
+
+
+Figure 5. Performance comparison between Zero-Shot debug tasks
+and One-Shot debug tasks. In Zero-Shot tests, LLMs are only                                           count. This suggests a trade-off: we should use lower it-
+aware of the buggy code and the existence of bugs, while in One-                                      eration counts when Verilog data is abundant to minimize
+Shot tests, LLMs have access to the complete waveform file.                                           costs, and higher iteration counts when data is limited to
+                                                                                                      maximize the number of generated reference models.
+                                                                                                     We further validated the scalability of our tool by processing
+3.4. Reference Model Training Dataset Generation                                                     10,000 samples with a maximum iteration count of 1, suc-
+We evaluated our reference model training dataset genera-                                            cessfully generating 2,206 verified Python reference models,
+tion tool using DeepSeek V3.2 on 100 Verilog samples from                                            demonstrating the effectiveness of our proposed tool.
+the QiMeng CodeV-R1 training dataset. We tested the pass
+rate and cost under different maximum debugging iterations.                                           3.5. Cost Analysis
+As shown in Figure 6, initially, the pass rate increases with
+                                                                                                     We detail token consumption and associated costs in Table 5
+maximum iteration count, reaching 50Beyond this point,
+                                                                                                     to help researchers estimate budgets when evaluating their
+the model reaches its debugging limitation and the pass
+                                                                                                     LLMs and agentic frameworks on ChipBench. Among all
+rate plateaus. This means that with multi-turn debugging,
+                                                                                                     models, DeepSeek V3.2-coder emerges as the most cost-
+our tool can generate approximately n/2 Python reference
+                                                                                                     efficient model for Verilog generation, offering the lowest
+models from n Verilog training samples.
+                                                                                                     cost per pass@1 while maintaining relatively high code
+While higher iteration counts improve pass rates, they also                                          quality. Although Claude-4.5-opus achieves slightly higher
+increase api costs. Both the total cost and average cost per                                         pass@1, the high cost of the Claude API makes its Cost/-
+successful sample continue to rise with maximum iteration                                            Pass@1 over 275× higher.
+
+                                                                                                 7
+                 ChipBench: A Next-Step Benchmark for Evaluating LLM Performance in AI-Aided Chip Design
+
+Table 5. Cost Efficiency Analysis (Verilog Pass@1). Cost calcula-               marks have key limitations compared to ChipBench: they
+tions are based on standard API pricing per million tokens.
+                                                                                exclusively target code generation while neglecting debug-
+                        Input    Output    Cost    Pass@1    Cost/Pass@1        ging and reference model generation, and their test cases
+ Model
+                     (Tokens)   (Tokens)    ($)        (%)            ($)       present low complexity for current LLMs, with VerilogEval
+ Claude 4.5 Haiku     25,076     24,925    0.037     19.26         0.194        V2 containing only self-contained modules under 76 lines.
+ Claude 4.5 Opus      25,076     32,221    2.793     30.74         9.085
+ Claude 4.5 Sonnet    25,076     29,479    0.517     12.59         4.109        Recent ArXiv-released benchmarks in late 2025 address
+ DeepSeek-Coder       21,933     23,992    0.010     29.26         0.033        complexity differently. RealBench (Jin et al., 2025) features
+ DeepSeek-R1          21,933    171,740    0.388     23.70         1.638        open-source IPs with extremely high complexity and high-
+ Gemini 2.5 Pro       23,409    299,064    3.222      1.11       290.283        quality specifications, but focuses only on generation and
+ Gemini 3 Flash       23,409    418,835    0.127     30.74         0.414
+                                                                                proves too difficult for current LLMs. CVDP (Guo et al.,
+ GPT-3.5 Turbo        21,710     14,030    0.032      5.56         0.574
+ GPT-4o               21,699     19,375    0.248     10.37         2.391        2025) expands to 13 task categories, including code mod-
+ GPT-5                21,654    152,233    9.459     24.81        38.120        ification and code improvement, but lacks comprehensive
+ GPT-5.2              21,654     24,021    1.766     26.29         6.718        reference model evaluation and offers limited debugging
+ Llama 3.1 8B         22,699     32,271    0.003      7.04         0.039        cases. ChipBench, as a contemporary work, provides es-
+ Llama 3.3 70B        22,699     16,624    0.012      7.04         0.169
+                                                                                sential complementary capabilities with a specific emphasis
+                                                                                on debugging and reference model generation overlooked
+                                                                                by prior work. We offer distinctly different test cases for
+4. Take-Aways                                                                   Verilog generation, and the combined usage of our bench-
+Based on our evaluation, we identify several promising                          mark with these contemporary works can provide a more
+future research directions:                                                     comprehensive evaluation of LLMs’ capabilities in chip de-
+                                                                                sign. Furthermore, we also provide a specialized toolbox to
+                                                                                accelerate future research about reference model generation.
+   • Hierarchical Verilog Generation. The success rate
+     for generating only the top module is already below                        LLM for testbench generation. Recent works on LLM-
+     22.22% and drops to 0% when generating complete                            assisted Verilog testbench generation, like AutoBench (Qiu
+     hierarchical designs, highlighting the critical need for                   et al., 2024), CorrectBench (Qiu et al., 2025), and PRO-
+     hierarchical design capabilities that align with indus-                    V (Zhao et al., 2025a), also consider reference model gener-
+     trial practices.                                                           ation as a sub-task. However, they only evaluate the correct-
+                                                                                ness of the entire testbench and neglect the correctness of
+   • Waveform-Aware Debugging. While LLMs demon-                                the reference model itself. Although they use 10-sampling
+     strate stronger abilities in debugging than in Verilog                     and majority voting to increase accuracy, our evaluation
+     generation, our experiments in Figure 5 reveal poor                        shows that the pass@10 of the most advanced model is only
+     waveform interpretation capabilities. Since waveforms                      around 20%, meaning they are highly likely to add stimu-
+     are crucial debugging information sources in indus-                        lus signals to an incorrect reference model. Therefore, we
+     try, enhancing LLMs’ waveform analysis could signifi-                      believe that testbench generation could benefit significantly
+     cantly improve their practical utility.                                    from accurate reference models, which further demonstrates
+   • Reference Model Generation. Despite LLMs’ profi-                           the value of our benchmark in evaluating reference model
+     ciency in other Python tasks, their pass rates for Python                  generation capabilities.
+     reference model generation are extremely low. This
+     gap indicates that while LLMs understand Python syn-                       6. Conclusion
+     tax, they lack hardware behavior modeling knowledge,
+     representing a significant unexplored opportunity for                      This paper introduces ChipBench, a comprehensive bench-
+     both chip design and verification workflows.                               mark that addresses critical gaps in evaluating LLMs for
+                                                                                chip design applications. By expanding beyond simple Ver-
+                                                                                ilog generation to include complex modules, debugging
+5. Related Work                                                                 tasks, and reference model generation, ChipBench provides
+Verilog Generation Benchmark. Early stage benchmarks                            a more realistic assessment framework that better reflects
+VerilogEval (Liu et al., 2023b), proposed in 2023, pioneered                    industrial deployment requirements. Evaluation of various
+LLM evaluation for Verilog code completion, while succes-                       models on ChipBench reveals that current models have sig-
+sive work, VerilogEval V2 (Pinckney et al., 2025), intro-                       nificant limitations in AI-aided chip design and remain far
+duced robust infrastructure for specification-to-RTL tasks.                     from ready for real industrial workflow integration. We
+Contemporaneous benchmarks RTLLM (Lu et al., 2024) and                          highlight the importance of debugging and reference model
+RTLLM V2 (Liu et al., 2024) also focus on the same spec-                        generation capabilities and provide a toolbox to support
+RTL tasks and gained popularity. However, these bench-                          future research in reference model generation.
+
+                                                                            8
+              ChipBench: A Next-Step Benchmark for Evaluating LLM Performance in AI-Aided Chip Design
+
+Impact Statement                                                    Du, X., Liu, M., Wang, K., Wang, H., Liu, J., Chen, Y.,
+                                                                      Feng, J., Sha, C., Peng, X., and Lou, Y. Evaluating large
+This paper presents work whose goal is to advance the field           language models in class-level code generation. In Pro-
+of Machine Learning. There are many potential societal                ceedings of the IEEE/ACM 46th International Conference
+consequences of our work, none which we feel must be                  on Software Engineering, pp. 1–13, 2024.
+specifically highlighted here.
+                                                                    Firouzi, F., Pan, D. Z., Gu, J., Farahani, B., Chaudhuri,
+                                                                      J., Yin, Z., Ma, P., Domanski, P., and Chakrabarty, K.
+References
+                                                                      Chipmnd: Llms for agile chip design. In 2025 IEEE 43rd
+Abdollahi, M., Yeganli, S. F., Baharloo, M., and Baniasadi,           VLSI Test Symposium (VTS), pp. 1–10. IEEE, 2025.
+ A. Hardware design and verification with large language
+                                                                    Foster, H. et al. The 2022 wilson research group functional
+  models: A scoping review, challenges, and open issues.
+                                                                      verification study. Siemens. com, 2022.
+ Electronics, 14(1):120, 2024.
+                                                                    Gai, J., Chen, H., Wang, Z., Zhou, H., Zhao, W., Lane,
+Anthropic. Introducing Claude Haiku 4.5: Speed and in-                N., and Fan, H. Exploring code language models for
+  telligence at scale. https://www.anthropic.co                       automated hls-based hardware generation: Benchmark,
+  m/news/claude-haiku-4-5, 2025a. Released:                           infrastructure and analysis. In Proceedings of the 30th
+  2025-10-15.                                                        Asia and South Pacific Design Automation Conference,
+                                                                      pp. 988–994, 2025.
+Anthropic. Introducing Claude Opus 4.5: Our most intel-
+  ligent model. https://www.anthropic.com/ne                        Gu, X., Chen, M., Lin, Y., Hu, Y., Zhang, H., Wan, C., Wei,
+ ws/claude-opus-4-5, 2025b. Released: 2025-11-                        Z., Xu, Y., and Wang, J. On the effectiveness of large lan-
+  24.                                                                 guage models in domain-specific code generation. ACM
+                                                                     Transactions on Software Engineering and Methodology,
+Anthropic. Introducing Claude Sonnet 4.5: Setting new                 34(3):1–22, 2025.
+  records in reasoning. https://www.anthropi
+  c.com/news/claude-sonnet-4-5, 2025c. Re-                          Guo, J., Huang, S., Li, M., Huang, D., Chen, X., Zhang,
+  leased: 2025-09-29.                                                 R., Guo, Z., Yu, H., Yiu, S.-M., Lio, P., et al. A compre-
+                                                                      hensive survey on benchmarks and solutions in software
+Cai, Z., Park, S., Nixon, N., and Doroudi, S. Advancing               engineering of llm-empowered agentic system. arXiv
+  knowledge together: integrating large language model-               preprint arXiv:2510.09721, 2025.
+  based conversational ai in small group collaborative learn-
+  ing. In Extended Abstracts of the CHI Conference on               He, Z., Pu, Y., Wu, H., Qiu, T., and Yu, B. Large language
+  Human Factors in Computing Systems, pp. 1–9, 2024.                  models for eda: Future or mirage? ACM Transactions
+                                                                      on Design Automation of Electronic Systems, 30(6):1–53,
+DeepMind, G. Gemini 2.5 Pro and thinking: The stable                  2025.
+  release. https://blog.google/technology/a
+                                                                    Ho, C.-T., Ren, H., and Khailany, B. Verilogcoder: Au-
+  i/gemini-2-5-pro-release/, 2025a. Released:
+                                                                      tonomous verilog coding agents with graph-based plan-
+  2025-06-17.
+                                                                      ning and abstract syntax tree (ast)-based waveform trac-
+DeepMind, G. Gemini 3 Flash: Frontier intelligence built              ing tool. In Proceedings of the AAAI Conference on
+  for speed. https://blog.google/products-a                          Artificial Intelligence, volume 39, pp. 300–307, 2025.
+  nd-platforms/products/gemini/gemini-3                             Hu, Y., Ye, J., Xu, K., Sun, J., Zhang, S., Jiao, X., Pan,
+ -flash/, 2025b. Released: 2025-12-17.                                D., Zhou, J., Wang, N., Shan, W., et al. Uvllm: An
+                                                                      automated universal rtl verification framework using llms.
+DeepSeek-AI. DeepSeek-V2.5 model upgrade: Merging
+                                                                      arXiv preprint arXiv:2411.16238, 2024.
+  chat and coder capabilities. https://api-docs.de
+  epseek.com/updates, 2024. Released: 2024-09-                      Hung, W. N. and Narasimhan, N. Reference model based
+  05.                                                                 rtl verification: An integrated approach. In Proceedings.
+                                                                     Ninth IEEE International High-Level Design Validation
+DeepSeek-AI. DeepSeek-R1: Incentivizing reasoning capa-               and Test Workshop (IEEE Cat. No. 04EX940), pp. 9–13.
+  bility in LLMs via reinforcement learning. arXiv preprint           IEEE, 2004.
+  arXiv:2501.12948, 2025. Released: 2025-01-20.
+                                                                    Ishibashi, Y. and Nishimura, Y. Self-organized agents:
+Dong, Y., Jiang, X., Qian, J., Wang, T., Zhang, K., Jin, Z.,          A llm multi-agent framework toward ultra large-scale
+  and Li, G. A survey on code generation with llm-based                code generation and optimization. arXiv preprint
+  agents. arXiv preprint arXiv:2508.00083, 2025.                       arXiv:2404.02183, 2024.
+
+                                                                9
+                ChipBench: A Next-Step Benchmark for Evaluating LLM Performance in AI-Aided Chip Design
+
+Islam, M. A., Ali, M. E., and Parvez, M. R. Mapcoder:                     Nadimi, B. and Zheng, H. A multi-expert large language
+   Multi-agent code generation for competitive problem                      model architecture for verilog code generation. In 2024
+   solving. arXiv preprint arXiv:2405.11403, 2024.                          IEEE LLM Aided Design Workshop (LAD), pp. 1–5. IEEE,
+                                                                            2024.
+Jiang, S., Pan, P., Ou, Y., and Batten, C. Pymtl3: A python
+   framework for open-source hardware modeling, gener-                    Nadimi, B., Boutaib, G. O., and Zheng, H. Pyranet: A
+   ation, simulation, and verification. IEEE Micro, 40(4):                  multi-layered hierarchical dataset for verilog. In 2025
+   58–66, 2020.                                                             62nd ACM/IEEE Design Automation Conference (DAC),
+                                                                            pp. 1–7. IEEE, 2025.
+Jin, P., Huang, D., Li, C., Cheng, S., Zhao, Y., Zheng, X.,
+   Zhu, J., Xing, S., Dou, B., Zhang, R., et al. Realbench:               OpenAI. Openai unveils new models and lower price (gpt-
+   Benchmarking verilog generation models with real-world                   3.5-turbo-0125). https://openai.com/blog/
+   ip designs. arXiv preprint arXiv:2507.16200, 2025.                       new-embedding-models-and-api-updates,
+                                                                            2024a. Released: 2024-01-25.
+Keutzer, K., Newton, A. R., Rabaey, J. M., and Sangiovanni-
+  Vincentelli, A. System-level design: Orthogonalization                  OpenAI. GPT-4o: Enhanced reasoning and multilingual
+  of concerns and platform-based design. IEEE transac-                      performance (2024-11-20 update). https://open
+  tions on computer-aided design of integrated circuits and                 ai.com/index/gpt-4o-2024-11-20/, 2024b.
+  systems, 19(12):1523–1543, 2000.                                          Released: 2024-11-20.
+Li, J., Tao, C., Li, J., Li, G., Jin, Z., Zhang, H., Fang, Z., and        OpenAI. Introducing GPT-5: A unified system for reasoning
+   Liu, F. Large language model-aware in-context learning                   and multimodality. https://openai.com/index
+   for code generation. ACM Transactions on Software                       /introducing-gpt-5/, 2025a. Released: 2025-08-
+  Engineering and Methodology, 34(7):1–33, 2025.                            07.
+Liu, J., Xia, C. S., Wang, Y., and Zhang, L. Is your code
+                                                                          OpenAI. Introducing GPT-5.2: Professional knowledge
+  generated by chatgpt really correct? rigorous evaluation
+                                                                           work and hallucination reduction. https://openai
+  of large language models for code generation. Advances
+                                                                            .com/index/introducing-gpt-5-2/, 2025b.
+  in Neural Information Processing Systems, 36:21558–
+                                                                            Released: 2025-12-11.
+  21572, 2023a.
+
+Liu, M., Pinckney, N., Khailany, B., and Ren, H. Verilo-                  Panda, P. R. Systemc: a modeling platform supporting
+  geval: Evaluating large language models for verilog code                  multiple design abstractions. In Proceedings of the 14th
+  generation. In 2023 IEEE/ACM International Conference                     international symposium on Systems synthesis, pp. 75–80,
+  on Computer Aided Design (ICCAD), pp. 1–8. IEEE,                          2001.
+  2023b.
+                                                                          Pinckney, N., Batten, C., Liu, M., Ren, H., and Khailany, B.
+Liu, S., Lu, Y., Fang, W., Li, M., and Xie, Z. Openllm-                     Revisiting verilogeval: A year of improvements in large-
+  rtl: Open dataset and benchmark for llm-aided design rtl                  language models for hardware code generation. ACM
+  generation(invited). In Proceedings of 2024 IEEE/ACM                      Transactions on Design Automation of Electronic Systems,
+  International Conference on Computer-Aided Design (IC-                    2025.
+  CAD). ACM, 2024.
+                                                                          Price, D. Pentium fdiv flaw-lessons learned. IEEE Micro,
+Lu, Y., Liu, S., Zhang, Q., and Xie, Z. Rtllm: An open-                     15(2):86–88, 1995.
+  source benchmark for design rtl generation with large
+  language model. In 2024 29th Asia and South Pacific                     Qiu, R., Zhang, G. L., Drechsler, R., Schlichtmann, U., and
+  Design Automation Conference (ASP-DAC), pp. 722–727.                      Li, B. Autobench: Automatic testbench generation and
+  IEEE, 2024.                                                               evaluation using llms for hdl design. In Proceedings of the
+                                                                            2024 ACM/IEEE International Symposium on Machine
+Meta. The Llama 3.1 collection: 8B, 70B, and 405B. http                     Learning for CAD, pp. 1–10, 2024.
+ s://ai.meta.com/blog/llama-3-1/, 2024a.
+ Released: 2024-07-23.                                                    Qiu, R., Zhang, G. L., Drechsler, R., Schlichtmann, U., and
+                                                                            Li, B. Correctbench: Automatic testbench generation
+Meta. Llama 3.3: 70B model delivering 405B-level quality.                   with functional self-correction using llms for hdl design.
+ https://ai.meta.com/blog/llama-3-3-7                                       In 2025 Design, Automation & Test in Europe Conference
+ 0b/, 2024b. Released: 2024-12-06.                                          (DATE), pp. 1–7. IEEE, 2025.
+
+                                                                     10
+               ChipBench: A Next-Step Benchmark for Evaluating LLM Performance in AI-Aided Chip Design
+
+Ross, S. I., Martinez, F., Houde, S., Muller, M., and Weisz,          Zhu, Y., Huang, D., Lyu, H., Zhang, X., Li, C., Shi, W.,
+  J. D. The programmer’s assistant: Conversational in-                  Wu, Y., Mu, J., Wang, J., Jin, P., et al. Qimeng-codev-r1:
+  teraction with a large language model for software de-                Reasoning-enhanced verilog generation. In The Thirty-
+  velopment. In Proceedings of the 28th International                   ninth Annual Conference on Neural Information Process-
+  Conference on Intelligent User Interfaces, pp. 491–514,               ing Systems, 2025.
+  2023.
+Snyder, W. and contributors, V. Verilator: Open-source
+  systemverilog simulator and lint tool. https://gith
+  ub.com/verilator/verilator, 2025. Released:
+  2025-12-11.
+Swaroopa, S., Mukherjee, R., Debnath, A., and Chakraborty,
+  R. S. Evaluating large language models for automatic
+  register transfer logic generation via high-level synthesis.
+  arXiv preprint arXiv:2408.02793, 2024.
+Thakur, S., Ahmad, B., Pearce, H., Tan, B., Dolan-Gavitt,
+  B., Karri, R., and Garg, S. Verigen: A large language
+  model for verilog code generation. ACM Transactions
+  on Design Automation of Electronic Systems, 29(3):1–31,
+  2024.
+Wang, H., Gong, J., Zhang, H., Xu, J., and Wang, Z. Ai agen-
+ tic programming: A survey of techniques, challenges, and
+ opportunities. arXiv preprint arXiv:2508.11126, 2025.
+Wang, Y., Le, H., Gotmare, A., Bui, N., Li, J., and Hoi,
+ S. Codet5+: Open code large language models for code
+ understanding and generation. In Proceedings of the 2023
+ conference on empirical methods in natural language
+ processing, pp. 1069–1088, 2023.
+Wolf, C., Glaser, J., and Kepler, J. Yosys-a free verilog syn-
+ thesis suite. In Proceedings of the 21st Austrian Workshop
+ on Microelectronics (Austrochip), volume 97, 2013.
+Yu, Z., Liu, M., Zimmer, M., Celine, Y., Liu, Y., and Ren,
+  H. Spec2rtl-agent: Automated hardware code generation
+  from complex specifications using llm agent systems.
+  In 2025 IEEE International Conference on LLM-Aided
+  Design (ICLAD), pp. 37–43. IEEE, 2025.
+Zhao, Y., Wu, Z., Zhang, H., Yu, Z., Ni, W., Ho, C.-T., Ren,
+  H., and Zhao, J. Pro-v: An efficient program generation
+  multi-agent system for automatic rtl verification. arXiv
+  preprint arXiv:2506.12200, 2025a.
+Zhao, Y., Zhang, H., Huang, H., Yu, Z., and Zhao, J. Mage:
+  A multi-agent engine for automated rtl code generation.
+  In 2025 62nd ACM/IEEE Design Automation Conference
+  (DAC), pp. 1–7. IEEE, 2025b.
+Zhong, L. and Wang, Z. Can llm replace stack overflow?
+  a study on robustness and reliability of large language
+  model code generation. In Proceedings of the AAAI con-
+  ference on artificial intelligence, volume 38, pp. 21841–
+  21849, 2024.
+
+                                                                 11
+                 ChipBench: A Next-Step Benchmark for Evaluating LLM Performance in AI-Aided Chip Design
+
+A. Appendix
+A.1. Detailed Model Version Information
+Please refer to Table 6 for model versions we used for evaluation. We also list the release date, model size, and API names.
+
+Table 6. Overview of Evaluated Models with Verified Release Dates and Parameter Sizes. Model references cite technical reports; sizes
+with (*) denote industry estimates based on performance benchmarks.
+
+Model                Reference               Release Date     Size        Model API Name
+GPT-5.2              (OpenAI, 2025b)         2025-12-11       52.5T*      gpt-5.2-2025-12-11
+GPT-5                (OpenAI, 2025a)         2025-08-07       52.5T*      gpt-5-2025-08-07
+GPT-4o               (OpenAI, 2024b)         2024-11-20       ∼200B*      gpt-4o-2024-11-20
+GPT-3.5 Turbo        (OpenAI, 2024a)         2024-01-25       175B*       gpt-3.5-turbo-0125
+Claude 4.5 Opus      (Anthropic, 2025b)      2025-11-24       >150B*      claude-opus-4-5-20251101
+Claude 4.5 Haiku     (Anthropic, 2025a)      2025-10-15       <40B*       claude-haiku-4-5-20251001
+Claude 4.5 Sonnet    (Anthropic, 2025c)      2025-09-29       150B*       claude-sonnet-4-5-20250929
+Gemini 3 Flash       (DeepMind, 2025b)       2025-12-17       ∼10B*       gemini-3-flash-preview
+Gemini 2.5 Pro       (DeepMind, 2025a)       2025-06-17       400B*       gemini-2.5-pro
+DeepSeek-R1          (DeepSeek-AI, 2025)     2025-01-20       671B        deepseek-reasoner
+DeepSeek-Coder       (DeepSeek-AI, 2024)     2024-09-05       236B        deepseek-coder
+Llama 3.3 70B        (Meta, 2024b)           2024-12-06       70B         Llama-3.3-70B-Instruct-Turbo
+Llama 3.1 8B         (Meta, 2024a)           2024-07-23       8B          Meta-Llama-3.1-8B-Instruct-Turbo
+
+
+
+A.2. Detailed Information of Modules
+We summarized the description of each model in Table 7.
+
+
+
+
+                                                                 12
+             ChipBench: A Next-Step Benchmark for Evaluating LLM Performance in AI-Aided Chip Design
+
+                                               Table 7. Verilog Module Descriptions
+
+Design      Module Name                                  Description                                   Code Lines   Circuit Cells
+Self-       continuous input sequence detect             8-bit shift-register pattern detector                33              16
+Contained
+            extraneous items sequence detect             9-bit shift-register detector                        51              16
+            non-overlapping sequence detect              Non-overlapping 6-bit group sequence                 95              35
+                                                         checker
+            continuous input sequence detect2            FSM sequence detector                                78              29
+            signal generator                             5-bit waveform generator                             48             112
+            data serial-to-parallel circuit              Serial-to-parallel packer                            50              28
+            data accumulation output                     Ready/valid accumulator                              44              91
+            FracWidthConv 24to128                        Bit-pack a valid-only 24-bit input stream            48             532
+                                                         into 128-bit outputs
+            FracWidthConv 8to12                          Bit-pack a valid-only 8-bit input stream             48              42
+                                                         into 12-bit outputs
+            IntWidthConv 8to16                           Valid-only width converter that packs two            40              28
+                                                         8-bit inputs into one 16-bit output
+            4-bit carry look-ahead adder circuit         4-bit carry look-ahead adder                         18              20
+            state machine overlap sequence detection     Overlapping sequence detector                        40              19
+            least common multiple                        8-bit LCM/GCD calculator                             92            7409
+            sequence generator                           Cyclic sequence generator                            21               7
+            vending machine2                             Vending machine FSM                                  64              92
+            OddDiv HalfDuty                              Divide-by-7 clock divider with ∼50%                  56              22
+                                                         duty cycle
+            arbitrary fractional frequency division      Fractional clock divider achieving aver-             51              66
+                                                         age /8.7
+            write state machine two stage                Two-process Moore FSM                                53              11
+            gray code counter                            4-bit Gray-code counter                              44              25
+            multiplication and bitwise operations        Resource-minimized constant multiply                 12              96
+                                                         compute
+            pulse synchronization circuit                Clock-domain crossing pulse synchro-                 45               6
+                                                         nizer
+            simple stopwatch                             Stopwatch counter                                    38              48
+            settable counter                             Hex counter                                          50              22
+            up and down counter                          Decimal up/down counter                              44              33
+            simple implementation RAM                    Simple dual-port RAM (depth 8, width 4)              31             189
+            johnson counter                              4-bit Johnson counter                                12               5
+            pipeline multiplier                          4-bit unsigned pipelined multiplier                  42              93
+            traffic lights                               Traffic light controller                            101             105
+            gaming machine billing program               Prepaid gaming billing FSM                           36             178
+Not-Self-   submodules to comparison of three inputs     A Comparator for the minimum of three                56             116
+Contained                                                8-bit unsigned inputs
+            full subtractor using three to eight decoder A 1-bit full subtractor                             109              28
+            asynchronous FIFO                            Asynchronous FIFO (dual clock)                      144             380
+            synchronous FIFO                             Single-clock FIFO                                    88             367
+            8 bit alu                                    A 8-bit ALU                                          70              81
+            cpu top                                      A Top-level 16-bit CPU                              250            1195
+cpu-        controller                                   A RISC-V main controller that decodes                52              42
+design                                                   the 7-bit opcode into datapath control sig-
+                                                         nals
+            alu                                          Purely combinational 32-bit ALU with                 51            1456
+                                                         4-bit ‘Operation‘ code
+            regfile                                      32×32-bit register file with 1 write port            39            3122
+                                                         and 2 combinational read ports
+            branch unit                                  A branch unit                                        26             206
+            alu controller                               A RISC-V ALU-control decoder                         45              69
+            pc reg                                       A PC register                                        45             180
+            div                                          A Sequential 32-bit signed/unsigned divi-            99            1228
+                                                         sion unit
+            ctrl                                         A Pipeline control Unit                              73             213
+            cp0 reg                                      A CP0 register file implementing Count/-            183            1245
+                                                         Compare/Status/Cause/EPC/etc.
+
+
+                                                               13
+

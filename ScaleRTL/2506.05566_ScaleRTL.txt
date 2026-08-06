@@ -1,0 +1,801 @@
+                                         ScaleRTL: Scaling LLMs with Reasoning Data and Test-Time
+                                                Compute for Accurate RTL Code Generation
+                                                                        Chenhui Deng, Yun-Da Tsai, Guan-Ting Liu, Zhongzhi Yu, Haoxing Ren
+                                                                                                       NVIDIA
+                                                                              {cdeng, yundat, dannliu, zhongzhiy, haoxingr}@nvidia.com
+
+
+                                            Abstract—Recent advances in large language models (LLMs) have
+                                         enabled near-human performance on software coding benchmarks, but
+                                                                                                                                                                                            †
+                                         their effectiveness in RTL code generation remains limited due to the                                                                   ScaleRTL
+                                         scarcity of high-quality training data. While prior efforts have fine-                                                     ScaleRTL
+                                         tuned LLMs for RTL tasks, they do not fundamentally overcome the data
+                                         bottleneck and lack support for test-time scaling due to their non-reasoning
+                                                                                                                                                                CraftRTL
+arXiv:2506.05566v2 [cs.AR] 15 Jul 2025
+
+
+
+
+                                         nature. In this work, we introduce ScaleRTL, the first reasoning LLM for                                   OriGen
+                                         RTL coding that scales up both high-quality reasoning data and test-time
+                                         compute. Specifically, we curate a diverse set of long chain-of-thought
+                                         reasoning traces averaging 56K tokens each, resulting in a dataset of 3.5B
+                                         tokens that captures rich RTL knowledge. Fine-tuning a general-purpose                                     CodeV
+                                         reasoning model on this corpus yields ScaleRTL that is capable of deep
+                                                                                                                                                       GPT-4o
+                                         RTL reasoning. Subsequently, we further enhance the performance of
+                                                                                                                                         RTLCoder
+                                         ScaleRTL through a novel test-time scaling strategy that extends the
+                                         reasoning process via iteratively reflecting on and self-correcting previous
+                                         reasoning steps. Results show that ScaleRTL achieves state-of-the-art
+                                         performance on VerilogEval and RTLLM, outperforming 18 competitive
+                                         baselines by up to 18.4% on VerilogEval and 12.7% on RTLLM.
+
+                                                                    I. I NTRODUCTION
+                                                                                                                        Figure 1: Comparison of LLMs on RTL Coding benchmarks —
+                                            Large language models (LLMs) have progressed from                           ScaleRTL† refers to the test-time scaling variant of ScaleRTL.
+                                         natural-language understanding to code generation. Frontier
+                                         models such as GPT [27], Gemini [8], Claude [2], and DeepSeek [10]
+                                         series achieve near-human accuracy on software coding benchmarks               LLMs on high-quality chain-of-thought (CoT) data enables models to
+                                         such as HumanEval [4] and MBPP [3]. This success has sparked                   perform step-by-step reasoning before generating final answers [10].
+                                         interest in applying LLMs to hardware description languages (HDLs),            This CoT fine-tuning substantially improves performance in tasks
+                                         which are central to chip design and verification. However, due to the         such as mathematical problem solving [25]. However, constructing
+                                         low-resource nature of HDLs, there is a scarcity of register-transfer          large-scale RTL reasoning datasets remains an open challenge.
+                                         level (RTL) code available for training. As a result, existing general            Beyond scaling up training data, a growing body of work highlights
+                                         LLMs fall short on RTL benchmarks such as VerilogEval [19]                     the importance of test-time scaling, which extends the reasoning
+                                         and RTLLM [23]. This performance gap underscores the need for                  process during model inference. This approach is motivated by recent
+                                         domain-adapted LLMs capable of accurate RTL code generation.                   advances in reasoning LLMs such as OpenAI-o3 [7] and DeepSeek-
+                                            Several recent studies have sought to improve LLM performance               R1 [10]. Prior work has shown that longer CoT reasoning traces
+                                         on RTL coding tasks via supervised fine-tuning, primarily differing in         generally correlate with better model performance in downstream
+                                         how they construct the training data. CodeV [34] and MG-Verilog [33]           tasks [16], [18], [24], [25]. This trend is particularly well-suited to
+                                         build high-quality datasets by pairing Verilog modules with multi-level        RTL coding, where minor semantic errors or misunderstandings of the
+                                         natural language summaries, improving the model’s understanding                design specification can lead to functional failures. By allowing the
+                                         of RTL semantics. RTLCoder [21] automates the creation of RTL                  model to identify mistakes and revise its reasoning before producing
+                                         instruction-code pairs with the aid of GPT-3.5 [26]. Most recently,            a final output, test-time scaling provides a powerful mechanism for
+                                         CraftRTL [20] addresses key limitations of prior approaches by                 improving accuracy in complex hardware design scenarios.
+                                         generating synthetic data that help LLMs understand non-textual                   In this work, we aim to advance the frontier of RTL LLMs through
+                                         representations (e.g., Karnaugh maps) and support targeted code repair,        scaling up both training data and test-time reasoning. Concretely, we
+                                         achieving state-of-the-art results on RTL benchmarks.                          first curate 62K high-quality RTL scripts. Each script is then used
+                                            Despite encouraging progress, RTL-specific LLMs remain funda-               to generate a long CoT reasoning trace by prompting DeepSeek-
+                                         mentally limited by the scale and quality of their training data. The          R1, with an average length of 56K tokens. Notably, these long CoT
+                                         largest dataset curated in prior work contains 165K samples, each              traces significantly enrich the training set despite the limited number
+                                         averaging only around 1K tokens, amounting to fewer than 0.2 billion           of RTL scripts, resulting in a dataset containing 3.5 billion tokens,
+                                         tokens in total [34]. In contrast, LLM scaling laws [15] suggest that          which is orders of magnitude larger than the data scale considered in
+                                         expanding training data to the billion-token scale can yield substantial       previous work. Subsequently, we fine-tune the DeepSeek-R1-Distill-
+                                         gains in downstream performance, and RTL coding is unlikely to be              Qwen model [10] on our curated dataset to obtain ScaleRTL, a model
+                                         an exception. Moreover, recent studies have shown that fine-tuning             capable of RTL reasoning. We further scale up test-time compute
+                                                                                                                        by iteratively replacing the end-of-reasoning token with a corrective
+                                         979-8-3315-3762-3/25/$31.00 © 2025 IEEE                                        prompt, enabling the model to continuously extend its reasoning traces,
+Table 1: Dataset statistics for various RTL LLM methods — ∗ indicates     B. Scaling Laws for LLMs
+estimated values based on maximum sequence length.
+                                                                             Scaling laws have been widely recognized as empirical principles
+                   # Samples   Avg. Tokens per Sample    Total Tokens     for improving LLM performance across diverse domains. They
+ RTLCoder [21]        26K               0.2K                   6M         characterize how model capability on downstream tasks improves
+ MG-Verilog [33]      11K               1.5K                  16M         with increased computation, both during training and inference. On
+ OriGen [6]          222K               0.6K                 139M         the one hand, at training time, foundational studies observe that
+ CodeV [34]          165K               1K∗                 165M∗
+ CraftRTL [20]       110K                1K                  110M         LLMs’ performance improves predictably with scale, following a
+                                                                          power-law relationship with respect to the logarithm of training
+ ScaleRTL (Ours)      62K                56K                 3.5B
+                                                                          compute [12], [15]. On the other hand, test-time scaling has emerged as
+                                                                          a complementary strategy for enhancing model performance. Rather
+                                                                          than increasing model capacity or expanding the training dataset,
+yielding ScaleRTL† with improved RTL coding performance.
+                                                                          test-time scaling focuses on allocating more computational resources
+   To demonstrate the efficacy of our approach, we compare ScaleRTL
+                                                                          during inference. This includes enabling longer CoT reasoning [16],
+and ScaleRTL† against 18 competitive baselines, including general-
+                                                                          [31] or iterative decoding [5], [24] to extend the model’s reasoning
+purpose leading LLMs and state-of-the-art RTL models. Experimental
+                                                                          horizon and improve output quality. Recent studies have shown that
+results show that our models achieve substantial accuracy improve-
+                                                                          sequential test-time scaling, where the model extends its reasoning
+ments over all baselines on two well-established RTL benchmarks:
+                                                                          process to rethink and self-correct its own steps, can lead to substantial
+VerilogEval [19] and RTLLM [23]. We summarize our main technical
+                                                                          gains on mathematical [25] and software coding tasks [18]. These
+contributions as follows:
+                                                                          insights highlight the value of scaling along both axes, motivating
+• To our knowledge, this is the first work to develop reasoning LLMs      our work to jointly explore training-time and test-time scaling for
+for RTL coding by scaling both reasoning data and test-time compute.      advancing LLMs in RTL code generation.
+• To scale up reasoning data for training, we curate a diverse set of        Notably, while agentic methods can also be broadly categorized
+long CoT traces, resulting in a 3.5-billion-token corpus. This dataset    under test-time scaling, they typically focus on orchestrating multiple
+enables a model to internalize RTL-specific reasoning patterns.           tool-augmented actions or planning steps. This is orthogonal to our
+• For test-time scaling, we introduce a novel iterative approach that     work, which exclusively focuses on scaling test-time compute based
+extends the model’s reasoning process through rethinking and self-        on the intrinsic capability of a single reasoning LLM.
+correction, leading to more accurate final solutions.
+• Through large-scale reasoning data and test-time scaling, our                                    III. M ETHODOLOGY
+approach achieves significant accuracy gains, surpassing previous            Figure 2 presents an overview of our approach, which comprises
+RTL models by up to 18.4% on VerilogEval and 12.7% on RTLLM.              two main phases. The first phase curates a billion-token scale CoT
+                                                                          dataset for fine-tuning, resulting in the ScaleRTL model that is capable
+                         II. BACKGROUND                                   of reasoning through RTL problems before generating final solutions.
+A. LLMs for RTL Coding                                                    The second phase introduces a novel iterative approach ScaleRTL† ,
+                                                                          which further enhances RTL reasoning by enforcing the model to
+   Adapting large language models (LLMs) to RTL coding has                rethink and self-correct its previous steps in the reasoning trace. In
+attracted growing interest due to their potential to enhance hardware     the following sections, we detail our data curation process and model
+design productivity. However, general-purpose LLMs exhibit limited        fine-tuning in Section III-A, and then describe our test-time scaling
+performance on RTL benchmarks such as VerilogEval [19], largely           strategy in Section III-B.
+due to the scarcity of domain-specific training data and the absence
+of dedicated reasoning capabilities. To address this gap, prior work      A. Large-Scale RTL Data Curation for Fine-Tuning
+has pursued three major directions: (1) instruction optimization, (2)           a) High-Quality RTL Script Collection: We begin by collecting
+synthetic data generation, and (3) feedback-driven refinement. In the     5 million raw RTL code snippets scraped from public web sources,
+area of instruction optimization, CodeV [34] and MG-Verilog [33]          comprising over 189 billion tokens. To ensure data quality and
+construct high-quality instruction-code datasets by aligning Verilog      diversity, we apply a multi-stage filtering pipeline. First, we perform
+modules with multi-level natural language summaries, enabling LLMs        data deduplication to remove identical files. We then apply rule-based
+to better capture RTL semantics across different abstraction levels. To   filtering to eliminate extremely long scripts (exceeding 64K tokens),
+generate synthetic data, CraftRTL [20] produces diverse, correct-by-      which are typically machine-generated and tend to be of lower quality.
+construction training samples using artifacts such as Karnaugh maps       Next, we perform syntax validation on the remaining scripts to ensure
+and state diagrams, while RTLCoder [21] develops a GPT-assisted           correctness.
+pipeline for automated data synthesis and integrates code quality             To prevent data contamination of downstream RTL benchmarks, we
+signals during training. For feedback-driven refinement, OriGen [6]       compute the Jaccard similarity between each collected code sample and
+applies compiler-guided self-reflection and code-to-code augmentation     the golden solutions in the benchmarks. Specifically, we represent each
+to improve functional correctness, and BetterV [28] employs generative    script as a set of unique 5-grams (i.e., consecutive token sequences
+discriminators aligned with synthesis and verification objectives to      of length 5), and compute similarity as follows. Given a collected
+guide the model toward implementation-consistent outputs.                 script A and a golden script B, their Jaccard similarity is defined as:
+   Despite these advances, most RTL-specialized LLMs remain
+                                                                                                               |T5 (A) ∩ T5 (B)|
+constrained by limited data scale, as shown in Table 1, which limits                       Jaccard(A, B) =
+their ability to handle complex logic and generalize beyond templated                                          |T5 (A) ∪ T5 (B)|
+patterns. Moreover, these models lack test-time scalability due to        where T5 (A) and T5 (B) denote the sets of unique 5-grams extracted
+their non-reasoning nature, making them incapable of reflection and       from scripts A and B, respectively. We discard any script whose
+self-correction to produce accurate solutions.                            similarity score exceeds 0.8 with respect to any golden reference.
+          Phase 1: Fine-Tuning on Large-Scale CoT Data                                                                                                Phase 2: RTL Reasoning with Test-Time Scaling
+      Training Sample                                                                                                                                                                                     Corrective Prompt for Reasoning Extension
+
+         Specification
+  Training         Sample                                                                                                                                                                                 <think>
+         Build a counter that counts from 0 to 999, inclusive, with a period of 1000                                                                                                                      Alright, let’s tackle this problem. The goal is …, let’s break it down step by step
+    Specification
+Training      Sample
+         cycles.       The reset input is active high synchronous, …                                                                                                                                      * First, I need to model the seconds, minutes, and hours counters, …
+    Build a counter that counts from 0 to 999, inclusive, with a period of 1000                                                                                                                           * Starting with the reset condition: when reset is high, the time should be …
+         CoT Reasoning Trace
+ Specification                                                                                                                                                                                            * Wait, but how to handle the BCD increment? Let’s think …
+    cycles. The reset input is active high synchronous, …
+ Build <think>
+          a counter that counts from 0 to 999, inclusive, with a period of 1000                                                                                                                           * But this could get complex. Alternatively, handle the entire increment as ...
+    CoT Reasoning Trace                                                                                                                                                                                   * Wait, but how to handle BCD increment for hours. For example, ...
+ cycles. Okay,
+             The so       I need
+                      reset   inputtoisdesign
+                                        active ahigh
+                                                  counter     that goes …
+                                                        synchronous,      from 0 to 999 …
+    <think>                                                                                                                                                                                               *…
+ CoT     *Reasoning
+           First, the counter   Trace  has to increment on every clock cycle. So …
+    Okay,* That so makes
+                      I need to    design
+                                sense.      a how
+                                          But  counter
+                                                    are that    goeshandled?
+                                                           the bits    from 0 toSince
+                                                                                  999 …   the output …                                                                                                    Yes. This covers the necessary transitions. So the code should work.
+ <think>                                                                                                                               Test Sample
+    * First,
+         * Wait,  thewhen
+                        counteryouhas    to 999,
+                                     write  increment
+                                                  …        on every clock cycle. So …                                                                                                                     Wait, my reasoning must be incorrect. Let's check the reasoning rules:
+ Okay,   * so
+    * That       I me
+           Letmakes need    to  design
+                             sense.
+                         think   aboutButa how
+                                           counter
+                                         edge    are that
+                                                cases.       goeshandled?
+                                                       theWhat
+                                                             bits   from 0 towhen
+                                                                   happens     999 …
+                                                                              Since  qthe  output
+                                                                                        is 999   ... …   General Reasoning Model       Specification                                                      {Reasoning Rules}. Wait, I did not follow the rules. Let's try again.
+ * First,
+    * Wait, thewhen
+         * Testing  counter youhas   to reset
+                                 write
+                          scenarios:     increment
+                                        999,   …     onthen
+                                               is high,     every q clock
+                                                                    stays cycle.
+                                                                           0. WhenSo reset
+                                                                                       … is low, ...                                   Create a set of counters suitable for use as a 12-hour clock
+ * That
+    * Let  makes
+         Yes.  meThe     sense.
+                     think   about
+                          code     But  how
+                                     edge
+                                 should       are the
+                                             cases.
+                                           handle        bits
+                                                         that.handled?
+                                                    allWhat    happens whenSince qthe  output
+                                                                                    is 999   ... …                                     (with am/pm indicator) … hh, mm, and ss are two BCD (Binary-
+ * Wait,    whenscenarios:
+    * Testing           you write reset
+                                     999, … is high, then q stays 0. When reset is low, ...                                            Coded Decimal) digits each for hours (01-12), minutes (00-59),
+         </think>                                                                                                                                                                                                                                        Iteratively extending
+ * Let
+    Yes. meThe  think    about
+                      code        edgehandle
+                              should      cases.allWhat
+                                                    that.happens when q is 999 ...                                                     and seconds (00-59). Reset is the active high synchronous …
+         Code
+ * Testing
+    </think>          Solution
+                 scenarios:      reset is high, then q stays 0. When reset is low, ...                                                                                                                                                                    reasoning process
+ Yes. The<answer>code should handle all that.
+    Code         Solution                                                                                                                                                                                                                                via corrective prompt
+ </think>always @(posedge clk) begin
+    <answer>  if (reset) begin                                                                                                                                                                            Model Output
+ Code      Solution
+    always @(posedge
+                   q <= 10’b0; clk) begin                                                                                                                                                                 <think>
+ <answer>
+        if (reset)
+              end else   begin
+                             begin
+                                                                                                                                                                                                          Alright, let’s tackle this problem. The goal is …, let’s break it down step by step
+ always @(posedge
+              q <=     10’b0;
+                   if (q  == 999)clk)begin
+                                       begin
+    if (reset)
+        end else     begin
+                       q begin
+                          <= 0;                                                                                                                                                                           * First, I need to model the seconds, minutes, and hours counters, …
+        q <=  if (q10’b0;
+                      ==else
+                           999)begin
+                                  begin                                                                                                                                                                   * Starting with the reset condition: when reset is high, the time should be …
+                   end
+                                                                                                                                                                                                          * Wait, but how to handle the BCD increment? Let’s think …
+    end elseq begin   <=
+                       q <=0; q + 1;
+                                                                                                                                                                                                          * But this could get complex. Alternatively, handle the entire increment as ...
+        if (qend ==end 999)begin
+                      else    begin
+                                                                                                                                                                                                          * Wait, but how to handle BCD increment for hours. For example, ...
+             qend<=q <=0; q + 1;
+                                                                                                                                                                                                          *…
+        end
+         end  endelse begin
+        end  q <= q + 1;
+         </answer>                                                                                                                                                     †                                  Yes. This covers the necessary transitions. So the code should work.
+    end end                                                                                                      ScaleRTL                            ScaleRTL                                             </think>
+    end
+    </answer>                                                                                                                                                                                             <answer>
+ end                                                                                                       (capable of RTL reasoning      (Enhanced RTL reasoning                                         [Code is omitted due to space constraints]
+ </answer>                                                                                                    via CoT fine-tuning)          with test-time scaling)                                       </answer>
+
+
+
+Figure 2: An overview of our approach, which consists of two phases — In the first phase, we fine-tune a model on a large-scale curated
+CoT reasoning dataset to obtain ScaleRTL. In the second phase, we apply test-time scaling to ScaleRTL to further enhance its RTL reasoning
+capability, resulting in ScaleRTL† .
+
+    In addition, we apply an embedding-based semantic similarity                                                                            is the total number of training samples. We optimize the model to
+filter [13] to discard code snippets that deviate significantly from the                                                                    maximize the conditional likelihood of both the reasoning trace and
+distribution of RTL benchmarks. This step helps eliminate outliers                                                                          the code output, given the specification:
+examples from the dataset. After all filtering stages, we retain 62K                                                                                                " |r(i) |
+                                                                                                                                                                 N
+high-quality RTL scripts containing approximately 200 million tokens,                                                                                           X      X            
+                                                                                                                                                                                      (i)         (i)
+                                                                                                                                                                                                      
+                                                                                                                                                   LSFT (θ) = −               log Pθ rt | x(i) , r<t
+which serve as the basis for our subsequent CoT data generation.
+                                                                                                                                                                                       i=1              t=1
+      b) Billion-Token Scale CoT Data Generation: To substantially                                                                                                                                 |y (i) |                                 
+                                                                                                                                                                                                                                                                              #
+                                                                                                                                                                                                    X
+expand the scale of our dataset, we generate a long CoT reasoning                                                                                                                             +
+                                                                                                                                                                                                                      (i)                (i)
+                                                                                                                                                                                                              log Pθ yt | x(i) , r(i) , y<t
+trace for each of the 62K curated high-quality RTL scripts, using                                                                                                                                       t=1
+DeepSeek-R1 [10], a state-of-the-art general-purpose reasoning LLM.
+                                                                                                                                            This formulation encourages the model to first internalize the reasoning
+We generate the CoT data in two steps. First, following the OSS-
+                                                                                                                                            steps and subsequently generate the correct RTL implementation, thus
+I NSTRUCT data generation strategy [32], we prompt DeepSeek-R1
+                                                                                                                                            promoting better generalization and interpretability in RTL coding.
+to formulate a coding problem (i.e., a specification) based on each
+RTL script. After obtaining 62K specifications from our curated RTL                                                                         B. RTL Reasoning Enhancement via Test-Time Scaling
+corpus, we prompt DeepSeek-R1 again, using these specifications
+                                                                                                                                               After fine-tuning on the CoT data, we obtain a model capable of
+as input, to generate detailed CoT reasoning traces along with the
+                                                                                                                                            generating RTL-specific reasoning traces before producing a final
+corresponding code solutions. Our detailed prompts for both steps
+                                                                                                                                            solution. However, the model may still follow flawed reasoning paths,
+are available in Appendix A.
+                                                                                                                                            leading to solutions that fail to pass the testbench. Motivated by recent
+   It is worth noting that DeepSeek-R1 natively wraps its CoT                                                                               advances in test-time scaling for mathematical problem solving, we
+reasoning traces within <think>...</think> tags and its final                                                                               aim to extend the model’s reasoning trace at inference time, enabling
+solutions within <answer>...</answer> tags. This structured                                                                                 it to rethink and self-correct earlier steps.
+formatting allows us to directly and reliably extract the reasoning trace                                                                      As introduced in s1 [25], a straightforward approach to test-time
+and final output as separate components. This process yields high-                                                                          scaling is to append a “Wait” token at the end of the reasoning trace
+quality <specification, CoT reasoning trace, code solution> triples that                                                                    to prompt the model to continue its reasoning process. While prior
+form our dataset. In total, we generate 62K CoT-annotated samples,                                                                          work has shown that this method effectively lengthens reasoning traces
+each averaging 56K tokens, resulting in a corpus of approximately 3.5                                                                       and improves accuracy on mathematical benchmarks, we observe that
+billion tokens. Notably, this dataset is orders of magnitude larger than                                                                    it fails to elicit deeper reasoning from our RTL model. Instead, the
+those used in prior work, as summarized in Table 1. We ensure that                                                                          model tends to agree with its prior conclusion without revisiting earlier
+our CoT dataset contains no specification or code overlapping with                                                                          logic. As a result, this simple trick often reproduces the original code
+existing RTL benchmarks, thereby avoiding any data contamination.                                                                           solution generated by ScaleRTL and fails to correct any errors.
+      c) Model Fine-Tuning: After constructing the CoT dataset,                                                                                Algorithm 1 presents the complete procedure of our novel test-time
+we perform supervised fine-tuning (SFT) on the general reasoning                                                                            scaling method for RTL coding. For each problem in the downstream
+model DeepSeek-R1-Distill-Qwen, resulting in a model specifically                                                                           benchmarks, we first perform standard inference using the fine-
+tailored for RTL reasoning. Concretely, each training example is                                                                            tuned model to generate a reasoning trace and the corresponding
+represented as a triplet ⟨x, r, y⟩, where x denotes the specification,                                                                      RTL solution. If the solution fails to pass the testbench, the end-
+r is the CoT reasoning trace, and y is the final RTL code solution.                                                                         of-reasoning token delimiter “</think>” is then replaced with a
+Let D = {(x(i) , r(i) , y (i) )}N
+                                i=1 be the fine-tuning dataset, where N                                                                     corrective prompt: “Wait, my reasoning must be incorrect. Let’s check
+Algorithm 1 Iterative Test-Time Scaling for RTL Coding                    DeepSeek-Coder [35], are trained on broad programming corpora but
+ 1: Input: Fine-tuned model M , test problem P , reasoning rules R,       lack RTL-specific adaptation. RTL coding models encompass state-of-
+      maximum iterations T                                                the-art methods such as CodeV, CraftRTL, and RTLCoder, which are
+ 2:   Output: Final reasoning trace T and RTL solution S                  fine-tuned to generate Verilog from natural language descriptions. To
+ 3:   Initialize reasoning trace T ← Inference(M, P )                     eliminate the potential advantage of larger model size in ScaleRTL and
+ 4:   Extract initial RTL solution S ← ExtractSolution(T )                better attribute performance gains to reasoning ability, we fine-tune
+ 5:   t←0                                                                 LLaMA3.3-70B [9] on the CraftRTL dataset, denoted as CraftRTL-
+ 6:   while t < T and not IsCorrect(S) do                                 70B. This serves as a strong baseline for isolating the effect of
+ 7:       Remove RTL solution from T after delimiter “</think>”           model scale. Lastly, we evaluate general reasoning models such as
+ 8:       Append corrective prompt:                                       R1-Distill-Qwen-32B and R1-Distill-Llama-70B, which are trained
+ 9:          “Wait, my reasoning must be incorrect. Let’s check the       for CoT reasoning but are not explicitly designed for RTL tasks.
+      reasoning rules: {R}. Wait, I did not follow the rules. Let’s try      For more recent foundation models such as DeepSeek-R1 and
+      again.”                                                             Claude3.7-Sonnet, we intentionally exclude them from our main
+10:       T ← Inference(M, T )                                            comparisons, as their training data cutoff dates postdate the release
+11:       S ← ExtractSolution(T )                                         of RTL benchmarks. It is likely that these models have been exposed
+12:       t←t+1                                                           to benchmark data during pre-training. For completeness, we provide
+13:   end while                                                           comparative results with these models in the Appendix C.
+14:   return T , S                                                              b) Dataset and Model Training: We obtain the ScaleRTL model
+                                                                          by fine-tuning DeepSeek-R1-Distill-Qwen-32B on our curated CoT
+                                                                          dataset containing 3.5B tokens shown in Table 1. We use a learning
+the reasoning rules: {Reasoning Rules}. Wait, I did not follow the        rate of 0.0001, a global batch size of 128, 5 training epochs, and
+rules. Let’s try again.” The {Reasoning Rules} are generated offline      64 warmup steps. Our model is trained on 32 nodes, each equipped
+and consist of general RTL coding guidelines, such as “Carefully          with 8 A100 GPUs. To accommodate long CoT sequences, we pack
+implement output signals based on their timing requirements”. We          the training data into chunks of 32, 768 tokens and use a context
+provide details on generating such rules in the Appendix B. To enable     parallelism of 4 and a tensor parallelism of 4.
+rethinking, we discard the previously generated RTL code solution               c) Model Inference: We use vLLM [17] with bf16 precision,
+following “</think>” and append the corrective prompt to the              a tensor parallelism factor of 4, a temperature of 0.2, and an initial
+remaining reasoning trace. The modified trace is then fed back into the   token limit of 16, 384. For ScaleRTL† , we apply two additional
+model to continue the reasoning and produce a revised RTL solution.       inference passes per test problem using our test-time scaling strategy,
+We find that this encourages the model to reflect on and self-correct     as discussed in Section III-B. The first pass uses a token limit of
+earlier mistakes, often resulting in a correct solution. This process     32, 768, and the second extends it to 49, 152.
+can be applied iteratively by repeatedly replacing “</think>” with              d) RTL Benchmarks and Evaluation Metrics: We evaluate
+the corrective prompt to scale up test-time reasoning. As a result, it    model performance on two representative RTL code generation
+significantly increases the number of reasoning tokens at inference       benchmarks: VerilogEval [19] and RTLLM [23], which are designed
+time and leads to improved RTL coding performance.                        to assess RTL code generation from natural language specifications.
+   Notably, while several agent-based approaches for RTL coding           Notably, VerilogEval consists of two subsets: VerilogEval-Human,
+(e.g., VerilogCoder [11]) can be broadly viewed as test-time scaling      which contains 156 manually adapted problem descriptions from
+methods by iteratively debugging code that fails the testbench, they      the HDLBits platform, and VerilogEval-Machine, which includes
+rely on general-purpose LLMs (e.g., GPT-4o) and primarily focus on        143 descriptions automatically generated by GPT-3.5. We focus on
+designing task planners and integrating external tools (e.g., waveform    measuring functional correctness in these benchmarks, as it provides
+tracing). In contrast, we take an orthogonal approach by leveraging       a more practical assessment than syntax correctness.
+the intrinsic reasoning capabilities of ScaleRTL to extend reasoning         Following prior work [19], we use the unbiased pass@k metric to
+traces and automatically correct earlier reasoning errors. Integrating    evaluate functional correctness. This metric estimates the probability
+ScaleRTL with existing agentic approaches is left for future work.        that at least one of k generated outputs passes all test cases, given
+                                                                          n ≥ k total attempts per problem. We choose n = 10 in this work.
+                           IV. E XPERIMENT
+                                                                          B. Main Results
+   We conduct a comprehensive evaluation of ScaleRTL and its
+test-time scaling variant ScaleRTL† , comparing their performance            Table 2 clearly demonstrates the effectiveness of our proposed
+against 18 competitive LLMs, including 7 state-of-the-art RTL coding      model, ScaleRTL, and its test-time scaling variant, ScaleRTL† .
+baselines. Moreover, we perform a detailed analysis of the impact         Specifically, our best model improves pass@1 over the strongest prior
+of test-time scaling. Finally, to ensure that ScaleRTL does not           RTL-specific baseline by up to 10.7% on VerilogEval and 11.7%
+overfit to RTL benchmarks, we evaluate it on general-purpose coding       on RTLLM. The improvements are also significant in pass@5, with
+benchmarks, including HumanEval, MBPP (Mostly Basic Python                gains of 18.4% on VerilogEval and 12.7% on RTLLM. These results
+Programming), and IFEval for instruction-following evaluation.            highlight the importance of incorporating domain-specific reasoning
+                                                                          traces, rather than relying solely on instruction-code fine-tuning.
+A. Experimental Setup                                                        When comparing ScaleRTL to general reasoning models such as
+    a) Baselines: We compare ScaleRTL against a diverse set of            R1-Distill-Qwen and R1-Distill-Llama, the advantage becomes even
+LLMs, spanning general-purpose foundation and coding models to            more pronounced. Despite these baselines being optimized for CoT
+RTL-specialized models. The foundation model category includes            reasoning, they fall short in RTL tasks. This suggests that generic
+LLaMA3.1-405B [9], GPT-4o [14], and Nemotron4-340B [1]. General           reasoning ability is not sufficient; accurate RTL coding requires
+coding models, including CodeLlama [29], Starcoder2 [22], and             reasoning that is explicitly aligned with hardware design knowledge.
+       Table 2: Functional Correctness on RTL benchmarks — We highlight the top first, second, and third results per benchmark.
+
+                                                                       VerilogEval-Machine        VerilogEval-Human         RTLLM v1.1
+                       Type               Model
+                                                                       pass@1      pass@5         pass@1     pass@5       pass@1 pass@5
+                                          Llama3.1-405B                  67.3           75.1        53.8        61.0        38.9       45.8
+                                          Llama3.3-70B                   63.9           67.3        46.5        49.3        12.7       22.5
+                Foundation Models
+                                          Nemotron4-340B                 53.0           60.3        43.1        48.3        18.9       20.7
+                                          GPT-4o                         65.9           71.4        57.1        63.9        33.8       44.4
+                                          CodeLlama-7B                   43.1           47.1        18.2        22.7        17.9       29.9
+                                          CodeQwen-7B                    46.5           54.9        22.5        26.1        24.1       34.0
+              General Coding Models       Starcoder2-15B                 68.7           82.3        37.7        50.6        15.5       37.6
+                                          DeepSeek-Coder-V2-16B          67.4           78.3        46.9        55.9        33.1       37.1
+                                          DeepSeek-Coder-V2-236B         68.2           74.1        56.4        62.2        34.5       50.2
+                                          RTLCoder-6.7B                  61.2           76.5        41.6        50.1        35.8       40.3
+                                          BetterV-6.7B                   67.8           79.1        45.9        53.3         −          −
+                                          CodeV-6.7B                     77.9           88.6        52.7        62.5        42.4       51.5
+               RTL Coding Models          OriGen-6.7B                    74.1           82.4        54.4        60.1         −         65.5
+                                          MG-Verilog-7B                  52.7           58.5         −           −           −          −
+                                          CraftRTL-15B                   81.9           86.9        68.0        72.4        49.0       65.8
+                                          CraftRTL-70B                   80.1           81.9        69.7        71.5        46.0       52.7
+                                          R1-Distill-Qwen-32B            55.2           64.3        45.5        66.0        35.8       51.7
+            General Reasoning Models
+                                          R1-Distill-Llama-70B           62.7           66.9        52.5        71.8        15.2       34.4
+                                          ScaleRTL-32B                   80.0           88.3        76.3        88.4        55.5       75.4
+              RTL Reasoning Models
+                                          ScaleRTL† -32B                 83.2           89.1        80.4        90.8        60.7       78.5
+
+
+   Moreover, the performance improvement of ScaleRTL does not                   For each of these five settings, we compute the average number of
+simply stem from increased model size. For instance, although                   reasoning tokens and the corresponding RTL coding performance.
+CraftRTL-70B is significantly larger, it still underperforms compared
+to our 32B ScaleRTL model across all benchmarks. This underscores                  Figures 3(a), (b), and (c) present the results for the three benchmarks,
+that scaling model parameters alone is insufficient; fine-tuning on             respectively. For VerilogEval-Human and RTLLM, we report pass@5
+RTL reasoning traces is essential for accurate RTL code generation.             as the evaluation metric, as it demonstrates greater robustness in
+   Finally, the performance gap between ScaleRTL and ScaleRTL†                  reflecting model performance. Across all benchmarks, we observe a
+confirms that test-time scaling plays a critical in accurate RTL code           consistent trend where model accuracy improves rapidly with increased
+generation. By allowing the model to reflect and revise its outputs             reasoning length and gradually saturates, resembling a logarithmic
+over multiple inference passes, we observe consistent improvements              curve. This highlights the importance of test-time reasoning as a
+across all benchmarks. This validates test-time scaling as an effective         controllable and effective mechanism for enhancing performance
+mechanism for enhancing model accuracy without retraining. We                   without additional training. Furthermore, the smooth curve fit across
+provide a deeper analysis of test-time scaling in Section IV-C. In              the five data points in each benchmark indicates that the relationship
+addition to the standard pass@k metric used for all baselines, we               between reasoning depth and accuracy is systematic and predictable,
+also report the pass rate, which measures whether a problem can                 echoing trends observed in general language reasoning tasks.
+be solved at least once within n = 10 trials. We believe this is a                 To further illustrate the impact of test-time scaling, Figure 4 presents
+more meaningful indicator of the effectiveness of our test-time scaling         a concrete example where extending the reasoning process leads to a
+approach, as it directly reflects the model’s ability to eventually arrive      correct solution. The task involves designing a finite state machine
+at a correct solution through iterative reasoning. The pass rate results        (FSM) that detects valid PS/2 mouse messages, which consist of three
+for both ScaleRTL and ScaleRTL† are provided in Appendix D.                     bytes. The key challenge lies in correctly implementing the timing
+C. Test-Time Scaling Analysis                                                   behavior: “the done signal must be asserted in the same cycle as the
+                                                                                third byte is received”. Initially, ScaleRTL incorrectly reasons that the
+   Recent work has empirically observed test-time scaling laws, where           done signal should be asserted in the cycle following the receipt of
+model performance improves as more tokens are allocated during                  the third byte. This leads to a faulty RTL implementation where done
+inference [30]. This behavior often follows a log-linear or power-law           is derived from a registered signal, resulting in a one-cycle delay. After
+relationship, particularly in reasoning tasks such as mathematical              applying our test-time scaling approach by replacing the original end-
+problem solving. In this section, we investigate whether a similar              of-reasoning delimiter </think> with a corrective prompt, the model
+trend exists in the domain of RTL code generation.                              continues its reasoning, revisits the timing specification, and identifies
+   To this end, we analyze the performance of five ScaleRTL variants            the flaw in its initial logic. It then generates a correct solution by
+across three benchmarks: VerilogEval-Machine, VerilogEval-Human,                directly asserting done in the same cycle as the state transition upon
+and RTLLM. These variants include: (1) the base ScaleRTL, (2) the               receiving the third byte. This example illustrates how extending the
+model after applying one iteration of our test-time scaling approach,           reasoning trace enables the model to refine its understanding of precise
+and (3) the model after two iterations, which progressively extend              timing requirements and produce a correct RTL implementation.
+the reasoning process. In addition, we generate two downgraded
+variants by truncating the reasoning trace of ScaleRTL. Specifically,             Our results confirm that test-time scaling laws hold in the RTL
+we suppress its reasoning in the middle by replacing the keyword                domain. Longer reasoning at inference leads to more accurate RTL
+“Wait” with the delimiter “</think>,” which signals the end of                  code without extra fine-tuning, offering a promising path to improve
+reasoning and forces the model to directly output the RTL solution.             performance with minimal deployment overhead.
+                                85                                                                                     92.5                                                                             80.0
+
+                                                                                                                       90.0                                                                             77.5
+ VerilogEval-Machine (pass@1)
+
+                                80
+
+
+
+
+                                                                                          VerilogEval-Human (pass@5)
+                                                                                                                       87.5                                                                             75.0
+
+
+
+
+                                                                                                                                                                                       RTLLM (pass@5)
+                                75
+                                                                                                                       85.0                                                                             72.5
+                                70
+                                                                                                                       82.5
+                                                                                                                                                                                                        70.0
+                                65                                                                                     80.0
+                                                                                                                                                                                                        67.5
+                                                                                                                       77.5
+                                60                                                                                                                                                                      65.0
+                                                                                                                       75.0
+                                550                                                                                                                                                                     62.5
+                                      2000       4000   6000    8000     10000    12000                                   0     2000   4000   6000   8000    10000 12000 14000 16000                        0       5000     10000       15000        20000
+                                                    # Reasoning Tokens                                                                         # Reasoning Tokens                                                          # Reasoning Tokens
+                                                        (a)                                                                                          (b)                                                                       (c)
+Figure 3: Impact of reasoning trace length on RTL coding performance — For each benchmark, we evaluate five ScaleRTL† variants by
+varying the amount of reasoning. These include two downgraded variants with truncated reasoning traces (blue), the base ScaleRTL model
+(green), and two enhanced variants with one and two iterations of test-time scaling that progressively extend the reasoning process (purple).
+
+    Problem Example
+
+        The PS/2 mouse protocol sends messages that are three bytes long. ... The algorithm we'll use is to discard bytes until we see one with in[3]=1. We then assume that this is byte 1 of a message, and
+        signal the receipt of a message once all 3 bytes have been received (done). The FSM should signal done in the cycle immediately after the third byte of each message was successfully received.
+                                             †
+           Output by ScaleRTL                                                                                                    Initial Wrong Solution                                      Correct Solution with Reasoning Extension
+
+        Okay, let's tackle this problem. The goal is to … First, let's outline the                                                // Next state logic                                          // Next state logic
+        states needed for this FSM … Now, let's think about the transitions: …                                                   always @(*) begin                                             always @(*) begin
+        This requires careful consideration. Let's think about the timing. …                                                          case (state)                                                case (state)
+                                                                                                                                        IDLE: next_state = in[3] ? BYTE1 : IDLE;                    IDLE: next_state = in[3] ? BYTE1 : IDLE;
+        But the problem says done is signaled in the cycle immediately after the                                                        BYTE1: next_state = BYTE2;                                  BYTE1: next_state = BYTE2;
+        third byte was received. That implies that done is high one cycle after                                                         BYTE2: next_state = DONE;                                   BYTE2: next_state = IDLE;
+        the third byte.                                                                                                                 DONE: next_state = IDLE;                                    default: next_state = IDLE;
+                                                                                                                                        default: next_state = IDLE;                               endcase
+        [5K intermediate reasoning tokens are omitted due to space constraints]                                                       endcase                                                  end
+                                                                                                                                   end
+        // Extending reasoning process by appending a corrective prompt:                                                                                                                       // State transition and done_reg assignment
+        Wait, my reasoning must be incorrect. Let’s check the reasoning rules:                                                    // State transition with synchronous reset                   always @(posedge clk) begin
+        Carefully implement output signals based on their timing requirements...                                                  always @(posedge clk) begin                                     if (reset) begin
+        Wait, I did not follow the rules. Let's try again.                                                                           if (reset) begin                                                 state <= IDLE;
+                                                                                                                                         state <= IDLE;                                               done_reg <= 1'b0;
+        Wait, perhaps the problem can be solved with three states. Let's                                                             end else begin                                               end else begin
+        think again.                                                                                                                     state <= next_state;                                         state <= next_state;
+                                                                                                                                     end                                                              // Set done_reg if current state is BYTE2 (third byte received)
+        [3K reasoning tokens are omitted due to space constraints]                                                                end                                                                 done_reg <= (state == BYTE2);
+                                                                                                                                                                                                  end
+        This ensures that done is high in the cycle immediately after the third                                                   // Assert done when in DONE state                            end
+        byte was received.                                                                                                        assign done = (state == DONE);
+                                                                                                                                                                                               assign done = done_reg;
+
+
+                                                                                 Figure 4: A test-time scaling example in VerilogEval-Human.
+
+Table 3: Results on general coding and instruction-following tasks —                                                                                        includes 541 prompts designed to test a model’s ability to follow
+We report pass@1 for HumanEval and MBPP, and accuracy for IFEval.                                                                                           diverse and structured instructions.
+We highlight the top first, second, and third results per benchmark.                                                                                           The comparison shown in Table 3 reveals a key limitation of existing
+                                                                          HumanEval                                    MBPP            IFEval               RTL-specific LLMs: while they achieve promising performance on
+                                                                                                                                                            RTL coding tasks, they fall short on general benchmarks, particularly
+                           DeepSeek-R1-Distill-Qwen-32B                          49.1                                    71.3           76.8
+                           CodeV-6.7B                                            60.2                                    66.8           24.3
+                                                                                                                                                            IFEval, indicating that their specialized training compromises broader
+                           OriGen-6.7B                                           60.7                                    48.4           46.6                core LLM abilities. In contrast, ScaleRTL-32B demonstrates strong
+                           CraftRTL-15B                                          45.7                                    63.7           39.8                general capabilities, achieving results on par with, and in some
+                           ScaleRTL-32B                                          65.2                                    75.0           73.2                cases surpassing, the original DeepSeek-R1-Distill-Qwen-32B on
+                                                                                                                                                            all benchmarks. This balance of domain specialization and general
+D. General Capability Analysis                                                                                                                              competency highlights the strength of our reasoning-centric adaptation
+   Beyond achieving strong performance on RTL benchmarks, it                                                                                                strategy, which enhances RTL performance without eroding the
+is equally important for RTL coding models to maintain critical                                                                                             model’s foundational versatility. This renders ScaleRTL better suited
+capabilities such as solving general programming problems and strictly                                                                                      for practical and robust deployment.
+adhering to user instructions. These abilities reflect fundamental rea-
+                                                                                                                                                                                                               V. C ONCLUSION
+soning and alignment skills that are beneficial for complex RTL tasks
+in practice, which often require careful interpretation of specifications                                                                                      This work presents the first RTL coding LLM that scales reasoning
+and precise logical reasoning. A model that lacks such capabilities                                                                                         data and test-time compute. This is acheived by fine-tuning on a
+risks overfitting to narrow RTL coding problems in those benchmarks                                                                                         large-scale CoT dataset enriched with RTL reasoning patterns. At
+and may fail when applied to more open-ended or unfamiliar design                                                                                           inference time, we further improve performance through a novel
+challenges. To evaluate this aspect, we assess ScaleRTL and prior                                                                                           test-time scaling strategy that enables iterative reflection and self-
+RTL models on general-purpose coding benchmarks HumanEval and                                                                                               correction. Experimental results showcase that our approach achieves
+MBPP, as well as the instruction-following benchmark IFEval, which                                                                                          state-of-the-art performance on RTL benchmarks.
+                               R EFERENCES                                        [16] Takeshi Kojima, Shixiang Shane Gu, Machel Reid, Yutaka Matsuo, and
+                                                                                       Yusuke Tanaka. Large language models are zero-shot reasoners. arXiv
+                                                                                       preprint arXiv:2205.11916, 2022.
+ [1] Bo Adler, Niket Agarwal, Ashwath Aithal, Dong H Anh, Pallab
+                                                                                  [17] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin
+     Bhattacharya, Annika Brundyn, Jared Casper, Bryan Catanzaro, Sharon
+                                                                                       Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica.
+     Clay, Jonathan Cohen, et al. Nemotron-4 340b technical report. arXiv
+                                                                                       Efficient memory management for large language model serving with
+     preprint arXiv:2406.11704, 2024.
+                                                                                       pagedattention. In Proceedings of the 29th Symposium on Operating
+ [2] Anthropic. Claude (oct 8 version). https://www.anthropic.com/, 2023.
+                                                                                       Systems Principles, pages 611–626, 2023.
+     Large language model.
+                                                                                  [18] Dacheng Li, Shiyi Cao, Chengkun Cao, Xiuyu Li, Shangyin Tan, Kurt
+ [3] Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk                  Keutzer, Jiarong Xing, Joseph E Gonzalez, and Ion Stoica. S*: Test time
+     Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc            scaling for code generation. arXiv preprint arXiv:2502.14382, 2025.
+     Le, and Charles Sutton. Program synthesis with large language models.        [19] Mingjie Liu, Nathaniel Pinckney, Brucek Khailany, and Haoxing Ren.
+     arXiv preprint arXiv:2108.07732, 2021.                                            Verilogeval: Evaluating large language models for verilog code generation.
+ [4] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde                  In 2023 IEEE/ACM International Conference on Computer Aided Design
+     de Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas              (ICCAD), pages 1–8. IEEE, 2023.
+     Joseph, Greg Brockman, Alex Ray, Raul Puri, Gretchen Krueger, Michael        [20] Mingjie Liu, Yun-Da Tsai, Wenfei Zhou, and Haoxing Ren. Craftrtl:
+     Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin, Brooke Chan,                 High-quality synthetic data generation for verilog code models with
+     Scott Gray, Nick Ryder, Mikhail Pavlov, Alethea Power, Lukasz Kaiser,             correct-by-construction non-textual representations and targeted code
+     Mohammad Bavarian, Clemens Winter, Philippe Tillet, Felipe Petroski               repair. arXiv preprint arXiv:2409.12993, 2024.
+     Such, Dave Cummings, Matthias Plappert, Fotios Chantzis, Elizabeth           [21] Shang Liu, Wenji Fang, Yao Lu, Jing Wang, Qijun Zhang, Hongce Zhang,
+     Barnes, Ariel Herbert-Voss, William Hebgen Guss, Alex Nichol, Alex                and Zhiyao Xie. Rtlcoder: Fully open-source and efficient llm-assisted
+     Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin, Suchir Balaji, Shantanu          rtl code generation technique. IEEE Transactions on Computer-Aided
+     Jain, William Saunders, Christopher Hesse, Andrew N. Carr, Jan Leike,             Design of Integrated Circuits and Systems, 2024.
+     Josh Achiam, Vedant Misra, Evan Morikawa, Alec Radford, Matthew              [22] Anton Lozhkov, Raymond Li, Loubna Ben Allal, Federico Cassano, Joel
+     Knight, Miles Brundage, Mira Murati, Katie Mayer, Peter Welinder, Bob             Lamy-Poirier, Nouamane Tazi, Ao Tang, Dmytro Pykhtar, Jiawei Liu,
+     McGrew, Dario Amodei, Sam McCandlish, Ilya Sutskever, and Wojciech                Yuxiang Wei, et al. Starcoder 2 and the stack v2: The next generation.
+     Zaremba. Evaluating large language models trained on code. arxiv                  arXiv preprint arXiv:2402.19173, 2024.
+     preprint arXiv:2107.03374, 2021.                                             [23] Yao Lu, Shang Liu, Qijun Zhang, and Zhiyao Xie. Rtllm: An open-source
+ [5] Shizhuo Chen, Yuxiang Sun, Shunyu Yao, Dian Yu, Zhou Yu, and Dong                 benchmark for design rtl generation with large language model. In 2024
+     Zhao. Replug: Retrieval-augmented black-box language models. arXiv                29th Asia and South Pacific Design Automation Conference (ASP-DAC),
+     preprint arXiv:2301.12652, 2023.                                                  pages 722–727. IEEE, 2024.
+ [6] Fan Cui, Chenyang Yin, Kexing Zhou, Youwei Xiao, Guangyu Sun,                [24] Aman Madaan, Xiang Lin, Zhou Liu, Yulia Tsvetkov, and Graham
+     Qiang Xu, Qipeng Guo, Yun Liang, Xingcheng Zhang, Demin Song, et al.              Neubig. Self-refine: Iterative refinement with self-feedback. arXiv
+     Origen: Enhancing rtl code generation with code-to-code augmentation              preprint arXiv:2303.17651, 2023.
+     and self-reflection. In Proceedings of the 43rd IEEE/ACM International       [25] Niklas Muennighoff, Zitong Yang, Weijia Shi, Xiang Lisa Li, Li Fei-Fei,
+     Conference on Computer-Aided Design, pages 1–9, 2024.                             Hannaneh Hajishirzi, Luke Zettlemoyer, Percy Liang, Emmanuel Candès,
+ [7] Ahmed El-Kishky, Alexander Wei, Andre Saraiva, Borys Minaiev, Daniel              and Tatsunori Hashimoto. s1: Simple test-time scaling. arXiv preprint
+     Selsam, David Dohan, Francis Song, Hunter Lightman, Ignasi Clavera,               arXiv:2501.19393, 2025.
+     Jakub Pachocki, Jerry Tworek, Lorenz Kuhn, Lukasz Kaiser, Mark               [26] OpenAI. Gpt-3.5 models. https://platform.openai.com/docs/models/
+     Chen, Max Schwarzer, Mostafa Rohaninejad, Nat McAleese, Oleg Mürk,                gpt-3-5, 2023. Accessed: 2025-05-22.
+     Rhythm Garg, Rui Shu, Szymon Sidor, Vineet Kosaraju, and Wenda               [27] OpenAI. Gpt-4 technical report. arXiv preprint arXiv:2303.08774, 2023.
+     Zhou. Competitive programming with large reasoning models. arXiv             [28] Zehua Pei, Hui-Ling Zhen, Mingxuan Yuan, Yu Huang, and Bei Yu.
+     preprint arXiv:2502.06807, 2025.                                                  Betterv: Controlled verilog generation with discriminative guidance. arXiv
+ [8] Google Gemini Team. Gemini: A family of highly capable multimodal                 preprint arXiv:2402.03375, 2024.
+     models. arXiv preprint arXiv:2312.11805, 2025.                               [29] Baptiste Roziere, Jonas Gehring, Fabian Gloeckle, Sten Sootla, Itai Gat,
+ [9] Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey,               Xiaoqing Ellen Tan, Yossi Adi, Jingyu Liu, Romain Sauvestre, Tal Remez,
+     Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan                et al. Code llama: Open foundation models for code. arXiv preprint
+     Schelten, Alex Vaughan, et al. The llama 3 herd of models. arXiv                  arXiv:2308.12950, 2023.
+     preprint arXiv:2407.21783, 2024.                                             [30] Charlie Snell, Jaehoon Lee, Kelvin Xu, and Aviral Kumar. Scaling llm
+[10] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang,                   test-time compute optimally can be more effective than scaling model
+     Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al. Deepseek-           parameters. arXiv preprint arXiv:2408.03314, 2024.
+     r1: Incentivizing reasoning capability in llms via reinforcement learning.   [31] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian
+     arXiv preprint arXiv:2501.12948, 2025.                                            Ichter, Fei Xia, Ed Chi, Quoc Le, and Denny Zhou. Chain of thought
+[11] Chia-Tung Ho, Haoxing Ren, and Brucek Khailany. Verilogcoder:                     prompting elicits reasoning in large language models. arXiv preprint
+     Autonomous verilog coding agents with graph-based planning and abstract           arXiv:2201.11903, 2022.
+     syntax tree (ast)-based waveform tracing tool. In Proceedings of the         [32] Yuxiang Wei, Zhe Wang, Jiawei Liu, Yifeng Ding, and Lingming Zhang.
+     AAAI Conference on Artificial Intelligence, volume 39, pages 300–307,             Magicoder: Source code is all you need. arXiv preprint arXiv:2312.02120,
+     2025.                                                                             2023.
+[12] Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena                    [33] Yongan Zhang, Zhongzhi Yu, Yonggan Fu, Cheng Wan, and Yingyan Ce-
+     Buchatskaya, Trevor Cai, Eliza Rutherford, Diego de Las Casas,                    line Lin. Mg-verilog: Multi-grained dataset towards enhanced llm-assisted
+     Lisa Anne Hendricks, Johannes Welbl, Aidan Clark, et al. Train-                   verilog generation. In 2024 IEEE LLM Aided Design Workshop (LAD),
+     ing compute-optimal large language models.                arXiv preprint          pages 1–5. IEEE, 2024.
+     arXiv:2203.15556, 2022.                                                      [34] Yang Zhao, Di Huang, Chongxiao Li, Pengwei Jin, Ziyuan Nan,
+                                                                                       Tianyun Ma, Lei Qi, Yansong Pan, Zhenxing Zhang, Rui Zhang, et al.
+[13] Binyuan Hui, Jian Yang, Zeyu Cui, Jiaxi Yang, Dayiheng Liu, Lei Zhang,
+                                                                                       Codev: Empowering llms for verilog generation through multi-level
+     Tianyu Liu, Jiajun Zhang, Bowen Yu, Keming Lu, et al. Qwen2. 5-coder
+                                                                                       summarization. arXiv preprint arXiv:2407.10424, 2024.
+     technical report. arXiv preprint arXiv:2409.12186, 2024.
+                                                                                  [35] Qihao Zhu, Daya Guo, Zhihong Shao, Dejian Yang, Peiyi Wang, Runxin
+[14] Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya                    Xu, Y Wu, Yukun Li, Huazuo Gao, Shirong Ma, et al. Deepseek-coder-
+     Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec                 v2: Breaking the barrier of closed-source models in code intelligence.
+     Radford, et al. Gpt-4o system card. arXiv preprint arXiv:2410.21276,              arXiv preprint arXiv:2406.11931, 2024.
+     2024.
+[15] Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B Brown, Benjamin
+     Chess, Rewon Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario
+     Amodei. Scaling laws for neural language models. arXiv preprint
+     arXiv:2001.08361, 2020.
+                      A PPENDIX A                                          Prompt to generate Verilog solution with reasoning
+        P ROMPTS FOR R EASONING DATA C URATION
+                                                                           Your goal is to solve a Verilog problem by completing one Verilog
+                                                                           module.
+Prompt to generate specification
+                                                                             • Guidelines for writing the solution (Verilog module) and
+                                                                                formatting:
+Your goal is to create a high-quality Verilog problem.
+                                                                               1) The module should be completely self-contained, fulfilling
+  • Guidelines for designing the problem description:
+                                                                                   all the requirements needed to solve the problem.
+    1) This should be completely self-contained, providing all the             2) Ensure the correctness of the syntax and functionality.
+       contextual information one needs to understand and solve                3) The solution must be valid Verilog code.
+       the problem.                                                            4) Do not include or import outside the module and define
+    2) Assume common Verilog knowledge, but ensure that any                        everything inside the module.
+       specific context, variables, or code snippets pertinent to this         5) The solution section should be enclosed within <answer>
+       problem are explicitly included.                                            </answer> tags.
+    3) Do not include the code snippet in the problem.                       • Below shows an example:
+    4) The problem should be designed for the programmer to solve               Problem description:
+       with one Verilog module. Here is an example:
+  • Guidelines for the problem description format:                               Build a counter that counts from 0 to 999,
+     The problem description section should be enclosed within                        inclusive, with a period of 1000
+     <PROBLEM> </PROBLEM> tags. Below shows an example:                              cycles.
+                                                                                 ...
+       Output:
+       <PROBLEM>                                                                 Output:
+       Build a counter that counts from 0 to 999,                                <think>
+            inclusive, with a period of 1000
+                                                                                 Okay, so I need to design a counter that
+           cycles.
+                                                                                     goes from 0 to 999 and then repeats.
+       The reset input is active high synchronous
+                                                                                     The module is called top_module and
+           , and should reset the counter to 0.
+                                                                                     has clk, reset, and output q which is
+       Solve the problem by completing the
+                                                                                     a 10-bit register.
+           following module.
+                                                                                 ...
+       </PROBLEM>
+   • Now, please gain inspiration from the following code snippet                Yes. The code should handle all that.
+     to create a high-quality Verilog problem.
+                                                                                 </think>
+  • Please increase the difficulty of the given programming test
+                                                                                 <answer>
+     question a bit. You can increase the difficulty using, but not
+     limited to, the following methods:                                          module top_module(
+    1) Your new problem should not be directly solved by the                         input clk,
+        original code snippet.                                                       input reset,
+    2) You can also change the bit-width requirement, how to reset                   output reg [9:0] q);
+        internal signals (if applicable), and whether the solution
+        needs a clock signal (combinatorial versus sequential logic).                  always @(posedge clk) begin
+        If you do have a reset method that is synchronous to a clock,                      if (reset) begin
+        make sure to add the clock signal to the problem module                                q <= 10’d0; // Synchronous
+        input.                                                                         reset to 0
+    3) Add new constraints and requirements to the original                                end else begin
+        problem, adding approximately 10 additional words.                                     if (q == 10’d999) begin //
+    4) Replace a commonly used requirement in the programming                          Check if reached 999
+        task with a less common and more specific one.                                             q <= 10’d0;
+    5) If the original problem can be solved with only a few logical                           end else begin
+        steps, please add more reasoning steps.                                                    q <= q + 10’d1; //
+Code snippet for inspiration:                                                          Increment otherwise
+                                                                                               end
+{code}                                                                                     end
+                                                                                       end
+Output:
+                                                                                 endmodule
+
+        Figure 5: Prompt for specification generation                            </answer>
+                                                                             •   Now, please solve the following Verilog problem. I will also
+                                                                                 attach a reference code snippet which was used as an inspiration
+                                                                                 to generate the problem. The provided code may not directly
+                                                                                 solve the problem, so use it only as a reference.
+                                                                                 Reference code:
+                                                                                 {reference_code}
+                                                                                 Problem description:
+                                                                                 {problem}
+                                                                                 Output:
+
+
+                                                                         Figure 6: Prompt for generating Verilog solution with reasoning
+                          A PPENDIX B                                       during test-time scaling. Notably, hardware engineers can incorporate
+           P ROMPT FOR R EASONING RULE G ENERATION                          RTL rules based on their own domain knowledge in practice, which
+                                                                            may further enhance the model’s reasoning process.
+    Prompt to generate general RTL rules                                                            A PPENDIX C
+                                                                                    C OMPARISON AGAINST S OTA F OUNDATION LLM S
+    You are an expert in Verilog hardware description language, focusing
+    on analyzing code generation challenges and potential pitfalls.         Table 4: Results on RTL coding benchmarks — We report
+    I will provide you with a markdown file containing a Verilog code       pass@1 on VerilogEval-Machine (VerilogEval-M), VerilogEval-
+    generation benchmark, which includes:                                   Human (VerilogEval-H), and pass@5 on RTLLM v1.1. ScaleRTL-
+       • The original prompt/problem statement                              32B and its test-time scaling variant (ScaleRTL† -32B) are compared
+       • Additional context and information                                 against strong proprietary foundation models. We highlight the top
+                                                                            first, second, and third results per benchmark.
+    # Your Task
+    Analyze the Verilog code generation task in depth and provide:                                VerilogEval-M     VerilogEval-H     RTLLM v1.1
+      1) Potential Pitfalls Analysis: Identify the key challenges and
+         tricky aspects of this problem that could lead to incorrect code    Claude3.5-Sonnet          83.4              73.7              44.8
+         generation. This could include:                                     Claude3.7-Sonnet          70.0              73.0              48.2
+                                                                             GPT4.1                    72.9              68.6              44.8
+         • Complex syntax requirements
+                                                                             OpenAI o3                 77.0              80.0              54.5
+         • Subtle logic implementation details
+                                                                             OpenAI o4-mini            73.2              77.3              44.8
+         • Problem interpretation challenges
+                                                                             DeepSeek-R1               79.7              79.3              56.7
+         • Timing-sensitive operations
+         • Signal width considerations                                       ScaleRTL-32B              80.0              76.3              75.4
+         • Tricky Verilog construct usage                                    ScaleRTL† -32B            83.2              80.4              78.5
+      2) Critical Implementation Areas: Point out the specific aspects
+         of the problem that are most prone to errors, with clear
+         explanations of what makes these areas challenging.
+                                                                               To further validate the efficacy of our approach, we compare
+      3) Problem Complexity Assessment: Analyze the inherent                ScaleRTL-32B and its test-time scaling variant ScaleRTL† -32B against
+         complexity of the problem and identify areas where careful         strongest proprietary foundation models, including Claude3.5-Sonnet,
+         attention to detail is required for correct implementation.        Claude3.7-Sonnet, GPT-4.1, OpenAI o3, o4-mini, and DeepSeek-R1.
+      4) General Verilog Coding Rules: Based on the potential
+                                                                            It is important to note that the training data cutoff dates for these
+         challenges identified, formulate concise, general Verilog coding
+         rules that would help prevent common mistakes. These rules         proprietary models are after the public release of both VerilogEval
+         should:                                                            and RTLLM benchmarks. As a result, it is highly likely that their
+         • Be widely applicable to Verilog coding, not just this specific   training corpora contain benchmark-related information, which may
+             example                                                        lead to overestimated performance on these evaluation sets.
+         • Focus on best practices for correctness, not just style
+                                                                               In contrast, we have carefully filtered our training data to ensure no
+         • Be clear and actionable
+         • Address the potential pitfalls you identified
+                                                                            information from VerilogEval or RTLLM benchmarks was included
+         • Focus only on rules that help generate syntactically and         during fine-tuning. Despite this more rigorous setup, our best-
+             functionally correct RTL code                                  performing model, ScaleRTL† -32B, achieves state-of-the-art results
+                                                                            across all three RTL benchmarks. It outperforms all baselines on
+    Format your response as follows:                                        VerilogEval-Human and RTLLM, achieving 80.4% and 78.5%, respec-
+    Potential Pitfalls Analysis                                             tively. Additionally, ScaleRTL† -32B attains 83.2% on VerilogEval-
+    [Your detailed analysis of challenging aspects that could lead to       Machine, closely matching or exceeding the performance of the
+    incorrect code generation]                                              strongest closed-source models. These results highlight the efficacy
+    Critical Implementation Areas                                           of our approach, even without access to potentially leaked benchmark
+    [Your identification of error-prone areas in the implementation]
+    Problem Complexity Assessment                                           data.
+    [Your analysis of the problem’s inherent complexity and attention-
+                                                                                                     A PPENDIX D
+    requiring areas]
+    Verilog Coding Rules                                                             PASS R ATE E VALUATION ON RTL B ENCHMARKS
+    [List up to 3 critical Verilog coding rules here, focusing only on
+    correct RTL generation]                                                 Table 5: Pass rate on VerilogEval-Machine (VerilogEval-M),
+                                                                            VerilogEval-Human (VerilogEval-H), and RTLLM v1.1.
+   Here is the markdown file containing the Verilog code generation
+   benchmark:                                                                                    VerilogEval-M     VerilogEval-H      RTLLM v1.1
+   {md_content}
+                                                                             ScaleRTL-32B             88.1              90.4              79.3
+                                                                             ScaleRTL† -32B           90.2              93.6              82.8
+         Figure 7: Prompt for general RTL rules generation
+                                                                               Unlike pass@k, which averages over multiple completions, pass
+   To enable ScaleRTL to rethink and self-correct earlier reasoning         rate is defined as the percentage of problems for which the model
+steps, we find that incorporating general RTL coding rules into the         succeeds at least once in n trials (n = 10 in this work). It more directly
+corrective prompt serves as effective hints, encouraging the model          captures the effectiveness of our iterative reasoning approach, where
+to generate longer chain-of-thought reasoning traces during test-time       each inference attempt builds on extended reasoning traces.Table 5
+scaling. We develop an automated method to generate these general           shows that ScaleRTL† -32B consistently outperforms ScaleRTL-32B
+rules by prompting Claude3.7-Sonnet with the text shown in Figure 7.        across all benchmarks, demonstrating that longer reasoning at test
+This process can be performed once offline and the rules are reused         time is effective for accurate RTL code generation.
+

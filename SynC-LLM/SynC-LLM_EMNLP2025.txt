@@ -1,0 +1,1021 @@
+           SynC-LLM: Generation of Large-Scale Synthetic Circuit Code
+                     with Hierarchical Language Models
+
+                  Shang Liu♦ , Yao Lu♦ , Wenji Fang, Jing Wang, Zhiyao Xie♣
+                     The Hong Kong University of Science and Technology
+           {sliudx, yludf, wfang838, jwangjw}@connect.ust.hk, eezhiyao@ust.hk
+
+
+
+                          Abstract
+     In recent years, AI-assisted integrated circuit
+     (IC) design methods have shown great potential
+     in boosting IC design efficiency. However, this
+     emerging technique is fundamentally limited
+     by the serious scarcity of publicly accessible
+     large-scale circuit design data, which are
+     mostly private IPs owned by semiconductor
+     companies. In this work, we propose SynC-
+     LLM, the first technique that exploits LLM’s                    Figure 1: SynC-LLM is a novel hierarchical frame-
+     ability to generate new large-scale synthetic                   work that generates large-scale and syntactically valid
+     circuits. Our hierarchical circuit generation                   synthetic IC designs. SynC-LLM first learns both the
+     process includes three stages: 1) A directed                    sequential logic skeleton of realistic designs and then
+     graph diffusion model will learn to generate                    the detailed function flesh of all combinational logic.
+     the skeleton of large circuits with sequential                  The generated synthetic IC designs can significantly en-
+     registers. 2) The expected function of the input                hance the performance of AI models in IC design tasks.
+     cone of each sequential register will be anno-
+     tated. Each cone, named flesh, consists of all                  Fang et al., 2025c,a,b). However, these AI-driven
+     combinational logic that controls the register                  approaches are fundamentally constrained by the
+     value. 3) A level-by-level customized prompt-                   scarcity of circuit data. Such data scarcity is due
+     ing technique will guide LLM to complete                        to the proprietary nature of commercial IC designs
+     the design code of each cone. Experiments
+                                                                     as valuable intellectual properties (IPs) (Liu
+     show that our generated circuits are not only
+     valid and fully functional1 , but also closely                  et al., 2025b,a). As a result, researchers only have
+     resemble realistic large-scale designs and can                  access to small-scale and outdated circuit data,
+     significantly improve AI models’ performance                    significantly hindering the development of new
+     in multiple IC design tasks. The code and data                  AI-driven IC design techniques.
+     are open-sourced in https://github.com/hkust-                      Most recently, LLMs are extensively applied in
+     zhiyao/SynCircuitData.
+                                                                     generating IC design in code format according to
+1    Introduction                                                    given design descriptions (Liu et al., 2023a; Chang
+                                                                     et al., 2024; Liu et al., 2024a; Lu et al., 2024; Liu
+   The advancement of artificial intelligence (AI)                   et al., 2024b; Li et al., 2025). However, as Table 1
+has led to unprecedented computational demand                        shows, existing LLM solutions typically only
+for hardware integrated circuits (ICs). However,                     generate very small-scale IC design components,
+the ever-increasing IC complexity and design costs                   from dozens to a few thousand gates after synthesis.
+are challenging traditional IC design methods. In                    Such a limited size implies the lack of scalability
+recent years, AI-assisted IC design techniques have                  in LLM-assisted IC generation.
+demonstrated great potential (Rapp et al., 2021;
+                                                                        In this work, we propose SynC-LLM, a novel
+Chen et al., 2024; Xie et al., 2018; Liu et al., 2023b;
+                                                                     multi-stage framework that generates large-scale
+    ♦
+        Equal contribution.                                          synthetic circuits. Our generated synthetic circuits
+    ♣
+        Corresponding author.                                        reach millions of gates after synthesis, significantly
+    1
+     “Fully functional” means each generated circuit is a com-
+plete, self-contained design that is syntactically valid, simulat-   exceeding the scale of existing works. Moreover,
+able, and will produce deterministic outputs for given inputs.       our generated synthetic circuits closely mimic real-
+                                                                17350
+        Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing, pages 17350–17365
+                             November 4-9, 2025 ©2025 Association for Computational Linguistics
+istic designs with complex functions. This ensures                                              Design Scale    Design Scale
+                                                                        Source
+                                                                                                 (#K Gates)      (#K Lines)
+that ML models trained with our synthetic circuits                    Benchmark
+                                                                                               {Median, Max}   {Median, Max}
+apply to IC design tasks, such as the analysis and            RTLLM2.0 (Lu et al., 2024)          {1e-1, 2}     {5e-2, 5e-1}
+                                                             VerilogEval (Liu et al., 2023a)    {1e-2, 2e-1}    {1e-2, 6e-2}
+optimization of IC timing, power, and area.                          SynC-LLM                     { 22, 56}        {7, 17}
+   SynC-LLM mainly comprises three stages to
+obtain large-scale hardware design code. In stage        Table 1: Comparison of LLM-generated circuits.
+1, a graph diffusion model will learn to generate        RTLLM and VerilogEval are de facto standard bench-
+the skeletal structure of the design. This skeleton      marks in LLM for IC generation. SynC-LLM can pro-
+                                                         duce much larger-scale hardware designs.
+is formulated as a directed graph that reflects the
+dependency and transition relationships among
+various digital states, capturing the overall logical             generation prompts to enable precise control
+functionality of the circuit. In stage 2, we utilize a            over path lengths and logic depths of gener-
+retriever to annotate each register of the generated              ated synthetic circuits.
+new skeleton with a functional description.
+The retriever is trained on real design data by                • Experiments demonstrate that SynC-LLM-
+aligning the skeleton’s graph embeddings with the                generated circuits exhibit similar circuit statis-
+corresponding code function embeddings. This                     tics to real-world designs. Moreover, these
+alignment effectively bridges the high-level struc-              synthetic circuits significantly improve the ac-
+tural information and the low-level code details,                curacy of AI-assisted IC design models.
+providing crucial contextual cues for subsequent
+code generation. In stage 3, each node’s functional      2      Related work
+description is employed as a prompt input to an
+LLM to generate the corresponding cone code. In          2.1      Data Scarcity in AI for IC Design
+addition, we further introduce a logic-level control     In recent years, AI-assisted IC design techniques
+strategy within the prompt to regulate the timing        have demonstrated remarkable potential in expe-
+length of the generated circuit. A syntax checker        diting the chip design process. Notable applica-
+is applied to ensure that every code segment             tions include automated chip design generation (Pei
+adheres to syntactic rules and embodies practical        et al., 2024; Liu et al., 2023b), fast chip quality pre-
+logical functionality. Finally, we integrate the         diction (Fang et al., 2023; Xu et al., 2022; Zou et al.,
+cone codes according to the skeleton to obtain the       2024), automated chip design planning (Bai et al.,
+complete design. This method not only facilitates        2023), etc. A long-lasting bottleneck is the scarcity
+data augmentation for downstream AI-assisted IC          of open-source, large-scale circuit data, which sig-
+design tasks but also provides researchers with a        nificantly hampers data-driven AI advancements in
+robust benchmark dataset.                                IC design. Although several open-source circuits
+   In summary, we propose a novel LLM-based              datasets (Chai et al., 2023; Jiang et al., 2023; Pan
+approach for generating large-scale IC code. Con-        et al., 2023; Chowdhury et al., 2023; Liu et al.,
+tributions of SynC-LLM are summarized below:             2023a) have been proposed for various IC design
+                                                         tasks, these datasets mostly only help generate la-
+   • SynC-LLM proposes a new hierarchical gen-
+                                                         bels of existing open-source circuit designs, instead
+     eration strategy, considering both graph and
+                                                         of generating brand-new circuit designs. The total
+     natural language modalities. It first generates
+                                                         number of valid circuits in the public domain is
+     the overall sequential logic skeleton in graph
+                                                         still very limited.
+     modality and then generates combinational
+     code. This strategy is highly scalable to sup-      2.2      LLM for Circuits HDL Generation
+     port generating complex synthetic circuits.
+                                                         Recently the automatic generation of IC design in
+   • SynC-LLM proposes to generate the combi-            hardware description language (HDL) based on
+     national code based on the skeleton structure.      LLMs has been widely explored (Lu et al., 2024;
+     By providing structural function descriptions       Liu et al., 2023b, 2024b; Pei et al., 2024; Liu et al.,
+     as context, LLMs generate more realistic com-       2023a; Ho et al., 2024; Thakur et al., 2023). How-
+     binational logic in synthetic circuits.             ever, these methods are predominantly focused
+                                                         on relatively small-scale design tasks. In recent
+   • SynC-LLM proposes layer-by-layer circuit            years, several works (Chhabria et al., 2021; Kim
+                                                    17351
+et al., 2021) have explored the generation of circuit      tial cells (i.e., registers) and input/output (IO) ports.
+datasets at the layout stage. However, these genera-       Such a collection S maintains and represents the
+tive methods are limited to circuit layouts, without       circuit’s state at each clock cycle. We refer to the
+enforcing valid circuit designs. For tasks such as         graph G of all registers and IO ports2 as the circuit
+those involving logic synthesis (Xu et al., 2022;          design’s skeleton3 .
+Fang et al., 2023, 2024), existing circuit generation         For any register si in this skeleton, its value de-
+methods are not directly applicable.                       pends on the values of all its parent registers. There
+                                                           is only combinational logic between its parent reg-
+3   Problem Definition                                     isters (as inputs) and si itself (as output). This
+                                                           multi-input and single-output subcircuit filled with
+Given a dataset of realistic circuit designs for train-
+                                                           combinational logic is referred to as the input cone
+ing, SynC-LLM will learn to generate new syn-
+                                                           of register si . The union of all input cones of all
+thetic designs of comparable scale. The generated
+                                                           registers constitutes the design’s flesh.
+synthetic designs will be in hardware description
+language (HDL) code format. Synthetic circuits                Based on the formulation with skeleton and flesh,
+should satisfy the following criteria:                     we propose a hierarchical generation scheme that
+                                                           incorporates both graph and text modalities to gen-
+   1) Syntax Validity: The generated HDL code
+                                                           erate large-scale circuit code. As Figure 2 shows,
+should first pass hardware syntax checking and can
+                                                           the generation process comprises three stages:
+be successfully synthesizable into netlist by stan-
+dard logic synthesis tools (e.g., Design Compiler).           Stage 1: Skeleton Generation. In the first stage
+                                                           (❶ in Figure. 2), a graph diffusion model is em-
+   2) Structural Similarity: After being synthesized
+                                                           ployed to first generate the IC design skeleton. This
+into netlists, synthetic circuits should exhibit simi-
+                                                           skeleton reflects the dependencies between all reg-
+lar characteristics compared to realistic circuits.
+                                                           isters and IO ports, thereby capturing the overall
+   3) Data Augmentation Effectiveness: The gener-
+                                                           logical state of the whole circuit.
+ated synthetic circuits should serve as augmented
+training data to enhance the performance of AI                Stage 2: Function Annotation. In the second
+models in IC design tasks. In this way, they ad-           stage (❷ in Figure. 2), a multimodal encoder model
+dress the long-lasting data scarcity problem in AI-        will help annotate the expected functionality of the
+assisted IC design.                                        input cone of each register in the skeleton. These
+                                                           annotations will serve as contextual guidance for
+   We respectfully clarify that specific generated
+                                                           the subsequent generation of circuit flesh. The
+circuit functions are not strictly required in our
+                                                           encoder is trained with self-supervised learning,
+target application. The target of this work is to pro-
+                                                           aligning the register’s skeleton-graph embeddings
+duce many large-scale synthetic circuits, providing
+                                                           and the function description in text embeddings.
+training data for downstream AI-based IC tasks
+(such as power, performance, and area prediction              Stage 3: Cone Code Generation: In the third
+in our experiment, which is fundamentally impor-           stage (❸ in Figure. 2), LLMs will generate the com-
+tant in the digital chip design process). Therefore,       binational logic in each cone in a layer-by-layer
+this data generation application is different from         manner. Each register cone’s annotated function
+LLM-assisted coding (e.g., Copilot), which strictly        description is used as context in our proposed LLM
+enforces correct functionalities. This application         prompt. After the prompted LLM generates the
+focuses more on the structural characteristics (such       cone code, a syntax checker is applied to ensure
+as timing features), similarity to realistic designs,      that every cone code is syntactically correct and
+diversity, and benefit to trained AI models.               embodies practical logical functionality.
+                                                              Finally, the complete large-scale circuit is gener-
+4   SynC-LLM Overview                                      ated by integrating each register’s cone codes into
+                                                           the skeleton’s graph structure. This resulting de-
+Circuit Modeling: Skeleton and Flesh. Digi-                sign can both enhance downstream IC design tasks
+tal IC is typically designed with HDL code such            through data augmentation and serve as a bench-
+as Verilog. After parsing the structural informa-          mark, providing sufficient test data.
+tion in HDL, each design can be modeled as a
+                                                              2
+graph of word-level elements in both sequential                  For simplicity, we may only mention registers without
+                                                           explicitly discussing the very small portion of IO ports in S.
+and combinational logic (Fang et al., 2023). Let               3
+                                                                 Two registers are connected in the skeleton graph G if
+S = {s1 , s2 , . . . , sn } represent the set of sequen-   there is any combinational-logic path connecting them.
+
+                                                      17352
+                                                                                                         Sequential Skeleton Generation                                            Joint Function Annotation
+                                               Sequential                                                                                                                                                       Indexed dataset
+                                                skeleton                                                 R       R                                          R       R
+                                                                                    …                                        Circuit                                                                                                                                 R       R
+                Limited                                                                              R                                                  R
+                                                                                                                                                                                     Graph                R1 embedding R1 code func
+                                                                                                             R       R      Denoising                           R       R
+                design                                                                                                                                                              Encoder               R2 embedding R2 code func                              R
+                              Parser                                   ...
+                                                                                                     R                                                 R                                                  R3 embedding R3 code func                                      R        R
+                                               Cone code
+                                                                       assign
+                                                                       assign
+                                                                                W1 = R1[5:0] & R2;
+                                                                                W2 = W1 + R1[5:0]            …                                                  …
+                                                                       ...
+                                                                       always   @(posedge clk)                                                                                                                 …            …                                   R
+                     Limited Model               flesh                 begin
+                                                                       end
+                                                                           R3   <= W2;                                                                                                      Query                                                                        …
+EDA Tasks             Performance                                      ...
+
+
+
+
+      Area                                                                                                           Joint Code Generation
+    Prediction                                                              Augmented
+     Timing                                                              Model Performance                                                  [Prompt]            Part 1                                                                   Part2
+    Prediction                                                                                                                              Here's a description of the design:                          Please use what I just described to write similar verilog code with
+                                                                                                                                                                                                         the following requirements:
+      Power                                                                                                                                 ###design description###                                     Given 7 inputs named sa31_sr, sa01_sr, ld_r, text_in_r, sa11_sr,
+                                                                                                                                            The assignment logic of _ex_op2_T and _ex_op1_T determines
+    Prediction          ML Models                                                                                                           the second and first operand of the ALU operation…
+                                                                                                                                                                                                         sa21_sr, u0_w_1_ with bit widths of 8, 8, 1, 128, 8, 8, 32
+                                                                                                                                                                                                         respectively, Also, a one-bit clk signal is also an input port and one
+                                                                                                                                            ALU input selection: …                                       output named sa32_sr with bit width of 8.
+                                                                                                                                            ALU operations: …                                            The Verilog code should contain …(specific requirements)
+    New Large-scale                                                                  ②
+                                                                                                                                            Branching decision: …                                        Put the complete pure code between ##code## and ##end
+                                       ①                   R                                                               …                Summary: This code implements the logic of …                 code##. Please consider the design description provided in the
+    RTL Design                             R                       R            R                                                           ###end design description###                                 prompt beginning to guide your code writing.
+    [New Design Code]
+                                               C       C
+    module top_module(
+        input xxx,                                                       C                               [Response]                                     wire [7:0] layer1_wire1;
+                                                                                                                                                                                                                             ……
+        …                                              C                                                 ##code##
+                                                                                                                                                        wire [7:0] layer2_wire1;
+                                                                                                                                                                                                                             // Layer 10: Assigning to output register
+        input clk,
+        output xxx
+                                                                                         Cone code                                                      ……                                                                     always @(posedge clk) begin
+    );
+    //Instantiate the cone module                  R           C          R                              module sa32_sr(
+                                                                                                             input [7:0] sa31_sr,
+                                                                                                                                                        wire [7:0] layer10_wire1;
+                                                                                                                                                        // Layer 1: Control signal to determine if pipeline
+                                                                                                                                                                                                                                   sa32_sr <= layer9_wire1;
+                                                                                                                                                                                                                             // Register update on clock edge
+    sa32_sr u_sa32_sr (                    ③                                                                                                            should flush                                                           end
+    .sa31_sr(sa31_sr),                                                                                           …
+    ……                                                             C                                             input clk,
+                                                                                                                                                        assign layer1_wire1 = sa31_sr & sa01_sr;
+                                                                                                                                                        // Example control signal logic
+                                                                                                                                                                                                                             endmodule
+    .sa32_sr(sa32_sr)
+                                                                                                                 output reg [7:0] sa32_sr
+    );
+    //Instantiate other cone modules            …                                                        );
+                                                                                                                                                        // Layer 2: Select data source based on ld_r
+                                                                                                                                                            assign layer2_wire1 = ld_r ? sa11_sr : sa21_sr;
+                                                                                                                                                                                                                             ##end code##
+    ……
+    endmodule                                                      R                                                                                    // Conditional selection
+
+
+
+
+Figure 2: We propose a hierarchical generation scheme for large-scale circuit design with three stages. The
+integrated new designs can significantly enhance AI models in IC design. Stage 1 uses a graph diffusion model to
+create a skeleton capturing sequential dependency relations. Stage 2 annotates each register within the skeleton with
+functional descriptions via a retriever. Stage 3 leverages these annotations to guide LLM-based cone code generation.
+
+
+5        SynC-LLM Methodology Details                                                                                                          5.2              Stage 2: Function Annotation
+5.1 Stage 1: Sequential Skeleton Generation                                                                                                    After obtaining the circuit skeleton G in stage 1,
+Each circuit in HDL code can be parsed and con-                                                                                                stage 2 will annotate each register si in the skeleton
+verted to a skeleton graph G, an attributed directed                                                                                           with a function description. This annotation will
+graph. In stage 1, SynC-LLM will learn the un-                                                                                                 describe the expected functionality of the cone flesh
+derlying distribution of G from real circuits, such                                                                                            of register si . The annotation will later guide LLM
+that it can generate new synthetic skeletons that                                                                                              to generate the HDL cone code in stage 3.
+preserve similar structural characteristics.                                                                                                      Motivation: In digital circuits, the function of
+   Graph Diffusion Model: We adopt a diffusion-                                                                                                each code flesh is related to the position of its corre-
+based generative model to learn the generation of                                                                                              sponding register si in the graph skeleton G. For ex-
+the circuit skeleton. In the forward process, the                                                                                              ample, a high-bit-width register si near the graph’s
+original graph is gradually noised. Let A0 denote                                                                                              primary inputs is typically responsible for data read-
+the adjacency matrix of the graph, and define a                                                                                                ing, decoding, or handling of various instructions.
+sequence {At }Tt=0 with the following transition:                                                                                              In contrast, a high bit-width register si with a larger
+                          √                                                                                                                    distance from inputs may perform extensive com-
+ q(At |At−1 ) = N (At ; αt At−1 , (1 − αt )I) ,
+                                                                                                                                               putational operations. These observations motivate
+where αt ∈ [0, 1] is a noise scheduling parameter                                                                                              our proposed function annotation on skeleton.
+and I is the identity matrix. In the reverse process,                                                                                             Recognizing that our collected real design
+our diffusion model pθ will recover A0 from AT                                                                                                 datasets cover a wide range of functionalities,
+by iteratively applying:                                                                                                                       we introduce the retrieval-augmented approach
+pθ (At−1 |At ) = N (At−1 ; µθ (At , t), Σθ (At , t)) ,                                                                                         (retriever) of reusing existing design data to anno-
+where µθ (·) and Σθ (·) are learned functions pre-                                                                                             tate each register’s expected function. The database
+dicting the mean and variance, respectively.                                                                                                   is constructed and applied in the following ways:
+   Edge Direction: We integrate the directional                                                                                                   Indexing: In the indexing stage, each circuit
+prediction directly into the reverse process. For                                                                                              is decomposed into paired components: a regis-
+any candidate edge between nodes u and v, we                                                                                                   ter and its associated cone code. Each register is
+derive their latent node embeddings hu and hv . We                                                                                             transformed into a graph embedding using our pre-
+then concatenate these embeddings and pass them                                                                                                trained graph encoder. Along with their correspond-
+through an MLP to generate the probability of an                                                                                               ing natural language function descriptions, these
+edge existence from u to v:                                                                                                                    embeddings are stored in a dedicated database that
+          p(u, v) = σ (MLPE ([hu ; hv ]))                                                                                                      serves as a reference for future retrieval tasks.
+                                                                                                                                  17353
+                                                            the skeletons of all designs into a single graph Gg ,
+                                                            where different designs remain disconnected. The
+                                                            data processing flows in the graph and text modali-
+                                                            ties are explained as follows:
+
+                                                               1. Graph Modality: Let Gg = (V, E) denote the
+                                                                  skeleton graph, where each node v ∈ V is as-
+                                                                  sociated with an embedding hgv derived from
+                                                                  a graph encoder which needs to be trained.
+
+                                                               2. Text Modality: For each cone code corre-
+                                                                  sponding with register v, we use commercial
+                                                                  LLM to perform function analysis, thereby
+                                                                  obtaining its natural language description (de-
+                                                                  tailed prompt examples can be found in Ap-
+                                                                  pendix F). These descriptions are then trans-
+                                                                  formed into a text embedding htv using a
+                                                                  pre-trained text encoder (e.g., BERT, text-
+                                                                  embedding-ada-002).
+
+                                                               To align the two modalities, we choose positive
+                                                            and negative samples for each register and utilize a
+                                                            triplet contrastive loss to train the graph encoder:
+                                                               Positive and Negative Sample Selection: For
+                                                            each node v, we consider its text embedding htv and
+                                                            compute the distances ∥htv −htj ∥ for all j ∈ V \{v}.
+                                                            The kp nodes with the smallest distances form the
+                                                            positive set for v: We define the positive set for
+                                                            each node v as:
+Figure 3: We propose a self-supervised multimodal
+graph encoder that links circuit skeleton features (graph
+                                                                  P (v) = {j ∈ V \ {v} | j ∈ NNkp (v)}.
+modality) with functional semantics (text modality).
+                                                            where NNkp (v) denotes the set of the kp nearest
+   Retrieval & Inference: During the inference              neighbors of v in the text embedding space. For
+phase, register embeddings of the skeleton are ob-          the negative samples, we randomly select kn nodes
+tained, which are then used to query the established        from the remaining nodes:
+database. A top-k search is performed based on the
+distance metric to retrieve the nearest entries which                  N (v) ⊂ (V \ ({v} ∪ P (v))) .
+are expected functionally similar and can provide
+augmentative references to inform the new cone                 Contrastive Alignment Loss: Our objective is to
+code generation.                                            learn graph embeddings such that hgv is close to hgj
+   Self-Supervised Multimodal Encoder: Since                for all j ∈ P (v) and far from hgi for all i ∈ N (v).
+we query the function based on graph embeddings,            This is enforced via a triplet loss. For each triplet
+we need to bridge the gap between the circuit’s             (v, j, i) with j ∈ P (v) and i ∈ N (v), we define:
+skeleton features and its cone function details. In
+                                                               Lv,j,i = max{0, d(hgv , hgj ) − d(hgv , hgi ) + δ},
+other words, it is essential to learn a graph embed-
+ding space where registers with similar functions           where d(·, ·) denotes a chosen distance metric and
+are mapped to nearby points.                                δ is a margin hyperparameter. The overall loss is
+   We propose a self-supervised, multimodal con-            computed by averaging over all nodes and their
+trastive learning technique to train the graph en-          corresponding positive-negative pairs:
+coder as Figure 3 shows. The skeleton and cor-
+responding cone codes are extracted firstly from                    1 X        1        X             X
+                                                             L=                                                Lv,j,i .
+circuit designs using a parser and we consolidate                  |V | |P (v)| |N (v)|
+                                                                        v∈V                  j∈P (v) i∈N (v)
+
+                                                       17354
+Figure 4: Basic prompt with the retrieved functional specifications and I/O constraints instructs the LLM in
+generating the corresponding code. However, the LLM is not directly aware of the logic level and tends to produce
+code that is overly flat and lacks sufficient logical depth. To address this, we proposed a layer-by-layer generation
+prompt technique which results in new code that more accurately reflects the timing characteristics of real circuits.
+
+
+5.3 Stage 3: Cone Code Generation                                 identification throughout the circuit.
+After each register in our circuit skeleton is anno-
+tated with a functional description in stage 2, these
+annotations will serve as a reference for LLM in                • Layer Consistency Enforcement: To ensure
+stage 3 to generate the corresponding cone code,                  that the layer number in the variable names
+thus completing the circuit’s flesh.                              reflects their actual position within the circuit,
+   Basic Prompt: For every register si in the skele-              the prompt explicitly instructs the LLM that
+ton with known function annotation, parents, and                  for any variable designated in the ith layer, at
+associated bitwidth attributes, we can instruct the               least one assignment variable must belong to
+LLM to generate the cone code for si by providing                 the (i−1)th layer. Moreover, all additional as-
+I/O ports declaration and function reference.                     signment variables must originate from layers
+   Logic Level Control Technique: In real cir-                    ranging between 0 and i − 1.
+cuits, many cone codes exhibit a deep logic struc-
+ture, characterized by potentially long paths from
+input to output, resulting in a slender structure. The
+length of these paths can partially reflect signal          Example Demonstration: As illustrated in Fig-
+propagation delays, which is crucial in IC design.          ure 4, in the absence of logic level control guidance
+   In our approach, we propose a new customized             within the prompt, the generated code only exhibits
+prompt technique to query the LLM. Starting with            three logic layers from input to output. However,
+the input and proceeding through a specified logic          with the enhanced instructions, the response cor-
+depth, the LLM is instructed to construct the circuit       rectly produces a ten-layer logic circuit, also en-
+layer by layer. This generation method ensures that         suring that the naming of each variable precisely
+the resulting code exhibits a deeper hierarchical           matches its actual logic depth.
+organization, thereby achieving the required logic
+level for realistic timing behavior. Specifically,
+this new prompt technique mainly consists of the            6    Experiments
+following two aspects:
+
+   • Variable Naming Convention: Each variable              In our experiment, we will first evaluate the simi-
+     is named based on its layer index following            larity between synthetic circuits with real designs
+     the convention layerN_K, where N denotes               in multiple circuit statistics4 Then we will evaluate
+     the variable’s layer and K indicates its order         if our newly generated synthetic circuits, as train-
+     within that layer. This systematic approach            ing data augmentation, can help boost ML model
+     guarantees clarity and consistency in signal           performance in IC design tasks.
+                                                       17355
+                               Degree   Cluster    Orbit   Spectral
+                               MMD ↓    MMD↓      MMD ↓    MMD ↓
+ GraphRNN (You et al., 2018)    0.015   0.343      0.136    2.46
+  DVAE (Zhang et al., 2019)     0.043   0.458      0.371    0.036
+        SynC-LLM                0.005   0.022      0.007    0.003
+
+
+Table 2: The directed register dependency graph similar-
+ity between the generated designs with the real datasets.
+
+
+6.1 Experiment Setup
+Circuit Design Compilation: Initially, we assem-
+bled a dataset consisting of 22 circuit designs ex-
+tracted from open-source RTL repositories(Corno                       Figure 5: Statistics of the cone code’s logic level depth.
+et al., 2000; Albrecht, 2005; Amid et al., 2020).                     SynC-LLM with logic level control (LLC) generates
+This collection spans a diverse range of digital cir-                 cone code with much higher similarity to real circuits.
+cuit modules, reflecting some of the highest-quality
+designs available in the open-source community.                       6.2   Synthetic Design Statistics
+Dataset details are in Appendix A. It should be
+                                                                      Register Dependency Graph (i.e., skeleton):
+noted that although the dataset comprises only 22
+                                                                      The skeleton is parsed from the HDL code which
+designs, the training process of SynC-LLM utilizes
+                                                                      represents the sequential logic characteristics
+several thousand cones extracted from these data.
+                                                                      of the design code. We compare the similarity
+Moreover, the data employed for the timing task
+                                                                      in the register dependency graph between the
+in the downstream application (using the register
+                                                                      generated circuits and the real designs using four
+path) consists of tens of thousands of data points.
+                                                                      metrics (Chen et al., 2023; Vignac et al., 2022): 1.
+   To obtain netlist-level labels serving downstream
+                                                                      Degree: node connectivity distribution. 2. Cluster:
+AI-based PPA prediction tasks, including design
+                                                                      local connectivity via clustering coefficients. 3.
+area, register slack, and total negative slack (TNS)
+                                                                      Orbit: recurring local subgraph patterns through
+prediction, we employed Synopsys Design Com-
+                                                                      orbit counts. 4. Spectral: global structure
+piler™ 2021 with the NanGate 45nm technology
+                                                                      extracted from the graph Laplacian eigenvalue.
+library to get design labels. We randomly desig-
+                                                                      The statistics distribution similarity is calculated
+nated 7 of the designs as the test set, leaving the
+                                                                      by the Maximum Mean Discrepancy (MMD).
+remaining 15 in the skeleton generative model train-
+ing, retriever database building, and AI-based IC
+                                                                       MMD2 (P, Q) = Ex,x′ ∼P [k(x, x′ )] + Ey,y′ ∼Q [k(y, y ′ )]
+tasks model training.
+   Circuit Generative Methods. In contrast to our                                        − 2Ex∼P,y∼Q [k(x, y)]
+hierarchical multi-modal generation scheme, we
+implement generation baselines on circuit graph                          where P and Q denote two graph statistics dis-
+representation, motivated by an artificial netlist                    tribution, and k(·, ·) denotes a kernel function.
+generator (Kim et al., 2021). We selected two                            Table 2 lists MMD scores of GraphRNN (You
+representative graph generative models, including                     et al., 2018), DVAE (Zhang et al., 2019), and SynC-
+GraphRNN (You et al., 2018) and DVAE (Zhang                           LLM. Lower scores are preferable as they indicate
+et al., 2019), to generate new synthetic circuits as                  a closer match to the real design’s skeleton. Results
+baselines. The detailed methodology and baselines                     show that the hierarchical generation in SynC-LLM
+settings are shown in Appendix D. For each gener-                     is more effective in capturing the circuit’s global
+ation method, we obtain 25 synthetic new designs                      sequential skeleton structure.
+for analysis and data augmentation. In addition,                         Cone Logic Depth: We examined the logic
+we provide a method complexity comparison in the                      depth of all the cones in the generated HDL code.
+Appendix C.                                                           Results are shown in Figure 5. SynC-LLM is
+   4
+     Generating large-scale synthetic hardware designs is a           able to generate code that more closely captures
+novel research direction, and consequently, a standardized or         the cone logic depth distribution of real designs
+mature evaluation framework for rigorously quantifying de-            compared to GraphRNN (You et al., 2018) and
+sign similarity does not yet exist. We have made a concerted
+effort in our work to propose a set of reasonable and represen-       DVAE (Zhang et al., 2019). Furthermore, we re-
+tative metrics from a hardware engineering perspective.               moved the logic level control (LLC) component
+                                                                17356
+                                          Register Slack                      TNS                        Area
+                Model
+                                   R→1      MAPE ↓     RRSE ↓      R→1       MAPE ↓   RRSE ↓   R→1     MAPE ↓   RRSE ↓
+  No synthetic data augmentation   0.70       27%          0.83       0.81    50%      0.97     0.89    30%      0.62
+   GraphRNN (You et al., 2018)     0.70       27%          0.83       0.80    54%      0.97     0.84    44%      0.75
+       DVAE (Zhang et al., 2019)   0.69       29%          0.94       0.78    50%      0.97     0.84    61%      0.86
+       SynC-LLM w/o retriever      0.76       24%          0.76       0.85    47%      0.83     0.85    33%      0.70
+        SynC-LLM w/ retriever      0.79      17%           0.73       0.95    42%      0.58     0.93    25%      0.43
+
+Table 3: AI model’s accuracy in predicting the post-synthesis register slack, TNS, and area before synthesis. The
+basic training dataset consists of 15 real designs. The augmented dataset combines the basic dataset and 25 synthetic
+designs generated from SynC-LLM w/ retriever, SynC-LLM w/o retriever, GraphRNN (You et al., 2018), and
+DVAE (Zhang et al., 2019).
+
+
+from the prompt used by SynC-LLM. Results show
+that SynC-LLM w/o LLC exhibits a noticeably
+shallower code structure compared to SynC-LLM
+and has a greater discrepancy from real designs.
+This observation indicates the effectiveness of our
+prompt technique.
+   Netlist Timing: We evaluate the circuit netlist
+statistics by calculating the ratio of Total Nega-
+tive Slack (TNS) to the Number of Violated Paths
+(NVP). Results are shown in Figure 6. These met-
+rics not only quantify the overall severity of timing
+violations but also reflect the distribution of delays            Figure 6: Netlist statistics. The synthetic designs gen-
+across the circuit.                                               erated by SynC-LLM w/ retriever exhibit more similar
+   Figure 6 shows that graphs generated by                        TNS/NVP distribution to those of the real designs com-
+                                                                  pared to baselines. It should be noted that the TNS/NVP
+GraphRNN (You et al., 2018) and DVAE (Zhang
+                                                                  value of GraphRNN is very small, so it cannot be clearly
+et al., 2019) exhibit very small TNS/NVP values,                  displayed in this Figure.
+failing to capture the inherent delay characteristics
+of circuits. In contrast, our SynC-LLM w/ retriever
+demonstrates a more similar distribution to real                  we adopt three key metrics: the Pearson correlation
+designs. This suggests that SynC-LLM is more                      coefficient (R), Mean Absolute Percentage Error
+effective in modeling the timing behaviors present                (MAPE), and Root Relative Squared Error (RRSE).
+in real designs. In addition, after removing the                     Table 3 shows the model accuracy comparisons.
+retriever5 , the SynC-LLM w/o retriever shows a                   Models augmented with synthetic data from SynC-
+significant TNS/NVP value reduction. It proves the                LLM consistently surpass those trained solely
+contribution of the function retrieval component                  on real designs, achieving superior performance
+for more realistic design generation.                             across all evaluation metrics. Additionally, we re-
+                                                                  moved the function annotation step (remove the
+6.3 Synthetic Designs as Training Data                            retriever) from SynC-LLM in generating new de-
+In this section, we evaluate the effectiveness of                 signs. The SynC-LLM w/o retriever results indi-
+generated synthetic circuits as training data aug-                cate that the new designs even lead to a decrease in
+mentation in AI-assisted IC solutions. These AI                   model performance compared with the basic train-
+application details can be found in Appendix G.                   ing dataset. This may be due to the significant dis-
+This experiment is motivated primarily by the AI-                 crepancies between these designs from SynC-LLM
+assisted prediction of timing and area proposed in                w/o and real design characteristics, as evidenced
+MasterRTL (Fang et al., 2023) and the fine-grained                by our analysis in Section 6.2.
+timing slack prediction by RTL-Timer (Fang et al.,
+2024). To rigorously assess model performance,                    7     Conclusion
+   5
+    We directly prompt LLM to generate cone code without          SynC-LLM is the first work to leverage large lan-
+function annotation retrieval                                     guage models (LLMs) for large-scale hardware syn-
+                                                              17357
+thetic code generation, effectively addressing the         Zhuomin Chai, Yuxiang Zhao, Wei Liu, Yibo Lin, Run-
+scarcity of publicly available circuit design data.          sheng Wang, and Ru Huang. 2023. Circuitnet: An
+                                                             open-source dataset for machine learning in vlsi cad
+Our innovative three-stage process—comprising
+                                                             applications with improved domain-specific evalua-
+circuit skeleton synthesis, register function an-            tion metric and learning strategies. IEEE Transac-
+notation, and level-by-level HDL code comple-                tions on Computer-Aided Design of Integrated Cir-
+tion—not only produces valid large designs but               cuits and Systems.
+also significantly enhances AI performance in vari-        Chen-Chia Chang, Yikang Shen, Shaoze Fan, Jing
+ous IC design tasks, marking a pivotal step forward          Li, Shun Zhang, Ningyuan Cao, Yiran Chen, and
+in AI-assisted IC design techniques.                         Xin Zhang. 2024. Lamagic: Language-model-based
+                                                             topology generation for analog integrated circuits.
+8   Acknowledgment                                           arXiv preprint arXiv:2407.18269.
+                                                           Lei Chen, Yiqi Chen, Zhufei Chu, Wenji Fang, Tsung-
+This work is supported by the Hong Kong Research             Yi Ho, Ru Huang, Yu Huang, Sadaf Khan, Min Li,
+Grants Council (RGC) CRF Grant C6003-24Y,                    Xingquan Li, et al. 2024. Large circuit models: op-
+GRF Grant 16200724, and ACCESS – AI Chip                     portunities and challenges. Science China Informa-
+Center for Emerging Smart Systems, sponsored by              tion Sciences (SCIS).
+InnoHK, Hong Kong SAR.                                     Xiaohui Chen, Jiaxing He, Xu Han, and Li-Ping Liu.
+                                                             2023. Efficient and degree-guided graph genera-
+9   Limitations                                              tion via discrete diffusion modeling. arXiv preprint
+                                                             arXiv:2305.04111.
+We respectfully clarify that generating large-scale
+synthetic hardware designs is a novel research di-         Vidya A Chhabria, Kishor Kunal, Masoud Zabihi, and
+                                                             Sachin S Sapatnekar. 2021. Began: Power grid
+rection, and consequently, a standardized or mature          benchmark generation using a process-portable gan-
+evaluation framework for rigorously quantifying              based methodology. In 2021 IEEE/ACM Interna-
+design similarity does not yet exist. Measuring the          tional Conference On Computer Aided Design (IC-
+similarity between complex digital circuits—often            CAD), pages 1–8. IEEE.
+containing over 20,000 nodes or 10,000 lines of            Animesh B Chowdhury, Shailja Thakur, Hammond
+code—is an inherently challenging task. Our anal-            Pearce, Ramesh Karri, and Siddharth Garg. 2023.
+yses and augmentation training results indicate that         Towards the imagenets of ml4eda. In IEEE/ACM
+                                                             International Conference on Computer Aided Design
+our synthetic circuits bear significant resemblance          (ICCAD). IEEE.
+to real designs. However, a comprehensive, sys-
+tematic metric for evaluating circuit similarity and       Fulvio Corno, Matteo Sonza Reorda, and Giovanni
+quality has yet to be established. Developing a rig-         Squillero. 2000. Rt-level itc’99 benchmarks and first
+                                                             atpg results. Design & Test of computers (ITC).
+orous framework to quantify would not only further
+validate our approach but also guide future efforts        Wenji Fang, Wenkai Li, Shang Liu, Yao Lu, Hongce
+in synthetic circuit generation.                            Zhang, and Zhiyao Xie. 2025a. Nettag: A mul-
+                                                            timodal rtl-and-layout-aligned netlist foundation
+                                                            model via text-attributed graph. arXiv preprint
+                                                            arXiv:2504.09260.
+References
+                                                           Wenji Fang, Shang Liu, Hongce Zhang, and Zhiyao
+Christoph Albrecht. 2005. Iwls 2005 benchmarks. In          Xie. 2024. Annotating slack directly on your verilog:
+  International Workshop for Logic Synthesis (IWLS):        Fine-grained rtl timing evaluation for early optimiza-
+  http://www. iwls. org.                                    tion. In Proceedings of 2024 ACM/IEEE Design
+                                                            Automation Conference (DAC), pages 1–6. ACM.
+Alon Amid, David Biancolin, Abraham Gonzalez,
+  Daniel Grubb, Sagar Karandikar, Harrison Liew, Al-       Wenji Fang, Yao Lu, Shang Liu, Qijun Zhang, Ceyu Xu,
+  bert Magyar, Howard Mao, Albert Ou, Nathan Pem-            Lisa Wu Wills, Hongce Zhang, and Zhiyao Xie. 2023.
+  berton, et al. 2020. Chipyard: Integrated design, sim-     Masterrtl: A pre-synthesis ppa estimation framework
+  ulation, and implementation framework for custom           for any rtl design. In Proceedings of 2023 IEEE/ACM
+  socs. IEEE Micro, 40(4).                                   International Conference on Computer-Aided Design
+                                                            (ICCAD), pages 1–9. IEEE.
+Chen Bai, Jiayi Huang, Xuechao Wei, Yuzhe Ma,
+  Sicheng Li, Hongzhong Zheng, Bei Yu, and Yuan            Wenji Fang, Jing Wang, Yao Lu, Shang Liu, Yuchao
+  Xie. 2023. Archexplorer: Microarchitecture explo-         Wu, Yuzhe Ma, and Zhiyao Xie. 2025b. A survey
+  ration via bottleneck analysis. In Proceedings of the     of circuit foundation model: Foundation ai mod-
+  56th Annual IEEE/ACM International Symposium on           els for vlsi circuit design and eda. arXiv preprint
+  Microarchitecture, pages 268–282.                         arXiv:2504.03711.
+                                                      17358
+Wenji Fang, Jing Wang, Yao Lu, Shang Liu, and                 Yao Lu, Shang Liu, Qijun Zhang, and Zhiyao Xie. 2024.
+ Zhiyao Xie. 2025c. Geneda: Unleashing genera-                  Rtllm: An open-source benchmark for design rtl gen-
+ tive reasoning on netlist via multimodal encoder-              eration with large language model. In 2024 29th Asia
+ decoder aligned foundation model. arXiv preprint               and South Pacific Design Automation Conference
+ arXiv:2504.09485.                                              (ASP-DAC), pages 722–727. IEEE.
+Chia-Tung Ho, Haoxing Ren, and Brucek Khailany.
+                                                              Jingyu Pan, Chen-Chia Chang, Zhiyao Xie, and Yi-
+  2024. Verilogcoder: Autonomous verilog coding
+                                                                 ran Chen. 2023. Edalearn: A comprehensive rtl-
+  agents with graph-based planning and abstract syn-
+                                                                 to-signoff eda benchmark for democratized and re-
+  tax tree (ast)-based waveform tracing tool. arXiv
+                                                                 producible ml for eda research. arXiv preprint
+  preprint arXiv:2408.08927.
+                                                                 arXiv:2312.01674.
+Xun Jiang, Yuxiang Zhao, Yibo Lin, Runsheng Wang,
+  Ru Huang, et al. 2023. Circuitnet 2.0: An advanced          Zehua Pei, Huiling Zhen, Mingxuan Yuan, Yu Huang,
+  dataset for promoting machine learning innovations            and Bei Yu. 2024. Betterv: Controlled verilog genera-
+  in realistic chip design environment. In International        tion with discriminative guidance. In Forty-first Inter-
+  Conference on Learning Representations (ICLR).                national Conference on Machine Learning (ICML).
+Daeyeon Kim, Hyunjeong Kwon, Sung-Yun Lee, Se-
+                                                              Martin Rapp, Hussam Amrouch, Yibo Lin, Bei Yu,
+  ungwon Kim, Mingyu Woo, and Seokhyeong Kang.
+                                                               David Z Pan, Marilyn Wolf, and Jörg Henkel. 2021.
+  2021. Machine learning framework for early routabil-
+                                                               MLCAD: A survey of research in machine learn-
+  ity prediction with artificial netlist generator. In 2021
+                                                               ing for CAD keynote paper. IEEE Transactions on
+  Design, Automation & Test in Europe Conference &
+                                                               Computer-Aided Design of Integrated Circuits and
+  Exhibition (DATE), pages 1809–1814. IEEE.
+                                                               Systems (TCAD).
+Mengming Li, Wenji Fang, Qijun Zhang, and Zhiyao
+ Xie. 2025. Specllm: Exploring generation and re-             Shailja Thakur, Baleegh Ahmad, Zhenxing Fan, Ham-
+ view of vlsi design specification with large language          mond Pearce, Benjamin Tan, Ramesh Karri, Brendan
+ model. In 2025 International Symposium of Elec-                Dolan-Gavitt, and Siddharth Garg. 2023. Bench-
+ tronics Design Automation (ISEDA), pages 749–755.              marking large language models for automated ver-
+ IEEE.                                                          ilog rtl code generation. In 2023 Design, Automation
+                                                                & Test in Europe Conference & Exhibition (DATE),
+Mingjie Liu, Nathaniel Pinckney, Brucek Khailany, and           pages 1–6. IEEE.
+  Haoxing Ren. 2023a. Verilogeval: Evaluating large
+  language models for verilog code generation. In 2023
+                                                              Clement Vignac, Igor Krawczuk, Antoine Siraudin, Bo-
+  IEEE/ACM International Conference on Computer
+                                                                han Wang, Volkan Cevher, and Pascal Frossard. 2022.
+  Aided Design (ICCAD), pages 1–8. IEEE.
+                                                                Digress: Discrete denoising diffusion for graph gen-
+Shang Liu, Wenji Fang, Yao Lu, Jing Wang, Qijun                 eration. arXiv preprint arXiv:2209.14734.
+  Zhang, Hongce Zhang, and Zhiyao Xie. 2024a. Rtl-
+  coder: Fully open-source and efficient llm-assisted         Zhiyao Xie, Yu-Hung Huang, et al. 2018. RouteNet:
+  rtl code generation technique. IEEE Transactions on           Routability prediction for mixed-size designs using
+  Computer-Aided Design of Integrated Circuits and              convolutional neural network. In ICCAD.
+  Systems.
+                                                              Ceyu Xu, Chris Kjellqvist, and Lisa Wu Wills. 2022.
+Shang Liu, Wenji Fang, Yao Lu, Qijun Zhang, and
+                                                                SNS’s not a synthesizer: a deep-learning-based syn-
+  Zhiyao Xie. 2025a. Towards big data in ai for eda
+                                                                thesis predictor. In Proceedings of the 49th Annual
+  research: Generation of new pseudo-circuits at rtl
+                                                                International Symposium on Computer Architecture
+  stage. In Asia and South Pacific Design Automation
+                                                                (ISCA), pages 847–859.
+  Conference (ASPDAC).
+Shang Liu, Wenji Fang, Yao Lu, Qijun Zhang, Hongce            Jiaxuan You, Rex Ying, Xiang Ren, William Hamilton,
+  Zhang, and Zhiyao Xie. 2023b. Rtlcoder: Outper-                and Jure Leskovec. 2018. Graphrnn: Generating
+  forming gpt-3.5 in design rtl generation with our              realistic graphs with deep auto-regressive models. In
+  open-source dataset and lightweight solution. arXiv            International conference on machine learning, pages
+  preprint arXiv:2312.08617.                                     5708–5717. PMLR.
+Shang Liu, Yao Lu, Wenji Fang, Mengming Li, and
+                                                              Muhan Zhang, Shali Jiang, Zhicheng Cui, Roman Gar-
+  Zhiyao Xie. 2024b. Openllm-rtl: Open dataset and
+                                                               nett, and Yixin Chen. 2019. D-vae: A variational
+  benchmark for llm-aided design rtl generation. In
+                                                               autoencoder for directed acyclic graphs. Advances in
+  2024 IEEE/ACM International Conference on Com-
+                                                               neural information processing systems, 32.
+  puter Aided Design (ICCAD). IEEE/ACM.
+Shang Liu, Jing Wang, Wenji Fang, and Zhiyao Xie.             Jialv Zou, Xinggang Wang, Jiahao Guo, Wenyu Liu,
+  2025b. Syncircuit: Automated generation of new                 Qian Zhang, and Chang Huang. 2024. Circuit as set
+  synthetic rtl circuits can enable big data in circuits.        of points. Advances in Neural Information Process-
+  arXiv preprint arXiv:2509.00071.                               ing Systems, 36.
+                                                         17359
+      Source             # of
+                                     Design Scale
+                                      (#K Gates)
+                                                          Design Scale
+                                                           (#K Lines)
+                                                                            C       Method Complexity and Cost
+    Benchmark           Designs
+                                  {Min, Median, Max}   {Min, Median, Max}
+      ITC’99
+                          6           {9, 19, 45}          {5, 10, 10}
+ (Corno et al., 2000)
+    OpenCores                                                               We demonstrate that SynC-LLM exhibits a signifi-
+                          8           {2, 6, 35}           {2, 8, 76}
+  (Albrecht, 2005)                                                          cantly lower time and space complexity compared
+     Chipyard
+ (Amid et al., 2020)
+                          8          {12, 19, 52}          {3, 12, 24}      to the two state-of-the-art baselines (You et al.,
+                                                                            2018; Zhang et al., 2019). We show the comparison
+                                                                            of time and space complexity below:
+A     Real Dataset Details
+This dataset has adopted most of the widely                                                    Generative Method   Space Complexity   Time Complexity
+                                                                                GraphRNN            Graph               O(N )             O(N 2 )
+adopted designs recognized by the community,                                      DVAE              Graph               O(N )             O(N 2 )
+                                                                             SynC-LLM (ours)      Graph+Text            O(R2 )           O(R2 T )
+considering the severe scarcity of high-quality
+open-source IC designs. High-quality digital HDL                                 Table 4: Comparison of time and space complexity.
+projects are exceptionally rare. Our 22 designs
+constitute the most comprehensive open-source col-
+lection, curated from three authoritative sources:                             Specifically, both GraphRNN and DVAE are au-
+academic benchmarks (ITC’99), industrial-grade                              toregressive models that generate graphs (i.e., cir-
+repositories (OpenCores), and ecosystem platforms                           cuits). Given that a circuit consists of N nodes
+(Chipyard’s RISC-V). In addition, this dataset                              and that these models must predict the edge con-
+represents significant diversity within the digital                         nectivity between every pair of nodes, their time
+design space. It spans CPUs, DSPs, memory                                   complexity is O(N 2 ), and their space complexity
+controllers, and synthesis benchmarks, with gate                            is O(N ) for storing node embeddings.
+counts ranging from 2K–52K (ITC’99: 9–45K;
+                                                                               In contrast, our SynC-LLM employs an edge-
+OpenCores: 2–35K; Chipyard: 12–52K) and code
+                                                                            based generation strategy during the initial
+complexity from 2K–76K lines.
+                                                                            skeleton-generation phase, achieving a worst-case
+   Although it is possible to search for new IC                             time complexity of O(R2 T ) and a space complex-
+designs from unverified public repositories (e.g.,                          ity of O(R2 ), where R represents the number of
+untested GitHub forks), these less validated de-                            registers in the skeleton and T denotes the number
+signs lack the community’s previous recognition                             of diffusion steps (we set T as 64 in experiment).
+and may not accurately reflect AI model’s perfor-                           Notably, at the word level, registers usually ac-
+mance.                                                                      count for around 1% to 10% of the circuit (i.e.,
+                                                                            R/N ≈ 0.01 to 0.1). As a result, on our 4090
+B    SynC-LLM Utility                                                       GPU platform, SynC-LLM is capable of gener-
+                                                                            ating a skeleton in mere seconds—using less than
+ The key to SynC-LLM’s versatility lies in its core
+                                                                            10% of the time required by GraphRNN and DVAE.
+capability: generating synthetic designs directly
+                                                                            Moreover, during the text generation phase, the in-
+at the early hardware code stage. These synthetic
+                                                                            dependent nature of each cone allows us to invoke
+codes serve as the initial input for the standard dig-
+                                                                            the LLM API in parallel, with each cone being gen-
+ital IC design flows (EDA flow). Consequently,
+                                                                            erated within tens of seconds. Overall, these factors
+the synthetic HDL generated by SynC-LLM can
+                                                                            underscore the superior scalability of SynC-LLM
+be seamlessly processed through established EDA
+                                                                            in generating large-scale circuits.
+toolchains for synthesis, placement, routing, and
+analysis. This enables circuit representations at dif-                         As for the Stage 2 cost in practice, we detail
+ferent design stages, such as gate-level netlists or                        that, for the approximately 3,000 cone code seg-
+even physical layouts. As a result, critical features                       ments, the entire function annotation process was
+and labels corresponding to each task at different                          completed in less than 12 hours with a computa-
+stages (e.g., post-synthesis timing information and                         tional cost of less than $10 USD using gpt-4o-mini.
+post-placement congestion maps) can be extracted                            For the cone code generation phase in Stage 3, ap-
+using standard tools. These features and labels can                         proximately 5000 cone codes for the 25 synthetic
+support AI models for any relevant task, includ-                            circuit designs were generated using 5 parallel gpt-
+ing the prediction of IR drop, congestion, DRC                              4o-mini api around 8 hours, and cost around 20
+violation, crosstalk, etc.                                                  $USD.
+                                                                         17360
+D    Baselines and SynC-LLM Experiment                                                Top-K average distance ↓
+                                                                                     K=1       K=10       K=20
+                                                                                                                  CCA→ 1
+     Setting                                                Random Retrival         0.739      0.739      0.739      -
+                                                         Nearest Labels (optimal)   0.1673     0.175      0.179      -
+                                                                  GCN               0.181      0.194      0.201    0.975
+For the baselines, as these node-ordering-based                    GAT              0.193      0.202      0.208    0.972
+autoregressive approaches for GraphRNN and                     GraphSage
+                                                                                    0.182      0.195     0.203     0.976
+                                                         w/o logic level features
+DVAE (You et al., 2018; Zhang et al., 2019) are                GraphSage
+                                                                                    0.177      0.187     0.189     0.979
+not directly applicable to generating directed cyclic     w/ logic level features
+circuits, we preprocessed the training circuits by
+                                                        Table 5: The retriever performance analysis. A lower
+breaking cycles and generating the circuits in a
+                                                        Top-K average distance (text embedding distance) and
+topological node order.                                 |CCA − 1| represent better retrieve quality. The results
+   For our SynC-LLM, we list the settings below:        indicate that our approach effectively aligns the graph
+                                                        (skeleton) features with the text details (flesh).
+    • In stage 1, our approach is primarily based
+      on EDGE (Chen et al., 2023), which is aug-
+      mented with an additional edge direction and      Retrieval baseline is obtained by randomly sam-
+      attribute predictor.                              pling 1000 candidates, serving as a reference.
+                                                           Multiple graph-based models, including GCN,
+    • In stage 2, for the text modality, we utilize     GAT, and GraphSAGE, are examined. The logic
+      GPT-4o-mini to perform the functional anal-       level features are used to initialize each node’s
+      ysis of cone codes. The extracted function        representation6 , thereby helping the encoder to be
+      descriptions are then mapped into the text        more aware of the register positional information in
+      embedding space using the text-embedding-         the skeleton structure. For the GraphSAGE model,
+      ada-002 Openai API. For each of the approx-       we further remove logic-level features for ablation
+      imately 10K cone codes, we select the top         study.
+      20 most similar data samples—determined
+      by text embedding cosine similarity dis-          Top-K Results: Table 5 presents the perfor-
+      tances—as the positive samples, while 200         mance at different values of K (i.e., K = 1,
+      samples are randomly selected to serve as         K = 10, and K = 20). The ground truth retrieval
+      negatives. Concurrently, we leverage multi-       using Nearest Labels achieves average distances of
+      ple encoder architectures—including GCN,          0.1673, 0.175, and 0.179 for K = 1, K = 10, and
+      GAT, and GraphSAGE—to encode the graph            K = 20, respectively, which represent the optimal
+      modality. These encoders are trained using a      retrieval outcome. The Random Retrieve baseline
+      triplet loss formulation. We finally adopted      yields a consistent average distance of 0.739 across
+      the GraphSAGE to build the retriever. Please      different K values. Among the evaluated models,
+      see some ablation studies in Appendix E.          GraphSAGE with logic level features achieves the
+                                                        best performance with distances of 0.177, 0.187,
+    • In stage 3, we employ GPT-40-mini to gener-       and 0.189, whereas excluding these logic features
+      ate the detailed cone code for each register.     leads to inferior performance (0.1823, 0.195, and
+                                                        0.2033, respectively).
+E    Function Retriever Performance                        The experimental results indicate that our ap-
+                                                        proach effectively aligns the graph (skeleton) fea-
+In this section, we evaluate the retrieval perfor-
+                                                        tures with the text details. The excellent perfor-
+mance based on the average distance between the
+                                                        mance of GraphSAGE, especially when enhanced
+text embeddings of a query and its retrieved en-
+                                                        with logic-level features, demonstrates that incor-
+tries. Specifically, for each query q, the top-K
+                                                        porating node positional information (via shortest
+most similar samples {qin } in graph embeddings
+                                                        path distances) improves the model’s ability to re-
+space are selected, and the mean distance between
+                                                        trieve semantically similar samples. Overall, the
+q and {qin } in text space is computed.
+                                                        gap between the graph-based retrieval performance
+   The Nearest Labels baseline represents the opti-
+                                                        and the optimal is considerably narrowed, validat-
+mal retrieval where, for each data point, the top-K
+                                                        ing the efficacy of our proposed framework.
+candidates are selected directly according to text
+embedding similarity, yielding the lowest and op-          6
+                                                            The logic features are defined as the shortest path dis-
+timal average distance. In contrast, the Random         tances from the source node to the current node.
+
+                                                   17361
+CCA Evaluation: We also evaluate the relation-
+ship between the graph embedding interface and
+the text embedding using Canonical Correlation
+Analysis (CCA). In CCA, given two sets of ran-
+dom variables, X ∈ Rp and Y ∈ Rq , the aim is
+to determine the linear projections a ∈ Rp and
+b ∈ Rq that maximize the correlation between the
+projected variables:
+
+                        a⊤ ΣXY b
+       ρ = max p            p          ,          (1)
+             a,b    a⊤ ΣXX a b⊤ ΣY Y b
+
+where ΣXX and ΣY Y denote the covariance ma-
+trices of X and Y , respectively, and ΣXY is the
+cross-covariance matrix between X and Y . The
+constraints a⊤ ΣXX a = 1 and b⊤ ΣY Y b = 1 are
+imposed to normalize the projections.
+   The resulting CCA of 0.98 shown in Table 5
+demonstrates that our learned embeddings are
+highly correlated across modalities.
+
+F   Detailed Prompt Examples
+In this paper, we employ the LLM in two areas:
+❶ Cone Function Analysis: We utilize LLMs to
+analyze functions associated with cone structures,
+which allows us to generate comprehensive index
+datasets capturing their key properties.
+   Note that we only use the following prompt
+format. It allows for a focused examination of spe-
+cific functionalities without delving into trivial ex-
+planations, catering to an audience with advanced
+knowledge in HDL.
+   For the first example Cone code 1, it implements
+the basic logic selection and assignment functions,
+commonly found in the input stage of large cir-
+cuits. These functionalities allow for the selection
+of specific input values and the execution of sim-
+ple AND/OR operations, which are essential for
+processing various input conditions effectively.
+   For another example Cone code 2, it implements
+complex logic for managing control signals and
+data flow related to memory operations in a proces-      ensuring execution integrity. It determines the data
+sor, focusing on program counter (PC) handling for       to be written back to memory, contingent on valid
+branches, jumps, and instructions. It computes the       instruction conditions, and integrates with control
+next program counter value by evaluating various         and status registers (CSRs) to capture exception-
+control signals, ensuring the correct PC is deter-       related values. This logic typically resides in the
+mined while checking for alignment and exception         middle portion of a large circuit, positioned be-
+states. Additionally, it calculates the branch target    tween the completion of input data processing and
+based on the current PC and the type of instruc-         the generation of output data, serving as a criti-
+tion, accommodating compressed instructions and          cal decision-making hub that ensures the overall
+adjusting for immediate values. The code also in-        functionality and efficiency of the digital system.
+cludes error handling to check for misalignment,         ❷ Cone Generation: By examining input-output
+                                                    17362
+                                                       straints to generate a more structured output. This
+                                                       example highlights the iterative process of refining
+                                                       the generated code by analyzing the dependencies
+                                                       and relationships within the design, ultimately lead-
+                                                       ing to a more sophisticated representation of the in-
+                                                       tended hardware functionality. The layer-by-layer
+                                                       generation approach not only improves the logical
+                                                       depth of the code but also ensures that timing char-
+                                                       acteristics are accurately captured, thereby aligning
+                                                       the generated output more closely with the needs
+                                                       of complex circuit designs.
+
+                                                       G    Downstream AI-based IC tasks
+
+                                                          We evaluate our synthetic RTL circuits on three
+                                                       different RTL-stage design quality prediction tasks:
+                                                       design-level TNS and area prediction, and register-
+                                                       level slack prediction. We use three represen-
+                                                       tative ML models (Fang et al., 2023, 2024; Xu
+                                                       et al., 2022), covering both word-level and bit-
+                                                       level RTL representations. All models are imple-
+                                                       mented strictly following their respective reference
+                                                       papers (Fang et al., 2023, 2024; Xu et al., 2022):
+
+                                                           • Model 1: SNS (Xu et al., 2022), is a
+                                                             transformer-based model designed for word-
+                                                             level RTL analysis. It takes tokenized RTL
+                                                             circuit paths as input sequences and uses
+                                                             a two-layer transformer with two attention
+                                                             heads (around 1.4M parameters in total). The
+                                                             model produces path-level predictions, which
+                                                             are then aggregated using an MLP to esti-
+                                                             mate design-level TNS and area. The model
+                                                             is trained using a regression objective with
+                                                             MAPE loss, following the original implemen-
+                                                             tation in SNS.
+
+                                                           • Model 2: MasterRTL (Fang et al., 2023), is
+                                                             a tree-based regression model that operates
+                                                             on bit-level RTL designs represented as Sim-
+                                                             ple Operator Graphs (SOGs), which capture
+                                                             low-level Boolean operations. (1) For TNS
+                                                             prediction, it uses a two-stage pipeline. The
+                                                             first stage predicts path-level delays using a
+                                                             Random Forest model with 80 trees and a max-
+                                                             imum depth of 20, utilizing features such as
+(I/O) relationships and existing functions, LLMs             gate type, fanout count, and accumulated de-
+facilitate the creation of new cone codes, enhancing         lay. The second stage refines these predictions
+the complexity and scale of the hardware code.               using a design-level XGBoost regressor (45
+   In Figure 4, we illustrate one example of cone            trees, max depth 8), incorporating both SOG
+code generation, showcasing how the LLM lever-               graph features and the outputs from stage one.
+ages specified functional requirements and con-              (2) For area prediction, an XGBoost model
+                                                  17363
+      (45 trees, max depth 12) is trained using fea-
+      tures including SOG operator count, opera-
+      tor types, and cell area information extracted
+      from liberty files. Both tasks are trained with
+      a standard squared error regression loss.
+
+    • Model 3: RTL-Timer (Fang et al., 2024), fo-
+      cuses on fine-grained timing slack estimation
+      at the register level. For each register, it con-
+      structs its input cone and extracts hierarchical
+      features from the design, cone, and path levels.
+      To improve timing diversity, two representa-
+      tive paths, one the slowest and one randomly
+      selected, are sampled per cone. The model
+      uses an XGBoost regressor with 100 trees and           Figure 7: Partial gate-level netlist (Example 1).
+      a maximum depth of 45 to predict the slack
+      delay for each register. Training is performed
+      using regression with squared error loss.
+
+H     Synthetic Circuit Visualization
+We present the visualization results of our gener-
+ated circuits at different implementation stages. We
+first synthesize the generated circuits using Synop-
+sys Design Compiler (DC) to produce gate-level
+netlists. Due to the large scale of the circuits, Fig-
+ures 7 and 8 only show representative portions of
+the netlists. In these diagrams, arrows indicate
+the data flow directions, while rectangular blocks
+represent the standard cells in the netlist.
+   We further conducted Place & Route (P&R)                  Figure 8: Partial gate-level netlist (Example 2).
+for more rigorous comparison using the Innovus
+tool. Figures 9 and 10 display the layout diagrams
+of two synthesized circuits. To facilitate visual
+comparison and demonstrate that our synthetic cir-
+cuits closely resemble real-world designs, we also
+provide the layout diagrams of realistic circuits
+(aes_core, Tinyrocket) as references in Figures 11
+and 12.
+   From the figures, our generated circuits show
+minimal visual differences compared to the real-
+istic reference circuits. Both EDA flows (DC and
+P&R) require standard cell libraries for implemen-
+tation, for which we have adopted the open-source
+Nangate45 library.
+
+
+
+
+                                                          Figure 9: Layout view of our synthesized Example 1
+                                                          after P&R.
+
+
+
+                                                     17364
+Figure 10: Layout view of our synthesized Example 2
+after P&R.
+
+
+
+
+Figure 11: Layout of a realistic circuit (aes_core) for
+visual comparison with our synthetic designs.
+
+
+
+
+Figure 12: Layout of a realistic circuit (Tinyrocket) for
+visual comparison with our synthetic designs.
+
+                                                       17365
+

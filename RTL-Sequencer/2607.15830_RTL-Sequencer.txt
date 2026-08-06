@@ -1,0 +1,491 @@
+                                             RTL-Sequencer: Towards Scalable RTL Timing Prediction with
+                                                           the Sequence-based Paradigm
+                                                                    Ziyan Guo, Wenji Fang, Wenkai Li, Yuchao Wu, Shang Liu, Zhiyao Xie∗
+                                                                                   Hong Kong University of Science and Technology (HKUST)
+                                                                          {zguoby, wfang838, wlidm, ywu092, sliudx}@connect.ust.hk, eezhiyao@ust.hk
+
+                                         ABSTRACT                                                                                 Graph Neural Network                           RTL-Sequencer
+
+                                         Accurate timing prediction at the register-transfer level (RTL) is a                                       H             Aggregator 1        Wire                         Aggregator
+
+                                         longstanding challenge in design automation. Existing graph-based                           G      D                 E
+                                                                                                                                                                  Aggregator 2
+                                                                                                                                                                                                         k=5
+                                                                                                                                                                                  K          L       M         N                O
+                                         methods struggle with limited receptive fields, high complexity,                                       A       B         Node A
+                                         and a lack of signal directionality. We present RTL-Sequencer, a                                  C                      aggregate                              k=4
+                                                                                                                                                    k=1                                          I                     J
+                                         novel sequence-based paradigm that enables scalable RTL timing                                                           from local
+                                                                                                                                                        k=2       neighbors in
+                                         prediction via linearizing logic cones by breadth-first traversal and                                  F
+                                                                                                                                                                  each block                             k=3
+                                                                                                                                                                                  E              F             G           H
+                                         applying modern linear sequence models. Furthermore, sequence                            Receptive filed is limited by network depth
+                                         models are customized by four synergistic techniques, including                          Graph Transformer                                                      k=2
+                                         sequence shuffling, bidirectional modeling, differentiable modeling,                                                                            C                            D
+                                                                                                                                                    H             Aggregator
+                                         and a hybrid graph-sequence architecture. Extensive experiments                                                                                                 k=1
+                                                                                                                                                              E
+arXiv:2607.15830v1 [cs.AR] 17 Jul 2026
+
+
+
+
+                                                                                                                                     G      D
+                                         demonstrate significant improvements of RTL-Sequencer over state-                                                        Node A
+                                                                                                                                                                                                         B
+                                         of-the-art baselines, advancing early-stage timing optimization.                                       A       B         aggregate
+                                                                                                                                           C        k=1           from all
+                                                                                                                                                                                                         A
+                                                                                                                                                                  other nodes
+                                         1    INTRODUCTION                                                                                      F
+                                                                                                                                                        k=2       in each        Register A aggregate from all predecessors
+                                                                                                                                                                  block           by breadth first traversal in each block
+                                         Timing remains a critical optimization objective in the design of                           Quadratic complexity of node count          Global receptive field & Linear complexity
+                                         digital integrated circuits. A fundamental limitation in the con-
+                                         ventional design methodologies is that accurate timing analysis                         Figure 1: RTL-Sequencer vs. conventional graph-based ap-
+                                         is only available after the post-layout stage, due to the lack of                       proaches, such as the Graph Neural Network and the Graph
+                                         accurate physical information like wire length information [16].                        Transformer, highlighting the scalability of the sequence-
+                                         Consequently, this delayed feedback undermines the efficacy of                          based paradigm on the receptive field and the node capacity.
+                                         timing-driven optimizations during early design phases, including
+                                                                                                                                 into four categories: (i) Traditional ML, such as Random Forest
+                                         register-transfer level (RTL) design, thereby significantly extending
+                                                                                                                                 [2] and XGBoost [5], primarily model statistical characteristics of
+                                         design iterations and increasing time-to-market.
+                                                                                                                                 logic cones, thereby neglecting their topological structure that is
+                                             To bridge this gap, Machine Learning (ML) has emerged as a
+                                                                                                                                 critical for accurate timing analysis. (ii) GNNs including Graph
+                                         promising data-driven paradigm for early-stage timing prediction.
+                                                                                                                                 Convolutional Networks (GCNs) [20] and Graph Attention
+                                         As shown in Table 1, prior research has extensively investigated
+                                                                                                                                 Networks (GAT) [31] suffer from constrained receptive fields,
+                                         ML-based timing prediction across various design stages, including
+                                                                                                                                 which are inherently bounded by network depth [13, 25]. Such
+                                         the layout, the netlist, and the most challenging RTL stage due to
+                                                                                                                                 restrictions hinder their applicability to pre-synthesis cones with
+                                         its high level of abstraction [9, 11, 32]. At the RTL stage, Hardware
+                                                                                                                                 substantial logic depth. Attempts to mitigate this issue by sim-
+                                         Description Language (HDL) code is typically transformed into an
+                                                                                                                                 ply stacking additional GNN layers often exacerbate the problem
+                                         intermediate representation called the Boolean Operator Graph
+                                                                                                                                 of over-smoothing [26], resulting in homogenized node embed-
+                                         (BOG) [9, 32], which is a directed graph of Boolean logic gates.
+                                                                                                                                 dings that lack discriminative representation. Consequently, the
+                                         ML–based timing prediction is then applied to logic cones, defined
+                                                                                                                                 generalization capacity of these models deteriorates significantly
+                                         as subgraphs of the BOG that encompass an output register together
+                                                                                                                                 when applied to large-scale designs. (iii) GNN-Propagation or
+                                         with its all fan-in input registers and combinational nodes.
+                                                                                                                                 DAGNN [29] aims to provide a global receptive field by computing
+                                             However, we observe that these cones are generated before syn-
+                                                                                                                                 representations layer by layer within the cone. Nevertheless, this
+                                         thesis and consequently exhibit deep, large-scale topological struc-
+                                                                                                                                 architecture imposes strict inter-layer dependencies, resulting in
+                                         tures, often comprising more than ten thousand nodes with max-
+                                                                                                                                 training quadratic complexity with cone depth. Such complexity
+                                         imum depths exceeding one hundred. Such complexity presents
+                                                                                                                                 not only impedes training parallelization but also exacerbates error
+                                         substantial challenges for ML-based methodologies to accurately
+                                                                                                                                 accumulation in deeper layers, thereby constraining scalability to
+                                         model long-range timing dependencies within the cones. As sum-
+                                                                                                                                 deeply structured designs. (iv) Graph Transformers (GTs) [42]
+                                         marized in Table 1, these methodologies can be broadly classified
+                                                                                                                                 offer global receptive fields; however, they suffer from quadratic
+                                         ∗ Corresponding   Author                                                                complexity with node count and over-emphasize node relationships
+                                                                                                                                 rather than signal directionality. In addition, TF-Predictor [3] incor-
+                                                                                                                                 porates a Transformer as a sequence model, but it only represents
+                                         This work is licensed under a Creative Commons Attribution 4.0 International License.   specified paths at the relatively tractable layout stage and incurs
+                                         DAC ’26, July 26–29, 2026, Long Beach, CA, USA                                          quadratic node complexity.
+                                         © 2026 Copyright held by the owner/author(s).
+                                         ACM ISBN 979-8-4007-2254-7/2026/07                                                         To address the inherent limitations of graph-based methodolo-
+                                         https://doi.org/10.1145/3770743.3804056                                                 gies, we introduce a novel framework, RTL-Sequencer, which
+                                                Global     Linear            (1) We present RTL-Sequencer, the first to propose a sequence-
+  Stage        Type             Works
+                                                Recept.   Complex.               based paradigm to RTL timing prediction. This paradigm
+            Traditional   [1, 15, 18, 19, 22]     −          −                   enables scalable learning of long-range signal dependencies
+ Layout     GNN-Prop.     [6, 14, 17, 34, 43]     ✓          ×                   with linear computational complexity, offering explicit signal
+                GT              [4, 44]           ✓          ×                   directionality and elimination of intra-layer restriction.
+            Traditional           [39]            −          −               (2) We design four synergistic techniques customized to the
+ Netlist
+               GNN             [36, 37]           ×          ✓                   sequence-based paradigm, namely sequence shuffling, bidi-
+            Traditional       [9, 11, 27]         −          −                   rectional sequence modeling, differentiable sequence model-
+               GNN                [23]            ×          ✓                   ing, and a hybrid graph–sequence architecture.
+   RTL      GNN-Prop.          [32, 33]           ✓          ×               (3) We conduct extensive experiments to demonstrate the supe-
+                GT            [8, 10, 38]         ✓          ×                   riority of RTL-Sequencer over state-of-the-art graph-based
+             Sequencer           Ours             ✓          ✓                   approaches. In particular, comprehensive ablation studies
+                                                                                 confirm the effectiveness of the proposed four techniques.
+Table 1: Summary of existing methods for timing prediction.
+                                                                         2    PROBLEM FORMULATION
+establishes a scalable sequence-based paradigm for the challeng-         Our problem formulation follows prior works [9, 32]. Specifically,
+ing RTL timing prediction. Our key insight lies in customizing           a digital circuit described at the RTL is represented as a directed
+linear sequence models [7, 12, 24, 28, 40] instead of graph-based        graph 𝐺 = (𝑉 , 𝐸), where 𝑉 denotes the set of nodes corresponding
+models. As shown in Fig. 1, such a paradigm shift is able to offer       to registers and combinational logic elements, and 𝐸 denotes the
+several critical advantages over graph-based models: (i) Global          set of nodes corresponding to registers and combinational logic
+receptive fields for long-range timing dependencies independent of       elements. This graph abstraction, often referred to as a Boolean
+network depth; (ii) Linear computational complexity with respect         Operator Graph (BOG) [9, 32], encapsulates the structural and
+to node count and cone depth; (iii) Explicit preservation of signal      functional dependencies inherent in RTL designs.
+directionality, thus mitigating over-smoothing; (iv) Elimination            The primary objective is to predict the arrival time at each end-
+of strict intra-layer dependencies. To achieve this sequence-based       point register node 𝑛 ep ∈ 𝑉ep , denoted as ATpred (𝑛 ep ), directly from
+paradigm, an inverse Breadth-First Traversal (BFT) from the output       the RTL representation. Ground-truth arrival times ATlabel (𝑛 ep )
+register provides a basic solution to convert cones into sequences.      are obtained from sign-off static timing analysis (STA) performed
+   However, the straightforward adoption of deterministic BFT and        after place-and-route. The prediction task is thus formulated as
+conventional sequence models can be sub-optimal, primarily due           a supervised regression problem, where the goal is to minimize
+to the loss of topological information when topology-invariant           the discrepancy between ATpred (𝑛 ep ) and ATlabel (𝑛 ep ) across all
+cones are reduced to fixed, unidirectional, breadth-first node se-       register nodes. Formally, the optimization objective is expressed as:
+quences. To address these limitations, we propose four syner-                               ∑︁
+gistic techniques to customize sequence models further to                             min        ||ATpred (𝑛 ep ; 𝜃 ) − ATlabel (𝑛 ep )|| 2      (1)
+this challenging task: (i) Sequence Shuffling to expose sequence                         𝜃
+                                                                                             𝑛 ep ∈𝑉
+models to diverse sequence variants of cones rather than the fixed
+node ordering introduced by deterministic BFT. Specifically, nodes       where 𝑉ep ⊆ 𝑉 denotes the subset of endpoint register nodes, and
+within each BFT depth are randomly permuted during training              𝜃 represents the learnable parameters of the prediction model.
+as data augmentation, while preserving logical dependencies and
+timing closure, thereby improving generalization across hetero-          3    PRELIMINARY: SEQUENCE MODELS
+geneous RTL designs. (ii) Bidirectional Sequence Modeling to             In this section, we provide an overview of the background and moti-
+capture the bi-directional flow of signal propagation in logic cones,    vation underlying modern linear sequence models [7, 12, 24, 28, 40].
+therefore enabling deeper network blocks, via the representation         In a general sequence model, the representation of a node is updated
+awareness of later nodes to the earlier nodes. (iii) Differentiable      based on its current state and accumulated historical information.
+Sequence Modeling to ensure that node representations align with         Notably, this historical context is losslessly encoded by preceding
+depth-first critical timing paths rather than breadth-first neighbors.   nodes while maintaining linear computational complexity. Such a
+Concretely, we incorporate a differential (i.e., global minus depth-     formulation contrasts with attention-based architectures, in which
+local) mechanism, which extracts depth-specific embeddings via           the representation of each node is explicitly conditioned on all other
+another sequence model and subtracts them from global embed-             nodes within the sequence, thereby incurring quadratic complexity.
+dings, emphasizing global timing behavior rather than depth-local            Specifically, let an ordered sequence of nodes be denoted by
+influences. (iv) Hybrid Graph-Sequence Architecture to harness           𝑆 = (𝑛 1, 𝑛 2, ..., 𝑛𝑖 , ..., 𝑛 𝑁 ). At each block, 𝑥𝑖 ∈ R𝑘 is the input feature
+the complementary strengths of graph-based and sequence-based            vector for node 𝑛𝑖 , 𝑦𝑖 ∈ R𝑘 be the corresponding output vector, and
+paradigms in the local breadth of nodes and the global depth of          ℎ𝑖 −1 ∈ R𝑘 be the hidden state encoding the history from 𝑛 1 to 𝑛𝑖 −1 .
+timing paths, respectively. Specifically, we propose an architecture     The update formula for node representation is governed by:
+that integrates GNNs into our sequence modeling pipeline. Within
+each block, input data is first processed by GNN modules to capture                              ℎ𝑖 = Sequencer(𝑆, ℎ𝑖 −1, 𝑥𝑖 )                       (2)
+localized structural dependencies, followed by sequence modeling                                 𝑦𝑖 = Projection(ℎ𝑖 )                                (3)
+to encode long-range signal propagation. This integration enables
+end-to-end learning across RTL designs of varying structures.               Here, the Sequencer captures the dependency between the cur-
+   In summary, our work makes the following key contributions:           rent node 𝑛𝑖 and the history encapsulated in ℎ𝑖 −1 without strict
+        R1 [0]              R1 [1]          Breadth-First Traversal                            Cone 𝑪                                         Sequence Model                                              MLP
+
+                   OP1                                                                                                     (t2) Bidirectional                  (t3) Differentiable
+      OP2                                          Sequence 𝑺                                                                  Sequence                             Sequence                  timing-metrics
+                                                                                      Gated Graph                                                                                               prediction
+                             OP3
+             OP4
+                                                                                  Convolutional Network
+                                                                                                                              forward                            depth forward
+                                            (t1) Sequence Shuffling                                                                    𝒇𝒘
+                                                                                                                            embedding 𝒉𝒊                        embedding 𝒉𝒊
+                                                                                                                                                                            𝒅𝒇𝒘
+
+    R2 [0]       R2 [1]        R2 [2]                                                                                                                                                             RTL Designer
+                                                                                                                                  ⨁                ⊖                   ⨁
+                 Cone 𝑪                                                                         FFN                           backward                          depth backward
+                                                Sequence 𝑺𝐬𝐡𝐮𝐟𝐟𝐥𝐞
+                          transform
+                                                                                                                                       𝒇𝒘
+                                                                                                                            embedding 𝒉𝒊                        embedding 𝒉𝒅𝒃𝒘
+                                                                                                                                                                           𝒊                   Early Stage
+                          & partition                                                                                                                                                            Timing
+                                                                                residual                                           residual
+                                                Linear Projection                          Sequence 𝑺                                              FFN                                        Optimization
+             RTL Code 𝑹
+      input [7:0] In1;                  (b)-(i) representation processing                                 (b)-(ii) hybrid graph-sequence architecture                          ×𝐿                 (b)-(iii) prediction
+      reg [7:0] R1;
+      wire [7:0] W1;                                                                                       (b) Overall Framework
+      assign W1 = In1 & R1;
+      always @(posedge clk)
+              R1 <= W2;
+                                        A   B     C    D    E       F   G   H              A     B    C     D     E    F      G     H                          A     B     C      D      E    F       G       H
+
+        EDA Timing Tools                                     if training                                          point-wise add                                                      ⊖ point-wise minus
+                                                                                                              ⨁
+
+        timing-metrics                  A   C     D    B    G       H   F   E              A     B    C     D     E    F      G     H              A               B     C     D                  E       F   G   H
+         ground-truth                                                                                                                                    cat                            cat
+    (a) Data Preprocessing                  (t1) Sequence Shuffling                            (t2) Bidirectional Sequence                                       (t3) Differentiable Sequence
+
+Figure 2: Overview of RTL-Sequencer. (a) RTL data preprocessing includes extracting ground-truth timing metrics via commercial
+EDA tools and transforming RTL codes into BOGs. Subsequently, logic cones are extracted from the BOG. (b) Overall architecture
+of the proposed RTL-Sequencer framework, where the extracted logic cone from (a) is fed into a sequence modeling pipeline to
+predict timing metrics and facilitate neural network training. (t1) Sequence Shuffling, (t2) Bidirectional Sequence, and (t3)
+Differentiable Sequence illustrate key components of our sequence-centric paradigm, each implemented as submodules within
+the architecture shown in (b), and designed to improve model generalization across heterogeneous RTL designs.
+
+
+node-to-node restrictions. The Projection then refines channel-                                                Subsequently, we adopt an inverse Breadth-First Traversal (BFT)
+wise features of the updated hidden state ℎ𝑖 . The resulting 𝑦𝑖 is                                          initiated from the endpoint to convert the cone 𝐶 into the node
+regarded as the subsequent input for the following block, thereby fa-                                       sequence 𝑆 = BFT(𝐶) = (𝑛 1, 𝑛 2, ..., 𝑛𝑖 , ..., 𝑛 𝑁 ). In contrast to depth-
+cilitating representation learning across successive network blocks.                                        first traversal, which may obscure timing dependencies due to its
+                                                                                                            recursive exploration, BFT visits nodes in a level-wise order. This
+4     METHODOLOGY                                                                                           ordering preserves the hierarchical progression of signal propaga-
+In this section, we present the methodology of RTL-Sequencer and                                            tion through the combinational gate and facilitates a more faithful
+depict it in Fig. 2. To establish clarity and emphasize our contribu-                                       representation of timing behaviour in the logic cone.
+tions, we first outline a basic solution for our framework in Sec. 4.1,                                        Such a node sequence 𝑆 is input to the proposed sequence mod-
+detailing how to transform RTL designs into node sequences and                                              els, denoted as Sequencer, in place of conventional graph-based
+the subsequent application of sequence models for representation                                            approaches. For each node 𝑛𝑖 ∈ 𝑆, the forward hidden state embed-
+learning. Building on this foundation, we introduce four synergistic                                        ding ℎ𝑖fw is computed by the sequence model, thereby capturing
+techniques, including sequence shuffling in Sec.4.2, bidirectional                                          historical dependencies from preceding nodes in the sequence. For-
+sequence modeling in Sec.4.3, differentiable sequence modeling in                                           mally, the forward sequence embedding ℎ𝑖fw of 𝑛𝑖 is defined as:
+Sec.4.4, and a hybrid graph-sequence architecture in Sec.4.5, which
+further customize sequence models to RTL timing prediction.                                                                                   ℎ𝑖fw = Sequencer(𝑆, ℎ𝑖 −1, 𝑥𝑖 )                                            (4)
+
+4.1      Basic Solution                                                                                     where ℎ𝑖 −1 denotes the hidden state propagated from the earlier
+To establish the sequence-based paradigm, we first outline a basic so-                                      nodes and 𝑥𝑖 represents the input feature vector associated with
+lution of RTL-Sequencer in this section. This involves transforming                                         node 𝑛𝑖 . In contrast to the basic formulation in Formula 2, the final
+RTL designs into ordered node sequences and applying sequence                                               representation ℎ𝑖 is not determined solely by Sequencer(𝑆, ℎ𝑖 −1, 𝑥𝑖 );
+models to predict timing behavior directly from these sequences.                                            rather, it is augmented in subsequent stages through the integration
+   Initially, given that the timing behavior of an endpoint register                                        of additional components that enrich the representational capacity.
+is predominantly determined by its associated logic cone within                                                In this section, we have introduced a basic solution for the RTL-
+the BOG, we adopt a cone-based partitioning strategy to isolate the                                         Sequencer as a baseline. Nevertheless, the direct application of
+cone, which is defined as the transitive fan-in subgraph rooted at                                          deterministic BFT and conventional sequence models proves sub-
+the endpoint register. Formally, for each endpoint register ep ∈ 𝐺,                                         optimal, as it often discards critical topological information when
+we extract its logic cone 𝐶 ⊆ 𝐺 via a backward traversal from ep to                                         topology-invariant cones are reduced to fixed, unidirectional and
+any input register, thereby capturing all upstream combinational                                            breadth-first sequences. To overcome these limitations, the subse-
+and sequential elements that contribute to its signal arrival time.                                         quent sections present four synergistic techniques that are designed
+                    Feature                             Type        Channel            is computed by aggregating the outputs of backward sequencers:
+                    cell type                          one-hot        12
+                fan-out number                           int           1                                   ℎ𝑖bw = Sequencer(𝑆 flip, ℎ𝑖+1, 𝑥𝑖 )                   (5)
+                 fan-in number                           int           1                  This dual-path formulation markedly enhances representational
+               load capacitance                         float          1               expressiveness by embedding each node within both its antecedent
+                      slew                              float          1               and subsequent nodes, thereby enabling the model to more effec-
+      node order in current BFT-level                    int           1               tively capture timing-critical dependencies across deep logics.
+   number of nodes in current BFT-level                  int           1
+         start flag of each BFT-level                  one-hot         1               4.4     Differentiable Sequence Modeling
+         end flag of each BFT-level                    one-hot         1               While breadth-first traversal avoids backtracking compared to depth-
+   order of parent node in next BFT-level                int           1               first traversal, it frequently places unrelated nodes at the same BFT
+Table 2: Overview of node representations as network inputs.                           depth, thereby placing them adjacently within the resulting node
+to further tailor sequence models to the challenging RTL timing                        sequence. In sequence models, this adjacency causes each node’s
+prediction.                                                                            representation to be inevitably influenced by its immediate depth-
+                                                                                       level neighbors. As a result, sequence models tend to overemphasize
+4.2     Sequence Shuffling                                                             local depth-specific structures while neglecting long-range depen-
+                                                                                       dencies along critical timing paths.
+To address the information loss incurred when topology-invariant                           To address this limitation, we propose a differentiable mechanism
+cones are converted into fixed node sequences, we introduce a                          that adaptively reduces irrelevant depth-specific context while ac-
+stochastic shuffling mechanism. Specifically, each node ordering                       centuating global timing behaviors. Our design is inspired by recent
+is randomized within each BFT depth level with 50% probability,                        advances in differentiable sequence modeling that employ embed-
+while preserving the cone topology’s invariance. Hierarchical con-                     ding subtraction across entire sequences [41]. Distinct from these
+sistency is maintained by synchronizing permutations across child                      approaches, we introduce a sequence model tailored to operate on
+nodes in subsequent levels. This procedure serves as a form of data                    depth-specific subsequences rather than the full sequence. By sub-
+augmentation, exposing sequence models to diverse node orderings                       tracting depth-specific node embeddings from those obtained via
+while retaining logical dependencies and timing closure, ultimately                    the global sequence model, we derive depth-irrelevant embeddings
+enhancing generalization across heterogeneous RTL designs.                             that more faithfully preserve global timing dependencies.
+   For example, consider a cone sequence 𝑆 = (𝑥 1, 𝑥 2, 𝑥 3, 𝑥 4, 𝑥 5 ),                   For instance, consider the sequence 𝑆 = (𝑛 1, 𝑛 2, 𝑛 3, 𝑛 4, 𝑛 5 ), where
+where 𝑥 1 connects to {𝑥 2, 𝑥 3 }, and 𝑥 2 , 𝑥 3 further connect to {𝑥 4 },            𝑛 1 has children {𝑛 2, 𝑛 3 }, and 𝑛 2 , 𝑛 3 connect to {𝑛 4 }, {𝑛 5 }, respec-
+{𝑥 5 }, respectively. 𝑆 shuffle = (𝑥 1, 𝑥 3, 𝑥 2, 𝑥 5, 𝑥 4 ) can be a possible shuf-   tively. The corresponding BFT-level sequences 𝐷𝑖 are defined as
+fled variant, in which the position of 𝑣 5 is elevated relative to 𝑣 4 ,               𝐷 1 = (𝑁 1 ), 𝐷 2 = 𝐷 3 = (𝑛 2, 𝑛 3 ), 𝐷 4 = 𝐷 5 = (𝑛 4, 𝑛 5 ). For each node
+reflecting the direct connection between 𝑥 3 and 𝑥 5 .                                 𝑛𝑖 , we first compute the depth-specific embeddings ℎ𝑖dfw and ℎ𝑖dbw
+   During inference, it is necessary to determine a sorting strategy                   from the forward and backward sequences as follows:
+consistent with the training procedure. To fully leverage the infor-
+mation flow inherent in sequence models, we employ a heuristic                                            ℎ𝑖dfw = Sequencer(𝐷𝑖 , ℎ𝑖 −1, 𝑥𝑖 )                     (6)
+deterministic ordering that ranks nodes within each breadth-first                                        ℎ𝑖dbw   = Sequencer(𝐷𝑖_flip, ℎ𝑖+1, 𝑥𝑖 )                 (7)
+traversal (BFT) level according to their in-degree and out-degree sta-
+tistics. Nodes exhibiting higher connectivity are positioned closer                        We further incorporate a self-gating mechanism to adaptively
+to the output register within each level, thereby enriching the con-                   regulate the strength of the differential operation. Specifically, we
+textual information available for timing prediction. This approach                     introduce the learnable coefficient 𝜆 that quantifies the influence of
+effectively integrates the advantages of stochastic data augmenta-                     depth-specific context. Owing to the Sigmoid activation function, 𝜆
+tion during training with the maximization of information utiliza-                     is constrained to the interval [0, 1]. Ideally, 𝜆 ≈ 0 indicates that the
+tion during inference, ultimately enhancing prediction accuracy                        node embedding predominantly attends to global timing behavior,
+across previously unseen RTL designs.                                                  whereas 𝜆 ≈ 1 reflects a stronger emphasis on depth-local structural
+                                                                                       information, allowing the representation to self-adjust through
+4.3     Bidirectional Sequence Modeling                                                learning. The overall formulation is expressed as:
+In the baseline model described in Sec. 4.1, a single sequence model                                       𝜆 = Sigmoid(MLP(ℎ𝑖dfw + ℎ𝑖dbw ))                      (8)
+is employed to capture the forward sequence embedding ℎ𝑖fw for                                            ℎ𝑖 = ℎ𝑖fw   + ℎ𝑖bw   − 𝜆(ℎ𝑖dfw   + ℎ𝑖dbw )             (9)
+node 𝑛𝑖 . This formulation, however, constrains information prop-
+agation to a unidirectional flow, thereby preventing later nodes                       Here, ℎ𝑖fw   and ℎ𝑖bw
+                                                                                                          denote the forward and backward global embed-
+from influencing earlier representations and limiting the depth of                     dings obtained from Sec. 4.1 and Sec.4.2, respectively. This differ-
+sequencer blocks. Such a restriction is also misaligned with prac-                     entiable strategy (i.e., global minus depth-local) ensures that node
+tical design processes, as both Static Timing Analysis (STA) and                       representations remain aligned with the global timing behavior
+logical synthesis inherently operate not in unidirectional contexts.                   rather than adaptively aligning with depth-specific structure.
+   To overcome this limitation, we propose a bidirectional sequence
+modeling to augment the forward sequence 𝑆 by its reversed coun-                       4.5     Hybrid Architecture
+terpart, denoted as 𝑆 flip = (𝑛 𝑁 , ..., 𝑛𝑖 , ..., 𝑛 2, 𝑛 1 ). A reversed sequence     While sequence models are effective in capturing long-range and
+model is instantiated to process 𝑆 flip , thereby facilitating backward                deep dependencies, they can fail to localize and broader structural
+information flow. For each node 𝑛𝑖 , the backward hidden state ℎ𝑖bw                    information surrounding nodes within design logic. To overcome
+                                                    Arrival Time (AT)     Worst Negative Slack (WNS)      Total Negative Slack (TNS)
+             Model                  Type
+                                                    𝑅     𝑅2    MAPE       𝑅    𝑅2         MAPE            𝑅     𝑅2        MAPE
+            GCN [20]              GNN              0.81 0.66 27.38%       0.78 0.62        30.00%         0.68 0.47        40.52%
+            GAT [31]              GNN              0.83 0.69 25.23%       0.81 0.65        27.46%         0.69 0.48        39.11%
+        SG-Former [35]             GT              0.73 0.54 32.67%       0.70 0.51        34.71%         0.66 0.43        46.80%
+         RTL-Timer [9]           XGBoost           0.85 0.72 23.55%       0.83 0.69        24.09%         0.70 0.50        37.10%
+         RTLDistill [32]     GNN-Propagation       0.89 0.81 21.86%       0.87 0.74        23.11%         0.74 0.56        32.15%
+        NUA-Timer [33]       GNN-Propagation       0.90 0.81 21.16%       0.88 0.77        22.62%         0.76 0.59        29.45%
+        CircuitFusion [8]          GT              0.91 0.83 20.29%       0.89 0.80        21.67%         0.82 0.69        26.16%
+        TF-Predictor [3]       Transformer         0.70 0.50 35.74%       0.67 0.45        37.98%         0.63 0.40        49.31%
+         RTL-Sequencer          Sequencer          0.92 0.85 17.24%       0.91 0.83        17.66%         0.88 0.77        23.92%
+Table 3: Comparison between classic graph-based solutions, SOTA in the community, and RTL-Sequencer on timing prediction.
+
+                                                     Arrival Time (AT)     Worst Negative Slack (WNS)       Total Negative Slack (TNS)
+                       Model
+                                                   Δ𝑅     Δ𝑅 2 ΔMAPE        Δ𝑅    Δ𝑅 2      ΔMAPE            Δ𝑅    Δ𝑅 2      ΔMAPE
+                 RTL-Sequencer                    0.92 0.85      17.24%     0.91 0.83        17.66%         0.88 0.76         23.92%
+                  Basic Solution                  -0.12 -0.22 +12.23%      -0.13 -0.21      +12.92%         -0.19 -0.26      +16.39%
+            w/o Stochastic Shuffling              -0.09 -0.14 +8.23%       -0.11 -0.18      +9.26%          -0.16 -0.22      +11.69%
+      w/o Bidirectional Sequence Modeling         -0.04 -0.09 +5.01%       -0.04 -0.05      +5.73%          -0.11 -0.15      +7.20%
+      w/o Differentiable Sequence Modeling        -0.01 -0.02 +2.37%       -0.02 -0.04      +2.78%          -0.06 -0.08      +3.46%
+            w/o Hybrid Architecture               -0.02 -0.02 +3.22%       -0.03 -0.05      +3.93%          -0.08 -0.11      +5.18%
+                       Table 4: Ablation study of components in RTL-Sequencer compared to the full model.
+
+
+this limitation, we propose a hybrid graph–sequence architecture             Evaluation Metrics. We evaluate model performance on three
+that integrates the complementary strengths of GNNs for local             critical timing metrics: Arrival Time (AT), Worst Negative Slack
+context aggregation with the capacity of sequence models to capture       (WNS), and Total Negative Slack (TNS). The following statistical
+global and deep temporal dependencies.                                    measures are employed: Pearson Correlation Coefficient (𝑅):
+   As illustrated in Fig. 2-(b), the proposed pipeline begins by apply-   Quantifies the linear correlation between predicted and actual tim-
+ing BFT combined with sequence shuffling to the logic cone, thereby       ing values. Coefficient of Determination (𝑅 2 ): Measures the pro-
+generating the initial sequence representation. This feature channel      portion of variance in ground truth explained by the model. Mean
+of sequence is subsequently projected into a higher-dimensional           Absolute Percentage Error (MAPE): Captures the relative pre-
+space through a linear transformation. Following this representa-         diction error, with lower values indicating higher accuracy.
+tion processing, a GNN is employed to capture broader local struc-           Implementation Details. We adopt the GatedGCN [21] and
+tural dependencies surrounding each node in the cone. The cone is         Mamba-2 [7] for our hybrid graph-sequence architecture. All mod-
+subsequently converted back to an ordered sequence and processed          els are trained on a cluster of 8× NVIDIA RTX 4090D using PyTorch
+by our sequence models, which are augmented with bidirectional            Lightning, PyTorch Geometric, and Scikit-learn. We adopt the Adam
+and differential sequence modeling, to capture the long-range and         optimizer with an initial learning rate of 1 × 10−3 and a per-GPU
+deep timing dependencies. To further enrich channel-wise feature          batch size of 8. For the model hyper-parameters, the channel num-
+representations, feed-forward networks (FFNs) are appended to             ber of the hidden state is 32, the number of sequencer blocks 𝐿 is 3,
+both the GNN and sequence models, following the design princi-            and shuffling probability applied to each training sample is 50%.
+ples of Transformer-based architectures [30]. Crucially, all graph-          Baseline. We benchmark our framework against three represen-
+to-sequence and sequence-to-graph transitions are implemented             tative graph-based approaches, including GCN [20], GAT [31], and
+as differentiable operations, thereby enabling seamless end-to-end        SG-Former [35]; as well as several SOTA methods widely adopted
+optimization through gradient descent.                                    in the community, including RTL-Timer [9], RTLDistill [32], NUA-
+                                                                          Timer [33], CircuitFusion [8], and TF-Predictor [3]. For consistency
+5 EXPERIMENTS                                                             and fairness, all baselines are re-implemented within our setting, de-
+                                                                          liberately excluding auxiliary features derived from post-synthesis
+5.1 Configurations
+                                                                          stages (e.g., layout information). This design choice highlights the
+Dataset. We conduct experiments on 21 open-source RTL designs             contribution of architectural innovations to RTL timing prediction.
+following RTL-Timer [9], employing 5-fold cross-validation. To
+ensure generalization, training and evaluation sets are strictly par-     5.2    Results
+titioned by designs. The dataset encompasses diverse mainstream           As presented in Table 3, RTL-Sequencer consistently surpasses prior
+hardware description languages, with design sizes ranging from 6K         approaches across all evaluated timing metrics, thereby highlight-
+to 510K gates. For dataset generation, we utilize Synopsys Design         ing the efficacy of its architectural innovations. Specifically, the
+Compiler for logic synthesis and Cadence Innovus for physical             framework achieves the lowest AT MAPE of 17.24%, accompanied
+implementation, both targeting the NanGate45nm process design             by the highest correlation scores, with 𝑅 = 0.92 and 𝑅 2 = 0.85 .
+kit. Static timing analysis is performed using Synopsys PrimeTime         In addition, RTL-Sequencer demonstrates marked superiority on
+to extract ground-truth timing metrics.                                   TNS, attaining a MAPE of 23.92%, whereas the second-best method,
+Figure 3: Scalability comparison among GCN, GT, GNN-
+Propagation, and RTL-Sequencer demonstrates that our su-                 Figure 4: Comparison across sequence models. Mamba-2
+perior scalability in handling deeper cones with more nodes.             achieves the lowest MAPE across all metrics. Notably, all
+                                                                         sequence models surpass graph-based solutions.
+CircuitFusion [8], records 29.45%. This performance gap can be at-          To rigorously evaluate the effectiveness of the proposed sequence
+tributed to the absence of an explicit representation of signal prop-    modeling paradigm for RTL timing prediction, we conducted a com-
+agation in attention mechanism of CircuitFusion, which only mod-         prehensive comparative study across four representative sequence
+els node-to-node relationships. Although both CircuitFusion and          architectures. As illustrated in Fig. 4, the Mamba-2 model con-
+SG-Former [35] adopt GT-based architectures, SG-Former yields a          sistently delivers superior performance across all timing metrics,
+relatively poor AT MAPE of 32.67%, due to its reliance on a single       outperforming alternative sequence-based approaches. Notably, all
+block combining a GT with a GNN. RTLDistill [32] and NUA-Timer           sequence models substantially exceed traditional graph-based solu-
+[33] are hindered by exponential accumulation of errors across           tions, including GNN and GT variants, in both predictive accuracy
+cone layers, thus are outperformed by RTL-Sequencer. Notably, TF-        and scalability. This consistent superiority highlights a fundamental
+Predictor [3] exhibits the weakest performance among all baselines,      paradigm shift from isotropic graph representations to directional
+with an AT MAPE of 35.71%. Despite its claim as a sequence-based         sequence modeling, thereby substantiating the core hypothesis that
+model, TF-Predictor relies on a naive Transformer architecture that      logic cone linearization enables more expressive and scalable tim-
+focuses exclusively on specified timing paths. This design restricts     ing prediction. Collectively, these findings underscore the promise
+its applicability to RTL stages and ultimately renders it ineffective    of sequence-driven frameworks as a robust and scalable alternative
+for modeling meaningful representations of logic cones.                  to graph-based methodologies for early-stage design automation.
+    Moreover, Fig. 3 illustrates two fundamental limitations inherent
+in prior graph-based approaches. As shown in Fig. 3(a), the per-         6   CONCLUSION
+formance of GCN deteriorates more compared to RTL-Sequencer              This work introduces RTL-Sequencer, a novel sequence-based para-
+as logic depth increases, highlighting its restricted capacity to ef-    digm for scalable RTL timing prediction. By converting logic cones
+fectively capture deep combinational structures. In Fig. 3(b), GT        into ordered node sequences and employing advanced sequence
+exhibits quadratic memory overhead of the node count when the            modeling techniques, the framework achieves global receptive fields
+batch size is set to one, rendering it impractical for large-scale de-   with linear computational complexity while explicitly preserving
+signs. Furthermore, by incrementally adding 100 nodes per layer          signal directionality. The integration of sequence shuffling, bidirec-
+within the cone, we demonstrate that the computational complexity        tional sequence modeling, differentiable sequence modeling, and
+of GNN-Propagation scales quadratically with cone depth. In con-         a hybrid graph–sequence architecture collectively enhances pre-
+trast, RTL-Sequencer maintains linear memory complexity, thereby         dictive accuracy and scalability, consistently outperforming SOTA
+enabling scalable training across deep and complex designs.              graph-based approaches. Comprehensive experiments and ablation
+                                                                         studies substantiate the effectiveness of both the overall paradigm
+5.3    Ablation Studies                                                  and its individual components. Taken together, these results demon-
+To evaluate the individual contributions of the proposed architec-       strate the potential of RTL-Sequencer to advance early-stage timing
+tural innovations, we conducted a comprehensive ablation study,          estimation in digital design automation significantly.
+the results of which are summarized in Table 4. The baseline solu-
+tion can achieve accuracy comparable to graph-based approaches,          7   ACKNOWLEDGEMENT
+thereby underscoring the promise of the sequence-based paradigm.         This work is supported by Hong Kong Research Grants Council
+Moreover, each component contributes measurable improvements             (RGC) CRF-YCRG C6003-24Y, GRF 16200724, and T46-415/25-R. It
+in predictive performance, highlighting the synergistic nature of        was partially conducted by ACCESS – AI Chip Center for Emerging
+the overall framework. Among these, the sequence shuffling mecha-        Smart Systems, supported by the InnoHK initiative of the Inno-
+nism delivers the most pronounced gains in accuracy. This improve-       vation and Technology Commission of the Hong Kong Special
+ment arises from its function as a structural data augmentation          Administrative Region Government.
+strategy: by introducing stochastic permutations within BFT levels,
+the model is exposed to a wider range of topological variations
+while maintaining logical dependencies. Such diversity is able to
+mitigate overfitting to the deterministic node ordering, thereby
+enhancing generalization across heterogeneous RTL designs.
+REFERENCES                                                                                  [26] T Konstantin Rusch, Michael M Bronstein, and Siddhartha Mishra. 2023. A survey
+ [1] Erick Carvajal Barboza, Nishchal Shukla, Yiran Chen, and Jiang Hu. 2019. Ma-                on oversmoothing in graph neural networks. arXiv preprint arXiv:2303.10993
+     chine Learning-Based Pre-Routing Timing Prediction with Reduced Pessimism.                  (2023).
+     In 2019 56th ACM/IEEE Design Automation Conference (DAC).                              [27] Prianka Sengupta, Aakash Tyagi, Yiran Chen, and Jiang Hu. 2022. How Good
+ [2] Leo Breiman. 2001. Random forests. Machine learning 45, 1 (2001).                           Is Your Verilog RTL Code? A Quick Answer from Machine Learning. In 2022
+ [3] Peng Cao, Guoqing He, and Tai Yang. 2022. Tf-predictor: Transformer-based                   IEEE/ACM International Conference On Computer Aided Design (ICCAD).
+     prerouting path delay prediction framework. IEEE Transactions on Computer-             [28] Yutao Sun, Li Dong, Shaohan Huang, Shuming Ma, Yuqing Xia, Jilong Xue, Jiany-
+     Aided Design of Integrated Circuits and Systems 42, 7 (2022).                               ong Wang, and Furu Wei. 2023. Retentive network: A successor to transformer
+ [4] Peng Cao, Guoqing He, and Tai Yang. 2023. TF-Predictor: Transformer-Based                   for large language models. arXiv preprint arXiv:2307.08621 (2023).
+     Prerouting Path Delay Prediction Framework. IEEE Transactions on Computer-             [29] Veronika Thost and Jie Chen. 2021. Directed acyclic graph neural networks.
+     Aided Design of Integrated Circuits and Systems 42, 7 (2023).                               arXiv preprint arXiv:2101.07965 (2021).
+ [5] Tianqi Chen and Carlos Guestrin. 2016. Xgboost: A scalable tree boosting system.       [30] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones,
+     In Proceedings of the 22nd acm sigkdd international conference on knowledge                 Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. 2017. Attention is all
+     discovery and data mining.                                                                  you need. Advances in neural information processing systems 30 (2017).
+ [6] Vidya A. Chhabria, Wenjing Jiang, Andrew B. Kahng, and Sachin S. Sapatnekar.           [31] Petar Veličković, Guillem Cucurull, Arantxa Casanova, Adriana Romero, Pietro
+     2023. A Machine Learning Approach to Improving Timing Consistency between                   Lio, and Yoshua Bengio. 2017. Graph attention networks. arXiv preprint
+     Global Route and Detailed Route. ACM Trans. Des. Autom. Electron. Syst. 29, 1,              arXiv:1710.10903 (2017).
+     Article 18 (Dec. 2023).                                                                [32] Mingjun Wang, Yihan Wen, Bin Sun, Jianan Mu, Juan Li, Xiaoyi Wang, Jing Justin
+ [7] Tri Dao and Albert Gu. 2024. Transformers are ssms: Generalized models                      Ye, Bei Yu, and Huawei Li. [n. d.]. Bridging Layout and RTL: Knowledge Dis-
+     and efficient algorithms through structured state space duality. arXiv preprint             tillation based Timing Prediction. In Forty-second International Conference on
+     arXiv:2405.21060 (2024).                                                                    Machine Learning.
+ [8] Wenji Fang, Shang Liu, Jing Wang, and Zhiyao Xie. 2025. Circuitfusion: mul-            [33] Ziyi Wang, Fangzhou Liu, Tsung-Yi Ho, David Pan, and Bei Yu. 2025. NUA-Timer:
+     timodal circuit representation learning for agile chip design. arXiv preprint               Pre-Synthesis Timing Prediction Under Non-Uniform Input Arrival Times. In
+     arXiv:2505.02168 (2025).                                                                    2025 IEEE/ACM International Conference on Computer-Aided Design (ICCAD).
+ [9] Wenji Fang, Shang Liu, Hongce Zhang, and Zhiyao Xie. 2024. Annotating slack            [34] Ziyi Wang, Siting Liu, Yuan Pu, Song Chen, Tsung-Yi Ho, and Bei Yu. 2023.
+     directly on your verilog: Fine-grained rtl timing evaluation for early optimization.        Restructure-Tolerant Timing Prediction via Multimodal Fusion. In 2023 60th
+     In Proceedings of the 61st ACM/IEEE Design Automation Conference.                           ACM/IEEE Design Automation Conference (DAC).
+[10] Wenji Fang, Shang Liu, Hongce Zhang, and Zhiyao Xie. 2025. A Self-Supervised,          [35] Qitian Wu, Wentao Zhao, Chenxiao Yang, Hengrui Zhang, Fan Nie, Haitian
+     Pre-Trained, and Cross-Stage-Aligned Circuit Encoder Provides a Foundation for              Jiang, Yatao Bian, and Junchi Yan. 2023. Sgformer: Simplifying and empowering
+     Various Design Tasks. In Proceedings of the 30th Asia and South Pacific Design              transformers for large-graph representations. Advances in Neural Information
+     Automation Conference (ASPDAC ’25).                                                         Processing Systems 36 (2023).
+[11] Wenji Fang, Yao Lu, Shang Liu, Qijun Zhang, Ceyu Xu, Lisa Wu Wills, Hongce             [36] Zhiyao Xie, Rongjian Liang, Xiaoqing Xu, Jiang Hu, Chen-Chia Chang, Jingyu
+     Zhang, and Zhiyao Xie. 2023. Masterrtl: A pre-synthesis ppa estimation frame-               Pan, and Yiran Chen. 2022. Preplacement Net Length and Timing Estimation
+     work for any rtl design. In 2023 IEEE/ACM International Conference on Computer              by Customized Graph Neural Network. IEEE Transactions on Computer-Aided
+     Aided Design (ICCAD).                                                                       Design of Integrated Circuits and Systems 41, 11 (2022).
+[12] Albert Gu and Tri Dao. 2024. Mamba: Linear-time sequence modeling with                 [37] Zhiyao Xie, Rongjian Liang, Xiaoqing Xu, Jiang Hu, Yixiao Duan, and Yiran Chen.
+     selective state spaces. In First conference on language modeling.                           2021. Net2: A graph attention network method customized for pre-placement
+[13] Zizheng Guo, Mingjie Liu, Jiaqi Gu, Shuhan Zhang, David Z Pan, and Yibo Lin.                net length estimation. In Proceedings of the 26th Asia and South Pacific Design
+     2022. A timing engine inspired graph neural network model for pre-routing slack             Automation Conference.
+     prediction. In Proceedings of the 59th ACM/IEEE Design Automation Conference.          [38] Ceyu Xu, Chris Kjellqvist, and Lisa Wu Wills. 2022. SNS’s not a synthesizer:
+[14] Zizheng Guo, Mingjie Liu, Jiaqi Gu, Shuhan Zhang, David Z. Pan, and Yibo Lin.               a deep-learning-based synthesis predictor. In Proceedings of the 49th Annual
+     2022. A timing engine inspired graph neural network model for pre-routing slack             International Symposium on Computer Architecture (ISCA ’22).
+     prediction. In Proceedings of the 59th ACM/IEEE Design Automation Conference           [39] Ceyu Xu, Pragya Sharma, Tianshu Wang, and Lisa Wu Wills. 2023. Fast, Robust
+     (DAC ’22).                                                                                  and Transferable Prediction for Hardware Logic Synthesis. In Proceedings of the
+[15] Xu He, Zhiyong Fu, Yao Wang, Chang Liu, and Yang Guo. 2022. Accurate timing                 56th Annual IEEE/ACM International Symposium on Microarchitecture (MICRO
+     prediction at placement stage with look-ahead RC network. In Proceedings of the             ’23).
+     59th ACM/IEEE Design Automation Conference.                                            [40] Songlin Yang, Bailin Wang, Yu Zhang, Yikang Shen, and Yoon Kim. 2024. Paral-
+[16] Tsung-Wei Huang and Martin DF Wong. 2015. OpenTimer: A high-performance                     lelizing linear transformers with the delta rule over sequence length. Advances
+     timing analysis tool. In 2015 IEEE/ACM International Conference on Computer-                in neural information processing systems 37 (2024).
+     Aided Design (ICCAD).                                                                  [41] Tianzhu Ye, Li Dong, Yuqing Xia, Yutao Sun, Yi Zhu, Gao Huang, and Furu Wei.
+[17] Leilei Jin, Rongliang Fu, Zhen Zhuang, Liang Xiao, Fangzhou Liu, Bei Yu, and                2024. Differential transformer. arXiv preprint arXiv:2410.05258 (2024).
+     Tsung-Yi Ho. 2025. ChronoTE: Crosstalk-Aware Timing Estimation for Rout-               [42] Seongjun Yun, Minbyul Jeong, Raehyun Kim, Jaewoo Kang, and Hyunwoo J Kim.
+     ing Optimization via Edge-Enhanced GNNs. In 2025 IEEE/ACM International                     2019. Graph transformer networks. Advances in neural information processing
+     Conference on Computer-Aided Design (ICCAD).                                                systems 32 (2019).
+[18] Andrew B. Kahng, Seokhyeong Kang, Hyein Lee, Siddhartha Nath, and Jyoti                [43] Xinyun Zhang, Binwu Zhu, Fangzhou Liu, Ziyi Wang, Peng Xu, Hong Xu, and
+     Wadhwani. 2013. Learning-based approximation of interconnect delay and slew                 Bei Yu. 2024. Disentangle, Align and Generalize: Learning A Timing Predictor
+     in signoff timing tools. In 2013 ACM/IEEE International Workshop on System Level            from Different Technology Nodes. In Proceedings of the 61st ACM/IEEE Design
+     Interconnect Prediction (SLIP).                                                             Automation Conference (DAC ’24). Article 133.
+[19] Andrew B. Kahng, Mulong Luo, and Siddhartha Nath. 2015. SI for free: machine           [44] Ruizhe Zhong, Junjie Ye, Zhentao Tang, Shixiong Kai, Mingxuan Yuan, Jianye Hao,
+     learning of interconnect coupling delay and transition effects. In 2015 ACM/IEEE            and Junchi Yan. 2024. PreRoutGNN for timing prediction with order preserving
+     International Workshop on System Level Interconnect Prediction (SLIP).                      partition: global circuit pre-training, local delay learning and attentional cell
+[20] TN Kipf. 2016. Semi-supervised classification with graph convolutional networks.            modeling. Article 1905.
+     arXiv preprint arXiv:1609.02907 (2016).
+[21] Yujia Li, Daniel Tarlow, Marc Brockschmidt, and Richard Zemel. 2015. Gated
+     graph sequence neural networks. arXiv preprint arXiv:1511.05493 (2015).
+[22] Rongjian Liang, Zhiyao Xie, Jinwook Jung, Vishnavi Chauha, Yiran Chen, Jiang
+     Hu, Hua Xiang, and Gi-Joon Nam. 2020. Routing-Free Crosstalk Prediction. In
+     2020 IEEE/ACM International Conference On Computer Aided Design (ICCAD).
+[23] Daniela Sánchez Lopera and Wolfgang Ecker. 2022. Applying GNNs to Timing
+     Estimation at RTL. In Proceedings of the 41st IEEE/ACM International Conference
+     on Computer-Aided Design (ICCAD ’22). Article 3.
+[24] Bo Peng, Eric Alcaide, Quentin Anthony, Alon Albalak, Samuel Arcadinho, Stella
+     Biderman, Huanqi Cao, Xin Cheng, Michael Chung, Matteo Grella, et al. 2023.
+     Rwkv: Reinventing rnns for the transformer era. arXiv preprint arXiv:2305.13048
+     (2023).
+[25] Pei Quan, Yong Shi, Minglong Lei, Jiaxu Leng, Tianlin Zhang, and Lingfeng Niu.
+     2019. A Brief Review of Receptive Fields in Graph Convolutional Networks. In
+     IEEE/WIC/ACM International Conference on Web Intelligence - Companion Volume
+     (Thessaloniki, Greece) (WI ’19 Companion).
+

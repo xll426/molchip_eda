@@ -1,0 +1,2046 @@
+FVEval: Understanding Language Model Capabilities
+in Formal Verification of Digital Hardware
+Minwoo Kang 1∗, Mingjie Liu 2, Ghaith Bany Hamad 2, Syed Suhaib 2, Haoxing Ren 2
+1 UC Berkeley 2 NVIDIA
+mkang@cs.berkeley.edu
+{mingjiel, gbanyhamad, ssuhaib, haoxingr}@nvidia.com
+Abstract
+The remarkable reasoning and code generation capabilities of large language models (LLMs)
+have spurred significant interest in applying LLMs to enable task automation in digital chip
+design. In particular, recent work has investigated early ideas of applying these models to formal
+verification (FV), an approach to verifying hardware implementations that can provide strong
+guarantees of confidence but demands significant amounts of human effort. While the value
+of LLM-driven automation is evident, our understanding of model performance, however, has
+been hindered by the lack of holistic evaluation. In response, we present FVEval, the first com-
+prehensive benchmark and evaluation framework for characterizing LLM performance in tasks
+pertaining to FV. The benchmark consists of three sub-tasks that measure LLM capabilities at
+different levels—from the generation of SystemVerilog assertions (SVAs) given natural language
+descriptions to reasoning about the design RTL and suggesting assertions directly without ad-
+ditional human input. As test instances, we present both collections of expert-written verification
+collateral and methodologies to scalably generate synthetic examples aligned with industrial
+FV workflows. A wide range of existing LLMs, both proprietary and open-source, are evaluated
+against FVEval, based on which we investigate where today’s LLMs stand and how we might
+further enable their application toward improving productivity in digital FV. Our benchmark
+and evaluation code is available at https://github.com/NVlabs/FVEval.
+1
+Introduction
+Hardware verification is a critical stage in digital VLSI development that is not only challenging
+but also indispensable to successful chip manufacturing. To ensure that design implementations
+are fully verified against expected functional behaviors, industrial teams are increasingly adopting
+formal verification (FV), an approach that formulates specifications of the design as temporal logical
+properties and applies formal methods to mathematically prove that the said properties hold
+across all expected input stimuli. While FV offers distinct advantages, such as the ability to detect
+bugs that are elusive or hard-to-reach with simulation-based approaches, it also bears limitations:
+FV workflows suffer from steep engineering costs of manually crafting formal testbenches and
+collateral by human experts. As a result, scaling the adoption of FV and extending its use to cover
+a larger number of sub-systems remains a challenge.
+*Work done as intern at NVIDIA
+1
+arXiv:2410.23299v1  [cs.AR]  15 Oct 2024
+
+NL2SVA-Human
+Design2SVA
+Synthetic
+RTL Data 
+Generator
+Question:
+Question: generate a 
+single SVA assertion 
+for the given design 
+RTL that is most 
+important to verify.
+`define WIDTH 32
+module fsm(
+clk,
+reset_,
+in_A,
+in_B,
+in_C,
+in_D,
+fsm_out
+);
+fsm_id_42.sv
+LLM Answer:
+assert property (@(posedge clk) 
+ disable iff (!reset_)
+ (fsm_state == 2'b00) 
+  |-> ##1 fsm_state == 2'b10)
+;
+Syntax 
+Func.
+Eval Metrics
+NL2SVA-Human
+NL2SVA-Machine
+Synthetic
+Assertion 
+Generator 
+Question:
+Create a SVA assertion 
+that checks:
+ If both sig_G and sig_C are 
+high and sig_A is high, then 
+sig_I must not be high 5 
+clock cycles later
+Solution:
+assert property(@(posedge clk)
+ (sig_G && (sig_C && sig_A)) 
+   |-> ##5 (sig_I !== 1'b1)
+);
+LLM Answer:
+assert property (@(posedge clk)
+ ((sig_G && sig_C && sig_A) |-> ##5 !sig_I)
+);
+Syntax 
+Func.
+Func.(Partial)
+Eval Metrics
+NL2SVA-Human
+NL2SVA-Human
+module fifo_1r1w_tb (
+clk,
+reset_,
+wr_vld,
+wr_data,
+wr_ready,
+rd_vld,
+rd_data,
+rd_ready
+);
+Expert-
+Written 
+Testbench
+Question:
+Create a SVA assertion 
+that checks: the FIFO 
+does not underflow, 
+assuming no bypass.
+fifo_1r1w.sva
+LLM Answer:
+assert property (@(posedge clk) 
+ !(rd_pop && fifo_empty)
+);
+Syntax 
+Func.
+Func.(Partial)
+Eval Metrics
+Figure 1: Overview of the FVEval benchmark and evaluation flow. FVEval consists of three
+sub-benchmarks NL2SVA-Human, NL2SVA-Machine, and Design2SVA that measure model
+capabilities in generating functionally correct implementations of assertions from NL descriptions
+and also directly from design under test. The evaluation framework integrates industry-standard
+FV tools to accurately measure LLM response correctness.
+With the recent advancements of large language models (LLMs) [1, 29, 45, 19, 14], researchers
+have in turn started to apply language models toward automating and improving productivity
+in hardware verification [26, 17, 44, 46]. In particular, recent work has investigated the possibility
+of LLMs to perform tasks in formal verification such as generating formal assertions from natural
+language (NL) specifications [11] and from register-transfer level (RTL) implementations of the
+design-under-test (DUT) [34]. The shared motivation across this recent interest in utilizing LLMs is
+intuitive: the information that human FV engineers process as input (design RTL and specifications)
+and the generated outputs (FV testbench implementations) are both innately represented as text and
+code, with which LLMs have shown impressive capabilities in reasoning and generation [5, 18, 3].
+While prior work has demonstrated that current LLMs have the potential to generate hardware
+assertions, their evaluation, however, has been limited to a hand-select set of test instances with
+typically less than 10 or 20 problems. Due to the dearth of publicly available repositories of reliable
+designs and formal testbenches, it has been challenging to curate a dataset for evaluation that
+encompasses a variety of designs. Furthermore, prior evaluation of LLMs has considered a limited
+set of tasks which renders a holistic evaluation of model capabilities unviable. This altogether raises
+the question: how should we comprehensively understand and quantify current LLMs capabilities
+in performing tasks in hardware formal verification?
+In this work, we present the first comprehensive benchmark for LLMs on diverse tasks pertain-
+ing to formal verification via SystemVerilog assertions, which we refer to as FVEval. As shown in
+Figure 1, FVEval is a collection of three sub-benchmarks: NL2SVA-Human, NL2SVA-Machine, and
+Design2SVA which each evaluate LLMs in different industry-relevant scenarios exercising various
+capabilities related to code generation and reasoning in the context of SystemVerilog and hardware
+formal properties. As test problem instances, we either collect human-written designs and test-
+benches or present methodologies to scalably generate synthetic yet realistic test cases motivated
+2
+
+by real-world designs. Finally, we evaluate a wide range of existing LLMs, both proprietary and
+open-source, against FVEval and delineate the limitations of current models.
+2
+Preliminaries
+Hardware verification is a crucial stage in the chip design process, necessary to make sure the
+end product functions according to the specification. However, even though on average more
+resources are now allocated to verification than hardware design, recent industry data shows that
+an increasing percentage of projects see critical bugs escape verification [12] that must be fixed by an
+expensive re-spin. There are two widely accepted approaches to hardware verification: traditional
+simulation-based verification and formal verification (FV), which has been gaining momentum
+in the recent decade.
+Unlike simulation-based verification, FV aims to formally prove that a digital circuit design
+meets a given specification [23]. The specification in FV is represented as a set of properties that
+either constrain the input stimuli, as assumptions; or define the expected behavior of the design to be
+verified, as assertions. Digital circuits can naturally be expressed as state transition systems, and the
+properties in temporal logic [9, 8]. This representation allows model checkers to traverse through
+the state transition graph to search for any states where the properties do not hold [7]. If the model
+checker can find any such state, it returns a counterexample or trace for which that property fails. In
+contrast, simulation-based verification would only check the properties for a subset of states based
+on the defined input stimuli. If a model checker can provide a formal guarantee that a property
+is indeed true in every state—it has found a formal proof the property always holds for the design.
+3
+Overview of the FVEval Benchmark Framework
+This section presents an overview of the proposed FVEval—a collection of three sub-benchmarks
+that assess language models on varying tasks related to hardware FV. Here, we first describe the
+motivation for formulating these sub-benchmarks and the capabilities of LLMs that we seek to
+measure. Then we describe the details, including the dataset collection or generation process,
+definitions of model inputs and outputs, and evaluation metrics for each sub-benchmark.
+3.1
+Motivation
+In this work, we focus on assessing the viability of LLMs to be applied towards industrial hardware
+FV based on SystemVerilog Assertions (SVAs). In performing functional verification, FV engineers
+go through the process of: (1) analyzing the design-under-test (DUT) RTL and the specification doc-
+umentation describing the expected functional behaviors of the design; and (2) writing testbenches
+that consist of assertions checking the design against the specification. LLMs could potentially
+improve FV productivity by automating the implementation of such SVA assertions from natural
+language specifications.
+In this context, we curate the first sub-benchmark, NL2SVA-Human, through which we raise
+the question: Do LLMs have the capability to generate SVA assertions, given real-world, human-written
+testbenches and high-level specifications of design functionality? Even though SVA assertions can be
+relatively short pieces of code, the outputs must accurately reflect the specification and do so in the
+context of the provided testbench, which entails grounding the implementation of the assertion on
+existing modeling code provided in the testbench. In curating the evaluation dataset, we focus on a
+representative set of testbenches that target common unit-level modules that engineers repeatedly
+3
+
+encounter as part of larger sub-systems. Therefore, models that can reliably generate SVA assertions
+for test instances in NL2SVA-Human may have great potential for industrial utility.
+We also note that in practice, FV engineers not only repeat similar patterns of assertions for
+common sub-units but also implement custom assertions tailored to a specific property to be
+checked. NL2SVA-Machine attempts to quantify LLM performance the second case: "Can LLMs
+flexibly handle diverse NL specifications of formal properties and accurately formulate the same formal logic in
+SVA syntax?" The emphasis here is on evaluating LLMs against a wide range of NL to SVA assertion
+pairs that exercise various formal logical operators. High accuracy on this benchmark reflects the
+robustness of a model in generating code outputs in SystemVerilog Assertions.
+Finally, a more challenging but also extremely helpful application of LLMs is their use towards
+suggesting formal properties to be verified for a particular design RTL and prior to a human
+engineer drafting a full specification. In Design2SVA, we ask: "Can LLMs craft relevant SVA assertions
+directly from design RTL and without human guidance?" Compared to previous benchmarks, this task
+demands a higher-level of understanding RTL code and the semantics of the hardware module
+described by the RTL. Models successful in this benchmark could have potential to realize further
+advanced usages of language models in hardware FV, as artificial agents assisting human engineers.
+3.2
+NL2SVA-Human: Assertion Generation with Real-World Testbenches
+Dataset. Our collection of test instances cover basic units of FV such as first-in-first-out (FIFO)
+queues, arbiters, hardware counters, random-access memory (RAM) units, and finite-state machines.
+Each testbench comes with a set of assertions and accompanying natural language description
+written by formal experts that address various design functionalities, with the benchmark holding
+a total of 79 assertions. Figure 2 summarizes the statistics about the test instances, in terms of the
+distribution of lengths of natural language specifications and reference SVA assertion solutions.
+We measure length as the number of tokens based on the tokenizer used in the Llama3 models [29].
+We see a wide range in the distribution reflecting the variety of formal properties in the benchmark.
+NL2SVA-Human Inputs
+Input Context: Testbench SystemVerilog [arbiter_rr.sv]
+Question: Create a SVA assertion that checks:
+whether starvation occurs, i.e. check that each request 
+from client is eventually granted.
+Expected Output (Reference Assertion)
+assert property (@(posedge clk) disable iff (tb_reset)
+  (!busy && |tb_req && (tb_gnt == ’d0)) !== 1’b1
+);
+LLM Generated Output Examples:
+GPT-4:
+assert property (@(posedge clk) disable iff (tb_reset)
+  (tb_req && !busy) |-> tb_gnt
+);
+Llama-3-70B-Chat:
+assert property (@(posedge clk) disable iff (tb_reset)
+  |tb_req && !busy |=> ##[1:$] (|tb_gnt))
+);
+Figure 2: (Left) Input and output examples of the NL2SVA-Human benchmark. Reference solution
+is the SVA assertion written by the human engineer that the LLM response is expected to match
+in terms of functionality. (Right) Distribution of token length for the NL specifications and the
+reference SVA solutions contained in the benchmark.
+4
+
+NL2SVA-Machine Inputs
+Question: Create a SVA assertion that checks:
+if sig_G and sig_J are both true, then two clock cycles later, sig_G 
+must have an odd number of 1’s and all bits of sig_B must be 1.
+Expected Output (Reference Assertion)
+assert property(@(posedge clk)
+  (sig_G && sig_J)
+    |-> ##2 ((ˆsig_G === 1’b1) && &sig_B)
+);
+LLM Generated Output Examples:
+GPT-4o:
+assert property (@(posedge clk)
+  (sig_G && sig_J) |-> ##2 (ˆ{sig_G} && (sig_B == ’1))
+);
+GPT-3.5-Turbo:
+assert property (@(posedge clk)
+  (sig_G && sig_J) && ##2 (($countones(sig_G) % 2 == 1) 
+     && ($countones(sig_B) == $bits(sig_B)))
+);
+Figure 3: (Left) Input and output examples of the NL2SVA-Machine benchmark. The dataset
+consists of naturalized descriptions of the formal-symbolic logic formulae and the corresponding
+SVA assertion, based on which the NL annotations were created. (Right) Distribution of lengths
+of NL descriptions and SVA assertions, measured in token length using the Llama3 tokenizer.
+Models are given as prompt input: (1) the testbench code (SystemVerilog) with all of its original
+assertions removed but containing modeling code with internal signals (wires and state) and
+input/output ports of the testbench module; and (2) a high-level NL description of the intended
+assertion. An example is shown on the left of Figure 2. The model response is expected to match
+the human-written assertion that serves as ground-truth.
+Evaluation.
+We evaluate model responses in terms of syntax and functional correctness. For
+syntax correctness, we measure whether the generated SVA assertions pass the syntax check
+performed by industry-standard, commercial FV tools such as Cadence Jasper. For functional
+correctness, we present a novel approach in measuring exact logical equivalence between a pair of
+assertions, model-generated and ground-truth. Our method utilizes a custom-implemented Jasper
+function that formally proves logical equivalence, and further, can also evaluate whether there is an
+implication relationship between the two assertions. We also report a relaxed metric of functional
+accuracy that includes such a case of partialequivalence and thereby capture the performance of LLMs
+at a finer granularity than only considering exact equivalence. Finally, as an alternative measure of
+functional correctness, the lexical similarity between the model-generated code against the reference
+solution using standard n-gram metrics such as BLEU could be considered. While we report BLEU
+scores, we do note that commercial FV tools are required for accurate evaluation of SVA assertions.
+3.3
+NL2SVA-Machine: Synthetic Benchmark for Stress-Testing Formal Assertion Gen-
+eration
+Dataset.
+To create diverse test cases of NL description and SVA assertion pairs, we follow the
+process of: (1) random SVA assertion generation, based on random sampling of SVA operators
+and symbolic signal names; (2) LLM generation of NL descriptions for each random assertion;
+(3) LLM as a critic to assess whether the NL description accurately reflects the temporal logic of
+the assertion—if this fails, re-try description generation; and (4) Human inspection to finalize the
+5
+
+appropriateness of generated descriptions. For description generation, we run LLM inference
+with sampling temperature T = 1.0 and for assessment as a critic, we use greedy sampling with
+temperature T =0.0. We use gpt-4o for NL description generation and gpt-4-turbo for assessment.
+With a fully automated generated flow, NL2SVA-Machine consists of 300 test cases with widely
+varying patterns of SVA assertions and natural language usage variations to describe them. An
+example of a test instance and sample LLM responses are shown in Figure 3. As input context,
+models are solely given a symbolic text description of the logical formula, and the expected output
+is an SVA assertion matching the logical expression. Summaries of the distribution of randomly
+generated test cases are shown in Figure 3.
+Evaluation.
+As NL2SVA-Machine also prompts models with natural language specifications and
+expects outputs in concrete SVA assertion implementations, we follow the same evaluation protocol
+and metrics as NL2SVA-Human.
+3.4
+Design2SVA: Direct Generation of Formal Assertions from Design RTL Alone
+Dataset.
+Our objective in formulating the Design2SVA benchmark is to present a set of test cases
+consisting of design RTL that are: (1) sufficiently correct, as in there exist formal properties that
+can be proven to be true; (2) relevant to real-world FV use-cases; (3) suitable as test instances for
+language models; and (4) varied in terms of complexity. While it is ideal to collect and curate
+existing RTL examples, we find that openly available SystemVerilog/Verilog repositories contain
+limited numbers of verified RTL designs. Of the cases that satisfy the first and second criteria,
+such as module instances from OpenTitan [33], these cases fail to be suitable for language model
+evaluation, as each module is a part of a large System-on-a-Chip (SoC) system and the context
+needed to resolve all sub-module dependency information is prohibitively large.
+Instead, we
+propose a methodology to scalably generate complex and parameterized synthetic test instances
+that are derived from common design patterns encountered in industrial FV workflows. As shown
+in Figure 4, the two categories of RTL designs we generate are (1) arithmetic pipelines that resemble
+scenarios where we check for data integrity and forward propagation across datapaths; and (2)
+finite-state machines (FSMs) that commonly appear in control logic implementations, such as cache
+controllers, memory interfaces, etc. Each category of our designs has randomized sub-components—
+the arithmetic execution units in the pipeline designs and the FSM graph and state transition logic
+in the FSM design—and each generated RTL is parameterized such that controlled generation
+of test instances is possible. While a virtually limitless number of designs can be generated in
+this manner, we compose the Design2SVA benchmark to contain 96 test instances for each design
+category (pipeline and FSM) based on a controlled sweep of generator parameters.
+Evaluation
+For each generated RTL test instance, we also generate an accompanying formal
+testbench, based on which language models generate suggestions of assertions. The FVEval eval-
+uation flow then re-formats the testbench with the model-generated assertions and supplies the
+SystemVerilog to the commercial tool backend for evaluation. The metrics of evaluation are similar
+to the NL2SVA benchmarks: (1) Syntax—we measure the LLM generated assertion is first syntac-
+tically correct; (2) Functionality—we use the results of formal proofs, i.e. whether the assertions
+are proven with model checkers and other formal engines in industrial tools, as an indication of
+functional correctness.
+Unlike in NL2SVA-Human and NLSVA-Machine, the Design2SVA benchmark subjects LLMs to
+generate relevant and correct SVA assertions given a design under verification, and as such, there
+6
+
+Pipelines#1 Pipeline
+Control Parameters:
+•
+# of execution units
+•
+Depth of entire pipeline
+•
+Bit width of input/output data
+•
+Complexity of random combinational logic describing 
+functionality of each execution unit
+FSMs
+Control Parameters:
+•
+# of FSM states (nodes)
+•
+# of FSM transitions (edges)
+•
+Depth of entire pipeline
+•
+Bit width of input/output data
+•
+Complexity of combinational state transition logic
+S0
+S1
+S2
+S4
+S3
+Ex. 
+Unit
+Pipelined
+Ex. Unit
+Ex. 
+Unit
+Figure 4: Synthetic RTL Testcase generation. For each category of designs, we vary a list of control
+parameters to generate test design instances such that the total set of 96 cases for each category
+exhibit a wide distribution of difficulties. The total token length of the randomly generated arith-
+metic logic and FSM transition logic, correlated with complexity of designs under FV, are shown.
+are numerous valid completions that are functionally different from each other. To quantify model
+capability in this setting, we consider the pass@k metric, where a problem instance is considered
+solved if any of the k attempted solutions are correct.
+Design2SVA Inputs
+Input Context: 
+Design-under-Verification RTL (Pipeline and FSM); Testbench Interface (Port Definition, etc.) 
+Question: Generate a SVA assertion for the given design RTL that is most important to verify. 
+If necessary, produce any extra code, including wires, registers, and their assignments.
+LLM Generated Output Examples:
+GPT-4o:
+wire [FSM_WIDTH-1:0] next_state_tb;
+assign next_state_tb = (fsm_out == S0) ? S2 :
+ (fsm_out == S1) ? S3 :
+ (fsm_out == S2) ? ((in_D || in_C) == ’d0) ? S0 : (in_C <= ’d1) != in_A) ? S1 : S3 :
+ (fsm_out == S3) ? S1 : ’0;
+assert property (@(posedge clk) disable iff (reset_)
+  (fsm_out == next_state_tb)
+);
+Figure 5: Input and output examples of the Design2SVA benchmark. Models are provided with
+the design RTL as input context, based on which are then prompted to generate valid assertions.
+The model is also prompted to generate any accompanying code necessary for implementing the
+given assertion, as shown in the example response.
+7
+
+Model
+Syntax
+Func.
+Partial Func.
+BLEU
+gpt-4o
+0.911
+0.456
+0.582
+0.503
+gemini-1.5-pro
+0.810
+0.253
+0.380
+0.484
+gemini-1.5-flash
+0.949
+0.380
+0.557
+0.518
+Mixtral-8x22b
+0.823
+0.190
+0.278
+0.450
+Llama-3.1-70b
+0.861
+0.291
+0.354
+0.464
+Llama-3-70b
+0.899
+0.291
+0.506
+0.464
+Llama-3.1-8b
+0.835
+0.203
+0.304
+0.525
+Llama-3-8b
+0.747
+0.063
+0.215
+0.491
+Table 1:
+Evaluation results for the NL2SVA-
+Human Benchmark. Boldface and underlined
+results indicate highest and second highest metric
+values, respectively.
+We see that models that
+proprietary models with generally advanced
+capabilities for code generation and logical
+reasoning achieve the best performance across all
+metrics. Notably, all models show a significant
+gap between full and partial equivalence of
+assertion functionality—this highlights the value
+of fine-grained measurement of functional cor-
+rectness that captures how close LLM-generated
+assertions are similar to the human-written
+reference solution.
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+BLEU Score
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Func.
+GPT-4o | Corr: 0.056
+Llama-3.1-70B | Corr: 0.093
+Figure 6: Analysis on the correlation be-
+tween functionality correctness measures
+based on formal equivalence versus BLEU
+scores as approximate measures of assertion
+similarity. We see little correlation between
+the two metrics, with coefficients 0.0563 and
+0.0926 respectively, indicating that BLEU
+scores are insufficient to fully capture the
+equivalence of a LLM-generated assertion
+against a reference solution.
+4
+Results and Analysis
+In this section, we report the results of evaluating a suite of current state-of-the-art language models,
+trained on considerable sizes of text corpora pertaining to diverse programming languages.
+4.1
+Experiment Setup
+A wide range of LLMs, both proprietary and open-source (i.e. models with weights publicly
+available) are considered. We consider the most recent OpenAI model gpt-4o-0513 [1] and Google
+Gemini models [14] gemini-1.5-pro-001 and gemini-1.5-flash-001. All results of the proprietary
+models are based on accessing their respective endpoint services in May 2024. For open-source
+models, we evaluate the models from the Llama 3 [29] and Llama 3.1 family [30] with 8B and 70B
+parameters; we also consider mixtral-8x22b-instruct-v1, a sparse Mixture-of-Experts model with
+approximately 39B active parameters [19]. Note that all models are instruction fine-tuned models,
+as our tasks heavily require instruction-following capabilities. Evaluation of open-source models
+was performed via vLLM [24], a high-throughput LLM inference framework.
+4.2
+NL2SVA-Human Results
+We consider zero-shot model inference where (1) the problem testbench and (2) NL descriptions
+of the intended SystemVerilog assertion is given as model input. Evaluation results from running
+model inference with greedy decoding are summarized in Table 1. We observe that the models
+reported with highest general capabilities in code generation and logical reasoning, such as gpt-4o
+and gemini models, show the best performance across all metrics.
+8
+
+Problem ID: fifo_1r1w_bypass_4
+Question: Create a SVA assertion that checks: that when there is a write push to the FIFO, data is
+eventually popped. Use the signals ’rd_pop’ and ’wr_push’.
+Reference Solution:
+asrt: assert property (@(posedge clk) disable iff (tb_reset)
+wr_push |−> strong(##[0:$] rd_pop)
+);
+gpt-4o Response:
+asrt: assert property (@(posedge clk) disable iff (tb_reset)
+wr_push |−> ##[1:$] rd_pop // weak temporal implication + one−cycle latency
+); // reference assertion implies this assertion
+Syntax: pass | Functionality: partial pass
+Llama-3.1-70B-Instruct Response:
+asrt_wr_push_rd_pop: assert property (@(posedge clk) disable iff (tb_reset)
+wr_push |−> eventually(rd_pop)
+); // 'eventually' is an invalid operator
+Syntax: fail | Functionality: fail
+Problem ID: arbiter_reverse_priority_9
+Question: Create a SVA assertion that checks: that the arbiter is never on hold or busy or on continued
+grant at the same time. Use the signals ’busy’, ’hold’, and ’cont_gnt’.
+Reference Solution:
+asrt: assert property (@(posedge clk) disable iff (tb_reset)
+!$onehot0({hold,busy,cont_gnt}) !== 1'b1
+);
+gpt-4o Response:
+asrt: assert property (@(posedge clk) disable iff (tb_reset)
+!(busy && hold && cont_gnt) // this assertion only checks if all three signals are set high
+); // this assertion implies the reference
+Syntax: pass | Functionality: partial pass
+Llama-3.1-70B-Instruct Response:
+asrt: assert property (@(posedge clk) disable iff (tb_reset)
+!(busy && (hold || cont_gnt)) && !(hold && (busy || cont_gnt)) && !(cont_gnt && (busy || hold))
+);
+Syntax: pass | Functionality: pass
+Figure 7: Examples of common failure modes observed in different language models for the
+NL2SVA-Human benchmark. (1) LLMs frequently hallucinate SVA syntax and operators, such
+as “s_eventually”. (2) Given a high-level natural language specification, models may generate
+assertions that either imply or is implied by the reference solution: while these assertions are not
+exactly equivalent to the intended assertions, it is of interest to capture such cases of proximal
+solutions when evaluating different LLMs’ applicability to the use case of generating SV assertions
+from high-level natural language descriptions.
+LLMs can generate syntactically correct SVA code but are still prone to hallucinations. Even
+the most capable models considered, we observe that models are still prone to hallucinating subsets
+9
+
+Model
+Syntax@5
+Func.@3
+Func.@5
+Partial.@3
+Partial.@5
+gpt-4o
+0.987
+0.461
+0.468
+0.614
+0.651
+gemini-1.5-flash
+0.987
+0.442
+0.466
+0.602
+0.629
+Llama-3.1-70b
+0.975
+0.382
+0.436
+0.545
+0.604
+Table 2: Results for NL2SVA-Human under the case of sampling multiple model responses, where
+pass@k for each evaluation metric is measured. We observe that all models are able to generate
+at least one syntactically correct SVA implementation out of five attempts; functional correctness
+is also improved with increasing numbers of samples.
+of SVA syntax, e.g. s_eventually, strong, and other particular operators. In Figure 7, we see that
+Llama-3.1-70B incorrectly applying a non-existent operator “eventually” in generating a liveness as-
+sertion, likely due to the key word provided in the natural language input. Such hallucination is also
+observed in the most capable models including gpt-4o, gemini-1.5-pro, and gemini-1.5-flash.
+Partial functional equivalence as a correctness metric reveals further understanding of model
+capabilities. Overall, there is a notable gap between the accuracy measured with exact functional
+equivalence and that with partial equivalence. Such a gap can be attributed to the innate ambiguity
+in the high-level NL descriptions—while full functional equivalence necessitates correctness, those
+that imply the ground-truth solution and vice-versa are also possibly valid solutions given the input
+descriptions. NL2SVA-Human reflects scenarios in the industrial FV workflows, where engineers
+wish to benefit from LLM-based auto-generation of SVA assertions from possibly ambiguous NL
+specifications. In the examples from Figure 7, we indeed see that partially equivalent assertions are
+reasonable responses to the natural language input, and taking into account both the full and partial
+functional equivalence of LLM-generated solutions gives a richer picture of how these models
+would be applicable in scenarios where engineers provide high-level sketches of desired assertion
+functionality. FVEval is the first evaluation framework that elucidates analysis on this nature of
+completing formal assertion implementation from natural language, and is able to provide concrete
+metrics of full and partial equivalence based on industry-standard verification tools.
+Model
+0-shot
+3-shot
+Syntax
+Func.
+Partial Func.
+BLEU
+Syntax
+Func.
+Partial Func.
+BLEU
+gpt-4o
+0.927
+0.430
+0.540
+0.622
+0.937
+0.467
+0.570
+0.660
+gemini-1.5-pro
+0.467
+0.137
+0.203
+0.510
+0.880
+0.417
+0.517
+0.622
+gemini-1.5-flash
+0.783
+0.377
+0.470
+0.574
+0.837
+0.397
+0.480
+0.613
+Mixtral-8x22b
+0.913
+0.327
+0.500
+0.546
+0.880
+0.430
+0.523
+0.599
+Llama-3.1-70b
+0.887
+0.303
+0.397
+0.595
+0.920
+0.457
+0.567
+0.651
+Llama-3-70b
+0.863
+0.330
+0.430
+0.570
+0.860
+0.380
+0.503
+0.621
+Llama-3.1-8b
+0.813
+0.320
+0.520
+0.533
+0.840
+0.267
+0.370
+0.582
+Llama-3-8b
+0.673
+0.187
+0.320
+0.493
+0.827
+0.240
+0.397
+0.552
+Table 3: Evaluation results for the NL2SVA-Machine Benchmark. Boldface and underlined results
+indicate highest and second highest metric values, respectively. While even the smaller models
+achieve moderately high syntax correctness (>80%) with in-context examples, we see a limitations
+in functional correctness and again a gap between full and partial correctness of model-generated
+assertions.
+BLEU scores are not indicative of formal, functional correctness for NL2SVA-Human. In
+Figure 6, we see that BLEU scores, measuring similarity between LLM outputs against ground-
+truth assertion implementations, are not correlated with formal equivalence based measures of
+correctness. While BLEU scores or other lexical measures capture surface-level similarities between
+10
+
+outputs, we find that for a complete analysis of LLM capabilities, it is necessary to analyze formal
+equivalence between assertions, which is implemented as part of FVEval evaluation framework.
+Sampling multiple response candidates improves accuracy. Here, we investigate a scenario
+where models generate multiple responses in parallel for each test instance. Table 2 presents the
+results from the best performing LLMs from the zero-shot greedy decoding where we measure
+the pass@5 values of each evaluation metric. We observe that state-of-the-art models, such as
+gpt-4o, achieve a relaxed functional pass@5, showing an improvement of up to 11% compared to
+pass@1. While the absolute success rate is modest, these improvements suggest the potential for
+future research into novel training and inference strategies, including prompt optimization and
+inference-time compute scaling [40], to enhance model generation of SystemVerilog assertions.
+4.3
+NL2SVA-Machine Results
+A further task to quantify model capability in handling diverse SystemVerilog operator syntax and
+temporal logic reasoning based on such grammar, NL2SVA-Machine evaluation examines whether
+LLMs can accurately reason about the temporal logic expressed in natural language and translate
+into SVA syntax. Table 3 summarizes model performances in zero-shot and with 3-shot inference
+settings, where the hand-crafted in-context examples are fixed across test questions.
+Problem ID: nl2sva_machine_3_61_0
+Question: Create a SVA assertion that checks: When either sig_D is high or sig_H has an odd number of
+bits set to ’1’, and sig_F is also high, the assertion is satisfied.
+Reference Solution:
+assert property(@(posedge clk)
+((sig_D || ^sig_H) && sig_F)
+);
+gpt-4o | 0-Shot Inference:
+assert property (@(posedge clk)
+(sig_D || ($countones(sig_H) % 2 == 1)) |−> sig_F
+); // sig_F may not be high at the same cycle as sig_D or (sig_H having odd number of bits high)
+// for the assertion to hold; thus, this assertion implies the reference solution
+Syntax: pass | Functionality: partial pass
+gpt-4o | 3-Shot Inference:
+assert property(@(posedge clk)
+((sig_D || (^sig_H)) && sig_F)
+);
+Syntax: pass | Functionality: pass
+Llama-3.1-8B-Instruct | 0-Shot Inference:
+assert property (@(posedge clk)
+(sig_D || ($countones(sig_H) % 2 == 1)) && sig_F
+);
+Syntax: pass | Functionality: pass
+Llama-3.1-8B-Instruct | 3-Shot Inference:
+assert property(@(posedge clk)
+((sig_D || ($bits(sig_H) % 2 == 1)) && sig_F)
+); // '$bits' checks the width of the signal; this assertion implies the reference solution
+Syntax: pass | Functionality: partial pass
+11
+
+Figure 8: Examples of failure modes observed with the NL2SVA-Machine benchmark. While
+syntactically correct, the assertion implementation from gpt-4o under zero-shot inference is not
+fully equivalent to the reference solution in relations to the signal sig_F. However, in the case of
+Llama-3.1-8B we see the fixed in-context examples distracting the model and leading to incorrectly
+applying the $bits operator.
+LLMs achieve high accuracy in terms of syntax but struggle with generating SVA matching
+the assertion specification expressed as natural language input. With in-context learning, models
+with high parameter count reach close to perfect accuracy in terms of syntax; however, the accuracy
+on functionality both exact (full equivalence) and relaxed (partial equivalence) does not improve
+significantly. The gap between syntax and functional correctness in state-of-the-art models indicate
+the limitations of these models in accurately identifying the propositional and modal temporal
+logic expressed in natural language and translating into SVA implementation.
+Model
+Syntax@5
+Func.@3
+Func.@5
+Partial.@3
+Partial.@5
+gpt-4o
+0.960
+0.495
+0.512
+0.615
+0.636
+gemini-1.5-flash
+0.940
+0.462
+0.483
+0.556
+0.583
+Llama-3.1-70b
+0.960
+0.539
+0.566
+0.642
+0.669
+Table 4: Results for NL2SVA-Machine with sampling multiple model responses, where pass@k
+for each evaluation metric is measured. Models are prompted with same three in-context examples,
+and we use nucleus sampling with top p=0.95 and temperature t=0.8. Again, we observe that
+all models are able to generate at least one syntactically correct SVA implementation out of five
+attempts; functional correctness is also improved with increasing numbers of samples.
+In-context examples can aid models to generate functionally correct implementations. Con-
+sider the examples shown in Figure 8: with three hand-crafted in-context examples, the same model
+inference under greedy decoding is able to generate functionally correct SVA implementations for
+the case of gpt-4o. However, in some cases the fixed in-context examples may serve as distractors
+and negatively immpact generation, especially for models with smaller parameter count such as
+Llama-3.1-8B. We posit that further improvements schemes of generating or retrieving appropri-
+ate in-context examples could therefore improve LLM capabilities in generating SystemVerilog
+assertions. Table 4 further elucidate how parallel sampling of responses could realistically enable
+LLM-generation of functionally correct SVA implementations: we see that for LLama-3.1-70B a
+functional pass@5 of 0.566 which greatly improves from the pass@1 of 0.457.
+4.4
+Design2SVA Results
+Finally, Design2SVA tests if the models can produce plausible assertions directly from design RTL.
+Besides the logical reasoning capabilities required in the NL2SVA-Human and NL2SVA-Machine
+tasks, Design2SVA further requires understanding the semantics of the given RTL implementation
+and also what concrete implementation of a formal property would be relevant for the design. The
+synthetic RTL test cases (pipeline and FSM examples) are generated from simple more complex
+examples, with the most complex instances taking greater than 16K tokens when provided as
+context to all of the LLMs considered. As such, we do not consider the Llama-3 family models and
+older OpenAI models with less than a 32K context window for this task.
+12
+
+Model
+Pipeline
+FSM
+Syntax@1
+Syntax@5
+Func.@1
+Func.@5
+Syntax@1
+Syntax@5
+Func.@1
+Func.@5
+gpt-4o
+0.802
+1.000
+0.104
+0.427
+0.993
+1.000
+0.373
+0.900
+gemini-1.5-pro
+0.665
+1.000
+0.175
+0.500
+0.950
+1.000
+0.427
+0.906
+gemini-1.5-flash
+0.969
+1.000
+0.025
+0.125
+0.996
+1.000
+0.079
+0.281
+Mixtral-8x22b
+0.867
+1.000
+0.119
+0.472
+0.974
+1.000
+0.054
+0.167
+Llama-3.1-70b
+0.960
+1.000
+0.167
+0.615
+0.940
+1.000
+0.231
+0.719
+Llama-3.1-8b
+0.904
+1.000
+0.150
+0.552
+0.906
+1.000
+0.121
+0.521
+Table 5: Evaluation results for the Design2SVA Benchmark. Boldface and underlined results indicate
+highest and second highest metric values, respectively. While even the smaller models achieve mod-
+erately high syntax correctness (>80%) with in-context examples, we see a limitations in functional
+correctness and again a gap between full and partial correctness of model-generated assertions.
+Problem ID: fsm_ni_4_nn_4_ne_8_wd_32_opd_2_0
+Question: generate 1 SVA assertion(s) for the given design RTL that is most important to verify. If necessary,
+produce any extra code, including wires, registers, and their assignments.
+`define WIDTH 32
+module fsm(clk, reset_, in_A, in_B, in_C, in_D, fsm_out);
+parameter WIDTH = `WIDTH, FSM_WIDTH = 2;
+parameter S0 = 2'b00, S1 = 2'b01, S2 = 2'b10, S3 = 2'b11;
+input clk, reset_;
+input [WIDTH−1:0] in_A, in_B, in_C, in_D;
+output reg [FSM_WIDTH−1:0] fsm_out;
+reg [FSM_WIDTH−1:0] state, next_state;
+always_ff @(posedge clk or negedge reset_) begin
+if (!reset_) state <= S0;
+else state <= next_state;
+end
+always_comb begin
+case(state)
+S0: next_state = S2;
+S1: next_state = S3;
+S2: if ((in_D || in_C) == 'd0) next_state = S0;
+else if ((in_C <= 'd1) != in_A) next_state = S1;
+else next_state = S3;
+S3: next_state = S1;
+endcase
+end
+endmodule
+gpt-4o | Attempt 1:
+assert property (@(posedge clk) disable iff (tb_reset)
+(state == 2'b10) |−> ##1 ((in_D == 'd0 && in_C == 'd0) || ((in_C <= 'd1) != in_A) || (next_state == 2'b11))
+);
+Syntax: pass | Functionality (is proven): fail
+gpt-4o | Attempt 2:
+assert property (@(posedge clk) disable iff (tb_reset)
+state == 2'b10 |−> (next_state == 2'b00 || next_state == 2'b01 || next_state == 2'b11)
+);
+Syntax: pass | Functionality (is proven): pass
+13
+
+Figure 9: Examples of failure modes observed for the Design2SVA benchmark. Multiple responses
+from the same language modeled are sampled, one of which incorrectly models the design RTL
+in formulating the assertion while the other attempt accurately identifies and implements a
+SystemVerilog assertion that is proven by a commercial FV tool.
+Table 5 shows the pass@k values for syntax and functional correctness, as defined. The reported
+pass@k are based on the unbiased estimator of pass@k as described in [6] and widely used in the
+literature. As we are generating multiple samples of LLM outputs, we use nucleus sampling with
+top p=0.95 and temperature t=0.8 as in [28].
+Results show that despite most models achieve near-perfect pass@5 for syntax correctness,
+the observed functional correctness—measured by whether the model has generated an asser-
+tion that can be proven—varies significantly by model. The latest proprietary models such as
+gemini-1.5-pro and gpt-4o achieve considerably high pass@5 for functional correctness for the FSM
+test instances, whereas the open-source models achieve a lower pass@k for most cases. Between
+the open-source Llama 3.1 models, we observe a significant performance gap between the larger
+and smaller scale models.
+Figure 9 highlights common scenarios where the same LLM generates multiple candidates of
+assertions given just the design RTL. In the case of the FSM test instance, we observe that LLMs
+are able to identify formal properties without any human guidance or specification and generate correct
+SystemVerilog assertions that are proven by commercial tools. With the success rate of pass@k shown
+in Table 5, we anticipate LLMs to be possibly utilized to “draft” formal testbenches, providing a
+list of possible assertions to be generated for the DUT, from which the user engineer may take any
+assertions directly or modify as needed.
+5
+Related Work
+LLMs for Chip Design and Formal Verification. Researchers have applied language models, and
+more broadly deep learning to various problems in chip design [37, 4, 13, 54, 22]. Recent work fine-
+tune open-source language models such as CodeGen [31] and LLaMA2 [45] on chip design related
+data and show that fine-tuned models out-perform both open-source and proprietary models in
+Verilog code generation [43, 28] and EDA tool script generation [17]. Prior work on applying LLMs
+to hardware formal verification can be broadly categorized into two groups: one line of work takes
+micro-architectural descriptions of the design-under-test (DUT) and prompts LLMs to generate
+a plausible formal testbench [34, 41, 21, 16]. Another line of work instead have LLMs consume
+architectural specification documents, describing high-level specifications that have not yet been
+formulated as RTL implementations, and have the models create an entire testbench [11]. However,
+existing evaluations of LLMs on FV [34, 11, 27, 41] are limited to less than ∼20 cases of test instances
+and have considered a limited variety of task settings. In contrast, FVEval expands both the scope
+and scale of test instances, combining collected human-written examples from industrial experts as
+well as verified synthetic instances generated from parameterized templates, and considers three
+sub-tasks each exercising varying aspects of LLM capabilities for real-world applications in FV.
+Benchmarks for Code Generation and Formal Logical Reasoning. Several benchmarks exist
+to measure language model capabilities on code generation, mostly targeting code synthesis in
+software programming languages (Python, C/C++, Java, etc.) [5, 3, 6]. Recent iterations have con-
+sidered extensions that explore multi-lingual [2] contexts, are geared towards particular applications
+such as data science [25], and consider repository-level editing to reflect scenarios that are closer to
+real-world software engineering tasks [53, 20, 10]. Most related to our work, VerilogEval [28] pro-
+14
+
+duces a comprehensive evaluation benchmark for Verilog code generation that matches the number
+of test cases as software language equivalents. Our proposed benchmark, FVEval, extends the ongo-
+ing line of research by suggesting an evaluation suite that is: (1) targeting a novel problem domain of
+RTL formal verification, and (2) the first to offer comprehensive evaluation for this domain, both in
+terms of scale of test suite size and diversity of tasks considered that mirror industrial FV workflows.
+Our work also naturally bears relationships to a larger body of work on benchmarking language
+models on their logical reasoning capabilities, such as formal-symbolic reasoning on propositional
+and first-order logic [42, 15, 39, 36]. Recent work has explored neuro-symbolic approaches to
+enhance multi-step reasoning [35, 32, 55, 38, 52] and have been applied to contexts of automated
+theorem proving [48, 49]. LLM evaluation in formal verification can be thought of as extension to
+this line of work by considering modal temporal logic, where formulae include temporal opera-
+tors. FVEval is also grounded in hardware assertion code generation tasks, with natural language
+descriptions of the temporal logic. Altogether, this work proposes an evaluation of LLMs on a
+novel class of modal logic, which can shed light on and invite future work on formal temporal
+reasoning, and in the context of tasks with real-world motivations and with significant value to
+the chip design industry.
+6
+Limitations and Future Work
+The current state of FVEval is only the first step towards understanding and thereby improving
+model capabilities for hardware FV. We expect future work to encompass further variety in the
+designs and testbenches, such as considering synthetic data generation with different styles of de-
+sign modules besides the arithmetic pipeline and FSMs considered in this work. We also anticipate
+methodologies that will improve LLM performance on our task, e.g. carefully chosen prompting
+schemes [47] and other structural inference methods [51, 50], as well as ideas to incorporate tool-
+feedback or external symbolic reasoning tools as part of a LLM-agentic framework. Evaluations
+made in this work have not considered such variety of techniques and we invite future work to
+explore novel avenues based on FVEval.
+7
+Conclusion
+In this work, we present FVEval—a first comprehensive benchmark for evaluating language models
+in the context of hardware formal verification. We demonstrate three sub-tasks that are derived
+from industrial FV use cases and each examine different aspects of LLM capabilities necessary for
+their application in this domain. FVEval defines evaluation metrics for each task with end-to-end
+automated evaluation made possible with a industry-standard formal verification tool. In partic-
+ular, the custom-implemented formal equivalence checking between model generated assertions
+against ground-truth solution offers, for the first time, a concrete metric for evaluating LLMs in
+tasks generating formal properties in SVA syntax.
+Acknowledgements
+Authors deeply thank Vigyan Singhal for technical guidance and support. We also thank Cadence
+Design Systems for the implementation of the formal assertion-to-assertion equivalence checking
+in Jasper and contributions to the overall project, including helpful discussions.
+15
+
+References
+[1] Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni
+Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al. Gpt-4
+technical report. arXiv preprint arXiv:2303.08774, 2023.
+[2] Ben Athiwaratkun, Sanjay Krishna Gouda, Zijian Wang, Xiaopeng Li, Yuchen Tian, Ming
+Tan, Wasi Uddin Ahmad, Shiqi Wang, Qing Sun, Mingyue Shang, Sujan Kumar Gonugondla,
+Hantian Ding, Varun Kumar, Nathan Fulton, Arash Farahani, Siddharth Jain, Robert
+Giaquinto, Haifeng Qian, Murali Krishna Ramanathan, Ramesh Nallapati, Baishakhi Ray,
+Parminder Bhatia, Sudipta Sengupta, Dan Roth, and Bing Xiang. Multi-lingual evaluation
+of code generation models. ArXiv, abs/2210.14868, 2022.
+[3] Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David
+Dohan, Ellen Jiang, Carrie J. Cai, Michael Terry, Quoc V. Le, and Charles Sutton. Program
+synthesis with large language models. ArXiv, abs/2108.07732, 2021.
+[4] Jason Blocklove, Siddharth Garg, Ramesh Karri, and Hammond A. Pearce.
+Chip-chat:
+Challenges and opportunities in conversational hardware design.
+2023 ACM/IEEE 5th
+Workshop on Machine Learning for CAD (MLCAD), pages 1–6, 2023.
+[5] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de Oliveira Pinto,
+Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, Alex Ray, Raul
+Puri, Gretchen Krueger, Michael Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin, Brooke
+Chan, Scott Gray, Nick Ryder, Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mohammad
+Bavarian, Clemens Winter, Philippe Tillet, Felipe Petroski Such, Dave Cummings, Matthias
+Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William Hebgen Guss, Alex
+Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin, Suchir Balaji, Shantanu Jain,
+William Saunders, Christopher Hesse, Andrew N. Carr, Jan Leike, Josh Achiam, Vedant Misra,
+Evan Morikawa, Alec Radford, Matthew Knight, Miles Brundage, Mira Murati, Katie Mayer,
+Peter Welinder, Bob McGrew, Dario Amodei, Sam McCandlish, Ilya Sutskever, and Wojciech
+Zaremba. Evaluating large language models trained on code, 2021.
+[6] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde, Jared Kaplan, Harrison
+Edwards, Yura Burda, Nicholas Joseph, Greg Brockman, Alex Ray, Raul Puri, Gretchen Krueger,
+Michael Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin, Brooke Chan, Scott Gray,
+Nick Ryder, Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mohammad Bavarian, Clemens
+Winter, Philippe Tillet, Felipe Petroski Such, David W. Cummings, Matthias Plappert, Fotios
+Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William H. Guss, Alex Nichol, Igor Babuschkin,
+Suchir Balaji, Shantanu Jain, Andrew Carr, Jan Leike, Joshua Achiam, Vedant Misra, Evan
+Morikawa, Alec Radford, Matthew M. Knight, Miles Brundage, Mira Murati, Katie Mayer,
+Peter Welinder, Bob McGrew, Dario Amodei, Sam McCandlish, Ilya Sutskever, and Wojciech
+Zaremba. Evaluating large language models trained on code. ArXiv, abs/2107.03374, 2021.
+[7] Edmund M. Clarke, Armin Biere, Richard Raimi, and Yunshan Zhu. Bounded model checking
+using satisfiability solving. Formal methods in system design, 19:7–34, 2001.
+[8] Edmund M. Clarke and E. Allen Emerson. Design and synthesis of synchronization skeletons
+using branching time temporal logic. In Dexter Kozen, editor, Logics of Programs, pages 52–71,
+Berlin, Heidelberg, 1982. Springer Berlin Heidelberg.
+16
+
+[9] Edmund M. Clarke, E. Allen Emerson, and A. P. Sistla. Automatic verification of finite-state
+concurrent systems using temporal logic specifications. ACM Trans. Program. Lang. Syst.,
+8(2):244–263, apr 1986.
+[10] Tuan Dinh, Jinman Zhao, Samson Tan, Renato M. P. Negrinho, Leonard Lausen, Sheng Zha,
+and George Karypis. Large language models of code fail at completing code with potential
+bugs. ArXiv, abs/2306.03438, 2023.
+[11] Wenji Fang, Mengming Li, Min Li, Zhiyuan Yan, Shang Liu, Hongce Zhang, and Zhiyao
+Xie. Assertllm: Generating and evaluating hardware verification assertions from design
+specifications via multi-llms. ArXiv, abs/2402.00386, 2024.
+[12] Harry Foster. "the 2022 wilson research group ic/asic functional verification treads”. White
+Paper. Wilson Research Group and Mentor, A Siemens Business, 2022.
+[13] Steven J. Frederiksen, John J. Aromando, and Michael S. Hsiao.
+Automated assertion
+generation from natural language specifications. 2020 IEEE International Test Conference (ITC),
+pages 1–5, 2020.
+[14] Gemini Team Google. Gemini: A family of highly capable multimodal models. ArXiv,
+abs/2312.11805, 2023.
+[15] Simeng Han, Hailey Schoelkopf, Yilun Zhao, Zhenting Qi, Martin Riddell, Luke Benson,
+Lucy Sun, Ekaterina Zubova, Yujie Qiao, Matthew Burtell, David Peng, Jonathan Fan, Yixin
+Liu, Brian Wong, Malcolm Sailor, Ansong Ni, Linyong Nan, Jungo Kasai, Tao Yu, Rui Zhang,
+Shafiq R. Joty, Alexander R. Fabbri, Wojciech Kryscinski, Xi Victoria Lin, Caiming Xiong,
+and Dragomir R. Radev. Folio: Natural language reasoning with first-order logic. ArXiv,
+abs/2209.00840, 2022.
+[16] Muhammad Hassan, Sallar Ahmadi-Pour, Khushboo Qayyum, Chandan Kumar Jha, and
+Rolf Drechsler. Llm-guided formal verification coupled with mutation testing. In 2024 Design,
+Automation & Test in Europe Conference & Exhibition (DATE), pages 1–2. IEEE, 2024.
+[17] Zhuolun He, Haoyuan Wu, Xinyun Zhang, Xufeng Yao, Su Zheng, Haisheng Zheng, and Bei
+Yu. Chateda: A large language model powered autonomous agent for eda. 2023 ACM/IEEE
+5th Workshop on Machine Learning for CAD (MLCAD), pages 1–6, 2023.
+[18] Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and
+Jacob Steinhardt. Measuring massive multitask language understanding, 2021.
+[19] Albert Q. Jiang, Alexandre Sablayrolles, Antoine Roux, Arthur Mensch, Blanche Savary,
+Chris Bamford, Devendra Singh Chaplot, Diego de Las Casas, Emma Bou Hanna, Florian
+Bressand, Gianna Lengyel, Guillaume Bour, Guillaume Lample, L’elio Renard Lavaud, Lucile
+Saulnier, Marie-Anne Lachaux, Pierre Stock, Sandeep Subramanian, Sophia Yang, Szymon
+Antoniak, Teven Le Scao, Théophile Gervet, Thibaut Lavril, Thomas Wang, Timothée Lacroix,
+and William El Sayed. Mixtral of experts. ArXiv, abs/2401.04088, 2024.
+[20] Carlos E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and
+Karthik Narasimhan. Swe-bench: Can language models resolve real-world github issues?
+ArXiv, abs/2310.06770, 2023.
+17
+
+[21] Rahul Kande, Hammond A. Pearce, Benjamin Tan, Brendan Dolan-Gavitt, Shailja Thakur,
+Ramesh Karri, Jeyavijayan Rajendran Texas AM University, University of New South Wales,
+University of Calgary, and New York University.
+Llm-assisted generation of hardware
+assertions. ArXiv, abs/2306.14027, 2023.
+[22] Minwoo Kang, Azade Nova, Eshan Singh, Geetheeka Sharron Bathini, and Yuriy Viktorov.
+Lfps: Learned formal proof strengthening for efficient hardware verification. 2023 IEEE/ACM
+International Conference on Computer Aided Design (ICCAD), pages 1–9, 2023.
+[23] Thomas Kropf. Introduction to formal hardware verification. Springer Science & Business Media,
+1999.
+[24] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu,
+Joseph Gonzalez, Hao Zhang, and Ion Stoica.
+Efficient memory management for large
+language model serving with pagedattention. In Proceedings of the 29th Symposium on Operating
+Systems Principles, pages 611–626, 2023.
+[25] Yuhang Lai, Chengxi Li, Yiming Wang, Tianyi Zhang, Ruiqi Zhong, Luke Zettlemoyer, Scott
+Yih, Daniel Fried, Si yi Wang, and Tao Yu. Ds-1000: A natural and reliable benchmark for
+data science code generation. In International Conference on Machine Learning, 2022.
+[26] Mingjie Liu, Teodor-Dumitru Ene, Robert Kirby, Chris Cheng, Nathaniel Pinckney, Rongjian
+Liang, Jonah Alben, Himyanshu Anand, Sanmitra Banerjee, Ismet Bayraktaroglu, Bonita
+Bhaskaran, Bryan Catanzaro, Arjun Chaudhuri, Sharon Clay, Bill Dally, Laura Dang, Parikshit
+Deshpande, Siddhanth Dhodhi, Sameer Halepete, Eric Hill, Jiashang Hu, Sumit Jain, Brucek
+Khailany, Kishor Kunal, Xiaowei Li, Hao Liu, Stuart F. Oberman, Sujeet Omar, Sreedhar
+Pratty, Jonathan Raiman, Ambar Sarkar, Zhengjiang Shao, Hanfei Sun, Pratik P Suthar, Varun
+Tej, Kaizhe Xu, and Haoxin Ren. Chipnemo: Domain-adapted llms for chip design. ArXiv,
+abs/2311.00176, 2023.
+[27] Mingjie Liu, Minwoo Kang, Ghaith Bany Hamad, Syed Suhaib, and Haoxing Ren. Domain-
+adapted llms for vlsi design and verification: A case study on formal verification. In 2024
+IEEE 42nd VLSI Test Symposium (VTS), pages 1–4. IEEE, 2024.
+[28] Mingjie Liu, Nathaniel Pinckney, Brucek Khailany, and Haoxing Ren. VerilogEval: evaluating
+large language models for verilog code generation. In 2023 IEEE/ACM International Conference
+on Computer-Aided Design (ICCAD), 2023.
+[29] Meta. Meta llama 3, 2024.
+[30] Meta. Meta llama 3.1, 2024.
+[31] Erik Nijkamp, Bo Pang, Hiroaki Hayashi, Lifu Tu, Huan Wang, Yingbo Zhou, Silvio Savarese,
+and Caiming Xiong. Codegen: An open large language model for code with multi-turn
+program synthesis. ICLR, 2023.
+[32] Theo X. Olausson, Alex Gu, Benjamin Lipkin, Cedegao Zhang, Armando Solar-Lezama,
+Josh Tenenbaum, and Roger Levy. Linc: A neurosymbolic approach for logical reasoning by
+combining language models with first-order logic provers. In Conference on Empirical Methods
+in Natural Language Processing, 2023.
+[33] OpenTitan. Opentitan. https://github.com/lowRISC/opentitan, 2024.
+18
+
+[34] Marcelo Orenes-Vera, Margaret Martonosi, and David Wentzlaff. Using llms to facilitate
+formal verification of rtl. ArXiv, abs/2309.09437, 2023.
+[35] Liangming Pan, Alon Albalak, Xinyi Wang, and William Yang Wang. Logic-lm: Empow-
+ering large language models with symbolic solvers for faithful logical reasoning. ArXiv,
+abs/2305.12295, 2023.
+[36] Mihir Parmar, Nisarg Patel, Neeraj Varshney, Mutsumi Nakamura, Man Luo, Santosh
+Mashetty, Arindam Mitra, and Chitta Baral.
+Towards systematic evaluation of logical
+reasoning ability of large language models. arXiv preprint arXiv:2404.15522, 2024.
+[37] Hammond A. Pearce, Benjamin Tan, and Ramesh Karri. Dave: Deriving automatically verilog
+from english. 2020 ACM/IEEE 2nd Workshop on Machine Learning for CAD (MLCAD), pages
+27–32, 2020.
+[38] Gabriel Poesia, Kanishk Gandhi, E. Zelikman, and Noah D. Goodman. Certified reasoning
+with language models. ArXiv, abs/2306.04031, 2023.
+[39] Abulhair Saparov and He He. Language models are greedy reasoners: A systematic formal
+analysis of chain-of-thought. ArXiv, abs/2210.01240, 2022.
+[40] Charlie Snell, Jaehoon Lee, Kelvin Xu, and Aviral Kumar. Scaling llm test-time compute
+optimally can be more effective than scaling model parameters. arXiv preprint arXiv:2408.03314,
+2024.
+[41] Chuyue Sun, Christopher Hahn, and Caroline Trippel.
+Towards improving verification
+productivity with circuit-aware translation of natural language to systemverilog assertions.
+In First International Workshop on Deep Learning-aided Verification, 2023.
+[42] Oyvind Tafjord, Bhavana Dalvi, and Peter Clark. Proofwriter: Generating implications, proofs,
+and abductive statements over natural language. In Findings, 2020.
+[43] Shailja Thakur, Baleegh Ahmad, Hammond A. Pearce, Benjamin Tan, Brendan Dolan-Gavitt,
+Ramesh Karri, and Siddharth Garg.
+Verigen: A large language model for verilog code
+generation. ArXiv, abs/2308.00708, 2023.
+[44] Kiran Thorat, Jiahui Zhao, Yaotian Liu, Hongwu Peng, Xi Xie, Bin Lei, Jeff Zhang, and Caiwen
+Ding. Advanced large language model (llm)-driven verilog development: Enhancing power,
+performance, and area optimization in code synthesis. ArXiv, abs/2312.01022, 2023.
+[45] Hugo Touvron and et al. Llama 2: Open foundation and fine-tuned chat models, 2023.
+[46] YunDa Tsai, Mingjie Liu, and Haoxing Ren. Rtlfixer: Automatically fixing rtl syntax errors
+with large language models. ArXiv, abs/2311.16543, 2023.
+[47] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Ed Huai hsin Chi, F. Xia, Quoc
+Le, and Denny Zhou. Chain of thought prompting elicits reasoning in large language models.
+ArXiv, abs/2201.11903, 2022.
+[48] Huajian Xin, Haiming Wang, Chuanyang Zheng, Lin Li, Zhengying Liu, Qingxing Cao, Yinya
+Huang, Jing Xiong, Han Shi, Enze Xie, Jian Yin, Zhenguo Li, Xiaodan Liang, and Heng Liao.
+Lego-prover: Neural theorem proving with growing libraries. ArXiv, abs/2310.00656, 2023.
+19
+
+[49] Kaiyu Yang, Aidan M. Swope, Alex Gu, Rahul Chalamala, Peiyang Song, Shixing Yu,
+Saad Godil, Ryan J. Prenger, and Anima Anandkumar. Leandojo: Theorem proving with
+retrieval-augmented language models. ArXiv, abs/2306.15626, 2023.
+[50] Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Thomas L. Griffiths, Yuan Cao, and Karthik
+Narasimhan. Tree of thoughts: Deliberate problem solving with large language models.
+ArXiv, abs/2305.10601, 2023.
+[51] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R Narasimhan, and Yuan
+Cao. React: Synergizing reasoning and acting in language models. In The Eleventh International
+Conference on Learning Representations, 2023.
+[52] E. Zelikman, Qian Huang, Gabriel Poesia, Noah D. Goodman, and Nick Haber. Parsel:
+Algorithmic reasoning with language models by composing decompositions.
+In Neural
+Information Processing Systems, 2022.
+[53] Shudan Zhang, Hanlin Zhao, Xiao Liu, Qinkai Zheng, Zehan Qi, Xiaotao Gu, Xiaohan Zhang,
+Yuxiao Dong, and Jie Tang. Naturalcodebench: Examining coding performance mismatch
+on humaneval and natural user prompts. arXiv preprint arXiv:2405.04520, 2024.
+[54] Junchen Zhao and Ian G. Harris. Automatic assertion generation from natural language
+specifications using subtree analysis. 2019 Design, Automation & Test in Europe Conference &
+Exhibition (DATE), pages 598–601, 2019.
+[55] Jin Peng Zhou, Charles Staats, Wenda Li, Christian Szegedy, Kilian Q. Weinberger, and Yuhuai
+Wu. Don’t trust: Verify - grounding llm quantitative reasoning with autoformalization. ArXiv,
+abs/2403.18120, 2024.
+20
+
+A
+Additional Details on FVEval: NL2SVA-Human
+In this section, we provide additional details and test instance examples for NL2SVA-Human.
+A.1
+NLSVA-Human Benchmark Statistics and Examples
+Detailed statistics on the composition of formal testbenches consisting of the NL2SVA-Human
+benchmark are shown in Table 6.
+Name
+# Variations
+# Assertions
+1R1W FIFO
+4
+20
+Multi-Port FIFO
+1
+6
+Arbiter
+4
+37
+FSM
+2
+4
+Counter
+1
+5
+RAM
+1
+7
+Total
+13
+79
+Table 6: Statistics describing the NL2SVA-Human benchmark. From industrial formal testbenches,
+we extract a total of 79 test cases of NL specification to SVA assertion.
+Next, we show an example testbench in NL2SVA-Human and its associated assertions and NL
+specifications:
+21
+
+Textbench Example: 1R1W FIFO
+module fifo_1r1w_tb (
+clk,
+reset_,
+wr_vld,
+wr_data,
+wr_ready,
+rd_vld,
+rd_data,
+rd_ready
+);
+parameter
+FIFO_DEPTH
+= 4;
+parameter
+DATA_WIDTH
+= 1;
+localparam FIFO_DEPTH_log2 = $clog2(FIFO_DEPTH);
+localparam DATA_WIDTH_log2 = $clog2(DATA_WIDTH);
+input
+clk;
+input
+reset_;
+input
+wr_vld;
+input
+[DATA_WIDTH−1:0] wr_data;
+input
+wr_ready;
+input
+rd_vld;
+input
+[DATA_WIDTH−1:0] rd_data;
+input
+rd_ready;
+wire wr_push;
+wire rd_pop;
+wire tb_reset;
+assign tb_reset = (reset_ == 1'b0);
+wire fifo_full;
+assign wr_push = wr_vld && wr_ready;
+assign rd_pop = rd_vld && rd_ready;
+//fifo array −shift register
+reg [DATA_WIDTH−1:0]
+fifo_array [FIFO_DEPTH−1:0];
+//fifo array −rd_ptr
+reg [FIFO_DEPTH_log2−1:0]
+fifo_rd_ptr;
+// actual pop == pop
+wire
+actual_fifo_pop;
+// fifo empty
+reg
+fifo_empty;
+// dout
+wire [DATA_WIDTH−1:0]
+fifo_out_data;
+// −−−−shift register code start −−−−
+always @(posedge clk) begin
+if (!reset_) fifo_array[0] <= 'd0;
+else if (wr_push) begin
+fifo_array[0] <= wr_data;
+end else fifo_array[0] <= fifo_array[0];
+end
+for (genvar i = 1; i < FIFO_DEPTH; i++ ) begin : loop_id
+always @(posedge clk) begin
+22
+
+if (!reset_) fifo_array[i] <= 'd0;
+else if (wr_push) begin
+fifo_array[i] <= fifo_array[i−1];
+end else fifo_array[i] <= fifo_array[i];
+end
+end
+// −−−−read pointer/fifo empty code start −−−−
+always @(posedge clk) begin
+if (!reset_) begin
+fifo_rd_ptr <= 'd0;
+end else if (wr_push && fifo_empty)
+begin
+fifo_rd_ptr <= 'd0;
+end else if (rd_pop && !fifo_empty && (fifo_rd_ptr == 'd0)) begin
+fifo_rd_ptr <= 'd0;
+end else begin
+fifo_rd_ptr <= fifo_rd_ptr + wr_push −rd_pop;
+end
+if (!reset_) begin
+fifo_empty <= 'd1;
+end else if (rd_pop && !fifo_empty && (fifo_rd_ptr == 'd0) && !wr_push) begin
+fifo_empty <= 'd1;
+end else if ((fifo_rd_ptr != 'd0) || wr_push && !rd_pop) begin
+fifo_empty <= 'd0;
+end
+end
+// −−−−fifo full and dout code start −−−−
+assign fifo_full = (fifo_rd_ptr == (FIFO_DEPTH −1)) && !fifo_empty;
+assign fifo_out_data = fifo_array[fifo_rd_ptr];
+endmodule
+Figure 10: An example testbench instance (one version of the 1R1W FIFO) included in the
+NL2SVA-Human benchmark. Each testbench RTL (in SystemVerilog as shown) is provided as
+context to the LLMs during evaluation. For the full prompt format we use, see Figure 12.
+23
+
+NL Specification and SVA Assertion Pairs for 1R1W FIFO
+Question: Create a SVA assertion that checks: that the FIFO does not underflow, assuming no bypass. Use
+the signals ’rd_pop’ and ’fifo_empty’.
+Answer:
+asrt : assert property (@(posedge clk) disable iff (tb_reset)
+(fifo_empty && rd_pop) !== 1'b1
+);
+Question: Create a SVA assertion that checks: that the FIFO does not overflow, assuming no bypass. Use
+the signals ’wr_push’ and ’fifo_full’.
+Answer:
+asrt : assert property (@(posedge clk) disable iff (tb_reset)
+(fifo_full && wr_push) !== 1'b1
+);
+Question: Create a SVA assertion that checks: that the fifo output and read data are consistent, assuming
+no bypass. Use the signals ’rd_pop’, ’rd_data’, and ’fifo_out_data’.
+Answer:
+asrt: assert property (@(posedge clk) disable iff (tb_reset)
+(rd_pop && (fifo_out_data != rd_data)) !== 1'b1
+);
+Question: Create a SVA assertion that checks: that when response is pending, data is eventually popped
+from the FIFO. Use the signals ’rd_pop’ and ’fifo_empty’.
+Answer:
+asrt: assert property (@(posedge clk) disable iff (tb_reset)
+!fifo_empty |−> strong(##[0:$] rd_pop)
+);
+Question: Create a SVA assertion that checks: that when there is a write push to the FIFO, data is
+eventually popped. Use the signals ’rd_pop’ and ’wr_push’.
+Answer:
+asrt: assert property (@(posedge clk) disable iff (tb_reset)
+wr_push |−> strong(##[0:$] rd_pop)
+);
+Figure 11: List of natural language (NL) specification to SVA assertion implementations that are
+collected for the example 1R1W FIFO test bench shown above in 10. There are a total of five test
+instances for this testbench.
+24
+
+A.2
+NL2SVA-Human Evaluation: Model Prompt
+The following figure describes the prompt provided to language models during evaluation.
+System:
+You are an AI assistant tasked with formal verification of register transfer level (RTL) designs.
+Your job is to translate a description of an assertion to concrete SystemVerilog Assertion (SVA) implementa-
+tion.
+User:
+Here is the testbench to perform your translation:
+[Testbench RTL (fifo_1r1w.sv)]
+Question: Create a SVA assertion that checks: that the fifo output and read data are consistent, assuming
+no bypass. Use the signals ’rd_pop’, ’rd_data’, and ’fifo_out_data’.
+Do not add code to output an error message string. Enclose your SVA code with “‘systemverilog and “‘.
+Only output the code snippet and do NOT output anything else.
+For example,
+```systemverilog
+asrt: assert property (@(posedge clk) disable iff (tb_reset)
+(a && b) != 1'b1
+);
+```
+Answer:
+Figure 12: Details of the prompt given to LLMs for the NL2SVA-Human benchmark.
+25
+
+A.3
+NL2SVA-Human Example Model Responses
+Here, we show sample LLM responses to the example test instance (testbench and NL specification
+of assertion) referred to in Section A.1 and A.2.
+Examples of LLM Responses to NL2SVA-Human (1R1W FIFO)
+Question: Create a SVA assertion that checks: that the fifo output and read data are consistent, assuming
+no bypass. Use the signals ’rd_pop’, ’rd_data’, and ’fifo_out_data’.
+Reference Solution:
+asrt: assert property (@(posedge clk) disable iff (tb_reset)
+(rd_pop && (fifo_out_data != rd_data)) !== 1'b1
+);
+gpt-4-0613:
+asrt_fifo_out_rd_data_consistency: assert property (@(posedge clk) disable iff (tb_reset)
+rd_pop |−> (rd_data == fifo_out_data)
+);
+gpt-4o-05-13:
+asrt_fifo_output_consistency: assert property (@(posedge clk) disable iff (tb_reset)
+rd_pop |−> (rd_data == fifo_out_data)
+);
+gpt-3.5-turbo-0125:
+asrt: assert property (@(posedge clk)
+disable iff (tb_reset)
+(rd_pop && (rd_data !== fifo_out_data)) | (!rd_pop && (rd_data === fifo_out_data))
+);
+Llama3-70B-chat:
+asrt_fifo_out_data: assert property (@(posedge clk) disable iff (tb_reset)
+rd_pop |−> (rd_data == fifo_out_data)
+);
+Mixtral-8x22B-instruct-v1:
+asrt_fifo_output_consistency: assert property (@(posedge clk) disable iff (tb_reset)
+rd_pop |−> rd_data === fifo_out_data
+);
+Llama3-8B-chat:
+asrt: assert property (@(posedge clk) disable iff (tb_reset)
+rd_pop |−> $rose(fifo_rd_ptr) |=> rd_data == fifo_out_data
+);
+Mixtral-8x7B-instruct-v1:
+asrt: assert property (@(posedge clk) disable iff (tb_reset)
+!((rd_pop && rd_data !== fifo_out_data) && !fifo_empty)
+);
+Figure 13: Example responses from different LLMs for the NL2SVA-Human test instance shown
+in Figure 12.
+26
+
+B
+Additional Details on FVEval: NL2SVA-Machine
+In this section, we provide additional details and test instance examples for NL2SVA-Machine.
+B.1
+NL2SVA-Machine Evaluation: Model Prompt
+The following figure describes the prompt provided to language models during evaluation. The
+prompt shown is for zero-shot evaluation; for k = 3-shot, we include the ICL examples listed in
+Figure 15 as part of the user prompt, before the indicated question.
+System:
+You are an AI assistant tasked with formal verification of register transfer level (RTL) designs.
+Your job is to translate a description of an assertion to concrete SystemVerilog Assertion (SVA) implementa-
+tion.
+User:
+Question: Create a SVA assertion that checks:
+If sig_G is not equal to 1’b1, then four cycles later, sig_J must be true.
+Do not add code to output an error message string. Enclose your SVA code with “‘systemverilog and “‘.
+Only output the code snippet and do NOT output anything else.
+For example,
+```systemverilog
+asrt: assert property (@(posedge clk) disable iff (tb_reset)
+(sig_A && sig_B) != 1'b1
+);
+```
+Answer:
+Figure 14: Details of the prompt given to LLMs for the NL2SVA-Machine benchmark. When
+models are evaluated in 3-shot, we add the fixed ICL examples shown in Figure 15.
+27
+
+B.2
+NL2SVA-Machine Evaluation: In-Context Examples Used
+The following lists the in-context examples used in NL2SVA-Machine:
+ICL Examples
+More detailed examples of correct translations from description into an SVA assertion:
+Question: Create a SVA assertion that checks: Whenever sig_A is high and sig_B is low, sig_C will be high
+on the next clock edge. Do not add code to output an error message string. Enclose your SVA code with
+“‘systemverilog and “‘. Only output the code snippet and do NOT output anything else.
+Answer:
+```systemverilog
+assert property(@(posedge clk)
+(sig_A && !sig_B) |−> sig_C
+);
+```
+Question: Create a SVA assertion that checks: If sig_C contains at least one ’1’ bit or sig_D is not equal to
+sig_A, then sig_F must eventually be true Do not add code to output an error message string. Enclose your
+SVA code with “‘systemverilog and “‘. Only output the code snippet and do NOT output anything else.
+Answer:
+```systemverilog
+assert property(@(posedge clk)
+(|sig_C || (sig_D !== sig_A )) |=> s_eventually(sig_F)
+);
+```
+Question: Create a SVA assertion that checks: "Whenever the value of sig_J is less than the result of the
+XOR operation between sig_C and the negation of the bitwise negation of sig_H, and this result is equal
+to the result of the OR operation between the identity comparison of sig_A and the negation of sig_J and
+sig_B, the assertion is true Do not add code to output an error message string. Enclose your SVA code with
+“‘systemverilog and “‘. Only output the code snippet and do NOT output anything else.
+Answer:
+```systemverilog
+assert property(@(posedge clk)
+((sig_J < (sig_B == (sig_C ^ ~|sig_H))) == ((|sig_A === !sig_J) || sig_B))
+);
+```
+Figure 15: Details of the ICL examples, given as part of the prompt to LLMs for the NL2SVA-
+Machine benchmark for 3-shot performance evaluation. Note that the same examples are used
+across all test cases in our study.
+28
+
+B.3
+NL2SVA-Machine Example Model Responses
+Here, we show sample LLM responses to the example test instance referred to in Section B.1.
+Examples of LLM Responses to NL2SVA-Human (1R1W FIFO)
+Question: Create a SVA assertion that checks: If sig_G is not equal to 1’b1, then four cycles later, sig_J must
+be true.
+Reference Solution:
+assert property(@(posedge clk)
+(sig_G !== 1'b1) |−> ##4 sig_J
+);
+gpt-4-0613:
+assert property(@(posedge clk)
+(sig_G !== 1'b1) |−> ##4 sig_J
+);
+gpt-4o-05-13:
+assert property(@(posedge clk)
+(sig_G !== 1'b1) |−> ##4 sig_J
+);
+gpt-3.5-turbo-0125:
+assert property(@(posedge clk)
+(sig_G !== 1'b1) |−> ##4 sig_J
+);
+Llama3-70B-chat:
+assert property(@(posedge clk)
+(!sig_G) |−> ##[4] sig_J
+);
+Mixtral-8x22B-instruct-v1:
+assert property(@(posedge clk)
+sig_G !== 1'b1 |−> ##4 sig_J
+);
+Llama3-8B-chat:
+assert property(@(posedge clk) ($rose(!sig_G) |=> ##[3] sig_J));
+Mixtral-8x7B-instruct-v1:
+assert property(@(posedge clk)
+(sig_G !== 1'b1) |−> ##[1:4] sig_J
+);
+Figure 16: Example responses from different LLMs for the NL2SVA-Machine test instance shown
+in Figure 14. The OpenAI models (gpt-4, gpt-4o, and gpt-3.5-turbo) and the larger Mixtral MoE
+model generates SVA assertions that exactly matches the reference solution.
+29
+
+C
+Additional Details on FVEval: Design2SVA
+In this section, we provide additional details and test instance examples for Design2SVA.
+C.1
+Examples of Design2SVA RTL Test Cases
+The following demonstrates an example design RTL generated for the Design2SVA benchmark.
+As noted, we generate synthetic test cases representing arithmetic pipelines and finite state ma-
+chines (FSMs). Here we show the simplest examples from each category. Each generated design
+is accompanied with a testbench harness, of which the module definition and input/output port
+information is provided as context to LLMs, as described in Section C.2. Synthetic pipeline design
+RTL and testbench header example:
+Design2SVA Design RTL Example (Pipeline)
+`define WIDTH 128
+`define DEPTH 6
+module exec_unit_0 (
+clk,
+reset_,
+in_data,
+in_vld,
+out_data,
+out_vld
+);
+parameter WIDTH = `WIDTH;
+localparam DEPTH = 4;
+input clk;
+input reset_;
+input [WIDTH−1:0] in_data;
+input in_vld;
+output [WIDTH−1:0] out_data;
+output out_vld;
+logic [DEPTH:0] ready;
+logic [DEPTH:0][WIDTH−1:0] data;
+assign ready[0] = in_vld;
+assign data[0] = in_data;
+assign out_vld = ready[DEPTH];
+assign out_data = data[DEPTH];
+generate
+for (genvar i=0; i < DEPTH; i=i+1) begin : gen
+always @(posedge clk) begin
+if (!reset_) begin
+ready[i+1] <= 'd0;
+data[i+1] <= 'd0;
+end else begin
+ready[i+1] <= ready[i];
+data[i+1] <= ((((data[i] ^ 9) −((data[i] <<< 7) + (data[i] −5))) >>> 8) + 4);
+end
+end
+end
+endgenerate
+30
+
+endmodule
+module exec_unit_1 (
+clk,
+reset_,
+in_data,
+in_vld,
+out_data,
+out_vld
+);
+parameter WIDTH = `WIDTH;
+localparam DEPTH = 2;
+input clk;
+input reset_;
+input [WIDTH−1:0] in_data;
+input in_vld;
+output [WIDTH−1:0] out_data;
+output out_vld;
+logic [DEPTH:0] ready;
+logic [DEPTH:0][WIDTH−1:0] data;
+assign ready[0] = in_vld;
+assign data[0] = in_data;
+assign out_vld = ready[DEPTH];
+assign out_data = data[DEPTH];
+generate
+for (genvar i=0; i < DEPTH; i=i+1) begin : gen
+always @(posedge clk) begin
+if (!reset_) begin
+ready[i+1] <= 'd0;
+data[i+1] <= 'd0;
+end else begin
+ready[i+1] <= ready[i];
+data[i+1] <= ((((data[i] −5) >>> 1) >>> 7) ^ 7);
+end
+end
+end
+endgenerate
+endmodule
+module pipeline (
+clk,
+reset_,
+in_vld,
+in_data,
+out_vld,
+out_data
+);
+parameter WIDTH=`WIDTH;
+parameter DEPTH=`DEPTH;
+input clk;
+input reset_;
+input in_vld;
+31
+
+input [WIDTH−1:0] in_data;
+output out_vld;
+output [WIDTH−1:0] out_data;
+wire [DEPTH:0] ready;
+wire [DEPTH:0][WIDTH−1:0] data;
+assign ready[0] = in_vld;
+assign data[0] = in_data;
+assign out_vld = ready[DEPTH];
+assign out_data = data[DEPTH];
+exec_unit_0 #(.WIDTH(WIDTH)) unit_0 (
+.clk(clk),
+.reset_(reset_),
+.in_data(data[0]),
+.in_vld(ready[0]),
+.out_data(data[4]),
+.out_vld(ready[4])
+);
+exec_unit_1 #(.WIDTH(WIDTH)) unit_1 (
+.clk(clk),
+.reset_(reset_),
+.in_data(data[4]),
+.in_vld(ready[4]),
+.out_data(data[6]),
+.out_vld(ready[6])
+);
+endmodule
+Figure 17: An example Pipeline test instance generated for Design2SVA.
+32
+
+Design2SVA Testbench RTL Module Header Example (Pipeline)
+`define WIDTH 128
+`define DEPTH 6
+module pipeline_tb (
+clk,
+reset_,
+in_vld,
+in_data,
+out_vld,
+out_data
+);
+parameter WIDTH=`WIDTH;
+parameter DEPTH=`DEPTH;
+input clk;
+input reset_;
+input in_vld;
+input [WIDTH−1:0] in_data;
+input out_vld;
+input [WIDTH−1:0] out_data;
+assign tb_reset = (reset_ == 1'b0);
+endmodule
+Figure 18: Module definition and header of the formal testbench accompanying the Pipeline
+example above for Design2SVA.
+33
+
+Synthetic FSM design RTL and testbench header example:
+Design2SVA Design RTL Example (FSM)
+`define WIDTH 32
+module fsm(
+clk,
+reset_,
+in_A,
+in_B,
+in_C,
+in_D,
+fsm_out
+);
+parameter WIDTH = `WIDTH;
+parameter FSM_WIDTH = 2;
+parameter S0 = 2'b00;
+parameter S1 = 2'b01;
+parameter S2 = 2'b10;
+parameter S3 = 2'b11;
+input clk;
+input reset_;
+input [WIDTH−1:0] in_A;
+input [WIDTH−1:0] in_B;
+input [WIDTH−1:0] in_C;
+input [WIDTH−1:0] in_D;
+output reg [FSM_WIDTH−1:0] fsm_out;
+reg [FSM_WIDTH−1:0] state, next_state;
+always_ff @(posedge clk or negedge reset_) begin
+if (!reset_) begin
+state <= S0;
+end else begin
+state <= next_state;
+end
+end
+always_comb begin
+case(state)
+S0: begin
+next_state = S2;
+end
+S1: begin
+next_state = S3;
+end
+S2: begin
+if (((in_A != in_B) < 'd0)) begin
+next_state = S0;
+end
+else begin
+next_state = S1;
+end
+end
+S3: begin
+end
+endcase
+end
+endmodule
+34
+
+Figure 19: An example FSM test instance generated for Design2SVA.
+Design2SVA Testbench RTL Module Header Example (FSM)
+`define WIDTH 32
+module fsm_tb(
+clk,
+reset_,
+in_A,
+in_B,
+in_C,
+in_D,
+fsm_out
+);
+parameter WIDTH = `WIDTH;
+parameter FSM_WIDTH = 2;
+parameter S0 = 2'b00;
+parameter S1 = 2'b01;
+parameter S2 = 2'b10;
+parameter S3 = 2'b11;
+input clk;
+input reset_;
+input [WIDTH−1:0] in_A;
+input [WIDTH−1:0] in_B;
+input [WIDTH−1:0] in_C;
+input [WIDTH−1:0] in_D;
+input reg [FSM_WIDTH−1:0] fsm_out;
+wire tb_reset;
+assign tb_reset = (reset_ == 1'b0);
+endmodule
+Figure 20: Module definition and header of the formal testbench accompanying the FSM example
+above for Design2SVA.
+35
+
+C.2
+Design2SVA Evaluation: Model Prompt
+The following details the prompt provided to language models during evaluation of Design2SVA.
+System:
+You are an AI assistant tasked with formal verification of register transfer level (RTL) designs.
+Your job is to generate a SystemVerilog assertion for the design-under-test provided.
+User:
+Here is the design RTL to generate assertions for:
+[Design RTL (fsm.sv)]
+Here is a partial testbench for you to work on:
+[Testbench RTL Header(fsm_tb.sv)]
+Question: generate a single SVA assertion for the given design RTL that is most important to verify.
+If necessary, produce any extra code, including wires, registers, and their assignments.
+Do NOT use signals from the design RTL, only use the module input signals or internal signals you have
+added.
+Do NOT use any ’initial’ blocks. This testbench is not for running RTL simulation but for formal verification.
+Do NOT instantiate the design module inside the testbench.
+When implementing the assertion, generate a concurrent SVA assertion and do not add code to output an
+error message string.
+Enclose your SystemVerilog code with “‘systemverilog and “‘.
+For example,
+```systemverilog
+logic [3:0] a, b;
+assign a = c & d;
+assign b = c | d;
+assert property (@(posedge clk) disable iff (tb_reset)
+(a && b) != 1'b1
+);
+```
+Only output the code snippet and do NOT output anything else.
+Remember to output only one assertion.
+Answer:
+Figure 21: Details of the prompt given to LLMs for the Design2SVA benchmark.
+36
+
+C.3
+Design2SVA Example Model Responses
+Here, we show sample LLM responses to the example test instance referred to in Section C.2. Again,
+we list examples for both the pipeline RTL example and the FSM RTL example.
+Examples of LLM Responses to Design2SVA (Pipeline)
+gpt-4-turbo (gpt-4-0125-preview):
+Attempt 1
+logic [WIDTH−1:0] tb_in_data;
+logic tb_in_vld, tb_out_vld;
+logic [WIDTH−1:0] tb_out_data;
+always @(posedge clk or negedge reset_) begin
+if (!reset_) begin
+tb_in_data <= '0;
+tb_in_vld <= 1'b0;
+end else begin
+tb_in_data <= $random;
+tb_in_vld <= $random;
+end
+end
+assign tb_out_vld = out_vld;
+assign tb_out_data = out_data;
+assert property (@(posedge clk) disable iff (!reset_)
+tb_in_vld |−> ##DEPTH tb_out_vld
+);
+Attempt 2
+logic [WIDTH−1:0] prev_data;
+logic prev_data_valid;
+always_ff @(posedge clk or negedge reset_) begin
+if (!reset_) begin
+prev_data <= 'd0;
+prev_data_valid <= 1'b0;
+end else if (in_vld) begin
+prev_data <= in_data;
+prev_data_valid <= 1'b1;
+end
+end
+assert property (@(posedge clk) disable iff (!reset_)
+prev_data_valid && out_vld |−> ##[1:DEPTH] (out_data !== 'd0)
+);
+Figure 22: Example responses from gpt-4-turbo for the Pipeline test instance shown in C.1. Two
+attempts from the model are shown.
+37
+
+[Continued] Examples of LLM Responses to Design2SVA (Pipeline)
+gpt-4o-05-13:
+Attempt 1
+logic [WIDTH−1:0] tb_in_data, tb_out_data;
+logic tb_in_vld, tb_out_vld;
+assign tb_in_data = in_data;
+assign tb_out_data = out_data;
+assign tb_in_vld = in_vld;
+assign tb_out_vld = out_vld;
+assert property (@(posedge clk) disable iff (tb_reset)
+tb_in_vld |−>
+(tb_out_vld && tb_out_data ==
+((((((((tb_in_data & 8) ^ (tb_in_data −9)) & 8) ^
+(((tb_in_data & 8) ^ (tb_in_data −9)) −9)) & 8) ^
+(((tb_in_data & 8) ^ (tb_in_data −9)) −9)) <<< 2) ^ 10) −2)
+);
+Attempt 2
+logic [WIDTH−1:0] tb_in_data;
+logic tb_in_vld, tb_out_vld, tb_reset;
+logic [WIDTH−1:0] tb_out_data;
+assign tb_in_data = in_data;
+assign tb_in_vld = in_vld;
+assign tb_out_vld = out_vld;
+assign tb_out_data = out_data;
+assert property (@(posedge clk) disable iff (tb_reset)
+tb_in_vld |−>
+(tb_out_vld && tb_out_data ==
+(((((tb_in_data & 8) ^ (tb_in_data −9)) <<< 2) ^ 10) −2))
+);
+Figure 23: Example responses from gpt-4o for the Pipeline test instance shown in C.1. Two
+attempts from the model are shown.
+38
+
+[Continued] Examples of LLM Responses to Design2SVA (Pipeline)
+Mixtral-8x22B-instruct-v1:
+Attempt 1
+logic [WIDTH−1:0] data_in;
+logic data_in_vld;
+assign data_in = in_data;
+assign data_in_vld = in_vld;
+assert property (@(posedge clk) disable iff (tb_reset)
+$rose(data_in_vld) |=> ##[1:DEPTH] out_vld
+);
+Attempt 2
+logic [DEPTH−1:0] tb_in_vld;
+logic [DEPTH−1:0][WIDTH−1:0] tb_in_data;
+assign tb_in_vld[0] = in_vld;
+assign tb_in_data[0] = in_data;
+assert property (@(posedge clk) disable iff (tb_reset)
+$rose(out_vld) |−> tb_in_vld[DEPTH]
+);
+Figure 24: Example responses from Mixtral-8x22B for the Pipeline test instance shown in C.1.
+Two attempts from the model are shown.
+39
+
+Example LLM responses for FSM RTL test cases in Design2SVA:
+Examples of LLM Responses to Design2SVA (FSM)
+gpt-4-turbo (gpt-4-0125-preview):
+Attempt 1
+logic [1:0] prev_state, curr_state;
+always_ff @(posedge clk or negedge reset_) begin
+if (!reset_) begin
+prev_state <= S0;
+end else begin
+prev_state <= curr_state;
+end
+end
+assign curr_state = fsm_out;
+assert property (@(posedge clk) disable iff (!reset_)
+(prev_state == S2 && curr_state == S0) |−> ##[1] (in_A != in_B)
+);
+Attempt 2
+logic [1:0] test_state, test_next_state;
+assign test_state = fsm_out; // Assuming fsm_out reflects the current state
+always_comb begin
+case(test_state)
+S0: test_next_state = S2;
+S1: test_next_state = S3;
+S2: test_next_state = ((in_A != in_B) < 'd0) ? S0 : S1;
+S3: test_next_state = S3; // Assuming S3 is a terminal state with no transition defined
+default: test_next_state = S0; // Default case to handle latches
+endcase
+end
+assert property (@(posedge clk) disable iff (!tb_reset)
+(test_state == S0) |−> (test_next_state == S2) &&
+(test_state == S1) |−> (test_next_state == S3) &&
+(test_state
+== S2) |−> ((in_A != in_B) < 'd0 ? (test_next_state == S0) : (test_next_state == S1))
+);
+Figure 25: Example responses from gpt-4-turbo for the FSM test instance shown in C.1. Two
+attempts from the model are shown.
+40
+
+[Continued] Examples of LLM Responses to Design2SVA (FSM)
+gpt-4o-05-13:
+Attempt 1
+logic [1:0] fsm_state, fsm_next_state;
+assign fsm_state = fsm_out;
+assert property (@(posedge clk) disable iff (tb_reset)
+(fsm_state == S2) |−> ((in_A != in_B) ? (fsm_next_state == S0) : (fsm_next_state == S1))
+);
+Attempt 2
+logic [1:0] fsm_state, next_fsm_state;
+assign fsm_state = fsm_out;
+always_comb begin
+case(fsm_state)
+S0: next_fsm_state = S2;
+S1: next_fsm_state = S3;
+S2: begin
+if (((in_A != in_B) < 'd0)) begin
+next_fsm_state = S0;
+end
+else begin
+next_fsm_state = S1;
+end
+end
+S3: next_fsm_state = S3; // S3 is a terminal state
+default: next_fsm_state = S0; // default case to avoid latches
+endcase
+end
+assert property (@(posedge clk) disable iff (tb_reset)
+(fsm_state == S2) |−> (next_fsm_state == S0 || next_fsm_state == S1)
+);
+Figure 26: Example responses from gpt-4o for the FSM test instance shown in C.1. Two attempts
+from the model are shown.
+41
+
+[Continued] Examples of LLM Responses to Design2SVA (FSM)
+Mixtral-8x22B-instruct-v1:
+Attempt 1
+logic [WIDTH−1:0] in_A_reg, in_B_reg;
+always_ff @(posedge clk or negedge reset_) begin
+if (!reset_) begin
+in_A_reg <= '0;
+in_B_reg <= '0;
+end else begin
+in_A_reg <= in_A;
+in_B_reg <= in_B;
+end
+end
+assert property (@(posedge clk) disable iff (tb_reset)
+$rose(fsm_out == S0) |−> ##1 (in_A_reg != in_B_reg)
+);
+Attempt 2
+logic [WIDTH−1:0] a, b;
+assign a = in_A;
+assign b = in_B;
+assert property (@(posedge clk) disable iff (tb_reset)
+$rose(state == S2) |−> (a == b) until (state == S0)
+);
+Figure 27: Example responses from Mixtral-8x22B for the FSM test instance shown in C.1. Two
+attempts from the model are shown.
+42

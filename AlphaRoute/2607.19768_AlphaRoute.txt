@@ -1,0 +1,423 @@
+                                            AlphaRoute: Large Language Models as Semantic
+                                                Optimizers for Multi-Objective Routing
+                                                                        Kabir Murjani1, * , Mishri Bhavsar2 , Manish I. Patel2 , Jonti Talukdar3
+                                                               1
+                                                               Department of Electrical Engineering, Institute of Technology, Nirma University, Ahmedabad, India
+                                                 2
+                                                     Department of Electronics and Communication Engineering, Institute of Technology, Nirma University, Ahmedabad, India
+                                                                  3
+                                                                    Center for Semiconductor Microelectronics, Arizona State University, Tempe, Arizona, USA
+
+
+
+                                            Abstract—Very Large Scale Integration (VLSI) global routing                     routed across ten or more metal layers within grids exceeding
+                                         is an NP-hard combinatorial optimization problem requiring                         one million GCells. At this scale, congestion interactions
+                                         signal net assignment across capacity-constrained 3D grids while                   are highly non-local: a single over-subscribed channel can
+                                         minimizing congestion, wirelength, and via transitions. Because
+                                         traditional heuristics rely on static penalty schedules that fail                  force cascading detours that ripple across distant regions of
+                                         on complex congestion topologies, we present AlphaRoute: a                         the chip. Classical routers manage these interactions through
+                                         multi-objective adaptive search framework reformulating rip-                       fixed penalty schedules, yet the optimal penalty trajectory
+                                         up and reroute (R&R) into a dynamic optimization system. We                        depends on the specific congestion topology encountered at
+                                         introduce SHAP-based overflow decomposition to isolate per-net                     each iteration, information that static heuristics cannot exploit.
+                                         congestion, driving targeted subgraph extraction via 3D Dijkstra
+                                                                                                                            Furthermore, as routing frameworks grow in complexity, de-
+arXiv:2607.19768v1 [cs.LG] 22 Jul 2026
+
+
+
+
+                                         maze routing and an adaptive PathFinder policy. Crucially,
+                                         AlphaRoute employs Large Language Models (LLMs) as se-                             signers lose visibility into which algorithmic knob drove a
+                                         mantic policy optimizers. Bounded by a deterministic knowledge                     particular outcome, making it difficult to diagnose failures or
+                                         graph, the LLMs interpret congestion metrics to dynamically                        transfer insights across designs.
+                                         adjust penalty parameters. Evaluated on ISPD 2025 benchmarks,
+                                         AlphaRoute reduces overflow by 98.6% on MEMPOOL. On                                   The global routing problem is NP-hard [2], so practi-
+                                         the constrained ARIANE design, we achieve an overflow of                           cal solvers rely on heuristics. CUGR [3] targets detailed
+                                         146,109 (a 29.8x reduction in overflow over the state of the                       routability through probabilistic resource modeling. InstantGR
+                                         art), yielding a penalized score of Sorig = 0.0538 versus the                      [4] reduces runtime through GPU parallelization. PathFinder-
+                                         State-of-the-art (SOTA) 1.780. These results demonstrate that
+                                         superior algorithmic search geometry can overcome the latency
+                                                                                                                            based routers [5] use negotiation-based congestion resolution
+                                         of interpreted Python implementations.                                             to balance overflow elimination against critical-path delay,
+                                            Index Terms—Combinatorial Optimization, Global Routing,                         and recent accelerators such as PAGR [6] target throughput
+                                         Physical Design, Rip-up and Reroute, Large Language Models,                        of the global routing flow itself. Despite this progress, three
+                                         Knowledge Graphs, Explainable AI                                                   limitations persist across existing frameworks: penalty param-
+                                                                                                                            eters are static and not adapted to the evolving congestion
+                                                                    I. I NTRODUCTION                                        landscape, rip-up candidate selection is not driven by per-net
+                                            Global routing is an important phase of Very Large Scale                        overflow contribution, and there is no interpretable reasoning
+                                         Integration (VLSI) physical design that assigns coarse routing                     layer that explains why a particular routing policy was chosen.
+                                         paths for electrical connections (nets) across a chip layout,                      This work addresses all three gaps. The specific research
+                                         followed by detailed routing, which determines the exact                           contributions are:
+                                         routing tracks for each net. The chip is partitioned into
+                                         global routing cells (GCells), and each signal net is assigned                       1) SHapley Additive exPlanations (SHAP)-inspired over-
+                                         to a sequence of GCells to minimize wire length, reduce                                 flow decomposition and targeted rip-up: We introduce a
+                                         congestion, and control via count. Poorly managed congestion                            permutation-importance-style analyzer [7] that decom-
+                                         at this stage propagates into downstream violations: unroutable                         poses post-routing overflow into per-net scores, layer-
+                                         designs with Design Rule Checking (DRC) failures, timing                                wise fractions, and utilization-overflow correlations, en-
+                                         degradation, excess power draw, and inflated die area. Modern                           abling the rip-up stage to select exactly the nets re-
+                                         designs intensify this challenge. Contemporary System-on-                               sponsible for congestion rather than relying on coarse
+                                         Chips (SoCs) contain hundreds of thousands to millions of nets                          heuristics.
+                                                                                                                              2) Adaptive PathFinder policy with capacity-aware routing:
+                                            * Corresponding author: kabirmurjani@gmail.com                                       We extend the classical PathFinder cost model [5] with
+                                            The complete codebase and evaluation scripts required to reproduce all               SHAP-driven parameter rules that adjust the history
+                                         results are publicly available at https://github.com/Kcbir/AlphaRoute. The
+                                         benchmarks are the public ISPD 2025 contest designs [1].                                penalty, present overflow weight, and via cost at each
+                                            © 2026 IEEE. Personal use of this material is permitted. Permission from             iteration. Initial routing further benefits from flexible
+                                         IEEE must be obtained for all other uses, in any current or future media,               dual L-shape evaluation and dynamic layer selection,
+                                         including reprinting/republishing this material for advertising or promotional
+                                         purposes, creating new collective works, for resale or redistribution to servers        which together reduce initial overflow by 2.2x on the
+                                         or lists, or reuse of any copyrighted component of this work in other works.            ARIANE benchmark.
+  3) Dijkstra maze rerouting within a 3D bounding-box sub-                                               Parse Input Files
+                                                                                                        .cap and .net (III-A)
+     graph: Medium-area nets ripped by the SHAP analyzer
+                                                                                                        Build Weighted 3D
+     are rerouted through a cost-aware Dijkstra search over                                               Graph (Eq. 1)
+
+     a local subgraph, allowing the router to detour around                                              Order Nets
+                                                                                                    by area and then slack
+     congestion hotspots that simple L-routes or Steiner trees
+     cannot resolve.                                                                              Yes        Net area           No
+                                                                                                            An is below
+  4) LLM-based interpretable policy adaptation with                                                        Threshold X?
+
+
+     knowledge-graph validation: A Large Language Model                                   Steiner Tree                 Prim MST Route
+     (LLM) receives structured SHAP metrics and proposes
+                                                                                                                   Dual L-Shape Routing
+     parameter adjustments with natural-language reasoning.                                                           H-first vs V-first
+
+     Proposals are validated against hard constraints stored
+     in a RustworkX knowledge graph before application,                                             Compute Overflow Ω
+                                                                                                         (Eq. 2)
+     combining interpretability with safety.
+  On the International Symposium on Physical Design (ISPD)
+2025 ARIANE benchmark dataset, AlphaRoute achieves an                                         Yes           Overflow=0
+                                                                                                         or other stopping
+                                                                                                                                 No
+
+                                                                                                           criteria met?
+overflow of 146,109 (29.8x below SOTA in overflow) and a
+score of Sorig = 0.0538 versus SOTA 1.780 (a 33.1× score                                Stop
+                                                                                       Routing
+                                                                                                                    SHAP Overflow Analyser (III-D)
+
+                                                                                                                       Per-net score (Eq. 3)
+reduction).                                                                                                            Layer Overflow (Eq. 4)
+                                                                                                                       Congested Fraction (Eq. 5)
+
+
+                     II. R ELATED W ORK
+                                                                                                    LLM Policy Proposal
+A. Classical and Graph-Based Global Routing
+                                                                                                        Knowledge Graph
+   FLUTE [8] remains a standard for fast rectilinear Steiner
+tree construction, but Steiner methods reason locally per net,                                      Update PathFindder
+                                                                                                          Policy
+ignoring the multi-net resource contention that drives overflow.
+                                                                                                    Ripup Top 20% Nets
+Graph-based learning methods address this gap: graph atten-                                                (Eq. 9)
+
+tion networks [9] introduced learned neighborhood weighting
+                                                                                                             Reroute
+via message passing, and graph-representation Reinforcement                                  An < Y
+                                                                                                           based on Net
+                                                                                                             Area An
+                                                                                                                                An > Z
+
+
+Learning (RL) was shown to scale to industrial placement                                                              Y<An<Z
+
+without manual feature engineering [10]. These results indicate                    Steiner Tree           Dijkstra Maze              MST+Flex-L
+that graph encoders can capture congestion coupling and long-
+range dependency more naturally than hand-crafted features.
+                                                                                                        Recompute Overflow,
+                                                                                                         Update iterations
+B. LLM-Based Evaluation and Its Limitations
+   Using LLMs as automated judges scales evaluation but
+introduces systematic bias. A study of LLM judges found per-       Fig. 1: AlphaRoute execution flow: input parsing and graph
+sistent position bias, verbosity bias, and self-preference, with   construction, slack-aware net ordering, initial routing, and
+the largest disagreements against human annotators on open-        the SHAP-guided rip-up/reroute loop with knowledge-graph
+ended responses [11]. In a routing loop, such bias becomes a       validated LLM policy adaptation.
+training target that pushes policy toward style over substance.
+This motivates our use of LLMs strictly for structured policy                            III. M ETHODOLOGY
+suggestion rather than as reward judges.
+                                                                      This section describes AlphaRoute in order of execution,
+C. Reinforcement Learning from Human Feedback (RLHF)               following the architecture in Fig. 1. The router, input parser,
+and Reward Grounding                                               and RL policy loop are implemented in Python, with routing
+                                                                   quality scored by a C++ evaluator.
+   RLHF fits a reward model on human preferences and
+optimizes the policy against that signal [12], but the reward      A. Input Representation and Graph Construction
+model must extrapolate beyond its training comparisons, and           Input files (.cap, .net) are sourced from the ISPD 2025
+this error grows as the policy diverges from the data dis-         contest dataset [1] and parsed. The .cap file defines per-GCell
+tribution [13]. Nearest-neighbor language modeling showed          routing capacities C ∈ RNL ×ymax ×xmax , layer costs, and
+that retrieval can anchor predictions to observed data instead     scoring weights over a 10 × 646 × 646 grid (ARIANE); metal
+of forcing unsupported generalization [14]. Our knowledge          layer 0 is via-only. The .net file lists pin locations, GCell
+graph applies the same principle: it ties routing decisions to     access points, and pre-routing slack estimates. A RustworkX
+previously observed outcomes, keeping the loop grounded in         graph is constructed over the parsed grid. Each GCell is
+measured results.                                                  mapped to a node via idx(z, y, x) = z · Ymax · Xmax + y ·
+Xmax +x. Edges encode legal routing moves: horizontal layers         horizontal segment the selected layer is z ∗ = arg maxz c̄z ,
+connect (x, y, z) to (x±1, y, z), vertical layers connect it to      where c̄z is the mean remaining capacity along the segment’s
+(x, y±1, z), and vias to (x, y, z±1) for z > 1 with a fixed          GCell range. This reduces the fixed two-layer assignments and
+cost of 40. The initial weight assigned to an edge e between         reduces initial overflow by 2.2x on the full ARIANE design
+adjacent cells u and v on layer z is:                                (2, 239, 467 → 1, 029, 699). Overflow, computed once initial
+                                                                     routing completes, is defined as:
+  W (e) = (10.0 − 3.0 · σn ) + (11 − cz,u ) + (11 − cz,v ) (1)                               X
+                                                                                       Ω=        max(0, −cz,y,x )               (2)
+   where σn ∈ [0, 1] is the criticality factor of the net, derived                            z,y,x
+
+from the worst-case pin slack sn relative to the global worst           Here cz,y,x is the remaining capacity after routing, which
+slack smin as σn = max(0, 1 − sn /smin ). The net having             is negative if wire demand is exceeding supply. If Ω = 0,
+slack as smin is the most time-critical net with a factor of         the overflow of the circuit is zero and routing is completed;
+σn = 1.0 and a final base cost of 7.0, giving it a 30% discount      otherwise, it enters the adaptive rip-up and reroute loop.
+over a non-critical net. The terms (11 − cz,u ) and (11 − cz,v )
+add between 1 (empty cell, c = 10) and 11 (fully congested,          D. Overflow Analyzer
+c = 0), routing traffic away from overloaded GCells.                    We use a SHAP-based approach to decompose the overflow
+                                                                     distribution into different parameters before the R&R itera-
+B. Slack Aware Net Ordering
+                                                                     tions.
+   Nets are ordered by bounding-box area first (large nets              1) Per-net overflow score: The overflow score for each net
+route first to reduce future congestion), then by most-negative      routing through GCells is:
+slack among similarly sized nets, and finally single-GCell nets
+                                                                                              X
+requiring only trivial resources. Area thus takes precedence                         ψn =            max(0, −cz,y,x )          (3)
+over criticality: a large non-critical net routes before a smaller                          (z,y,x)∈Gn
+critical one, and ties in area are broken by criticality so
+the most time-critical net claims the shortest, least-resistive         Here ψn uses the same per-cell overflow measure as Ω
+path. Non-critical nets route later and naturally detour around      (Eq. (2)), but is restricted
+                                                                                       P           to GCell set Gn occupied by net
+regions already occupied by critical nets.                           n, such that Ω ≤ n ψn since nets may be sharing congested
+                                                                     cells. The nets are ranked by direct contribution to congestion
+C. Initial Routing: Steiner / MST + Flexible L-Route                 ψn . The top 20% nets causing overflow are ripped up and
+   A preliminary path is assigned to every net for the initial       rerouted.
+routing pass. Each net’s bounding-box area is computed as               2) Layer-wise overflow decomposition: Identifies metal lay-
+An = (xnmax − xnmin )(ymax
+                         n       n
+                              − ymin  ), and the routing method      ers having most congestion:
+is selected as follows.                                                                      P
+                                                                                                y,x max(0, −cz,y,x )
+   1) Small Nets (Steiner Tree): Nets having area An ≤ 2, 500                        λz = P                           .          (4)
+are routed through RustworkX’s Steiner tree algorithm. Steiner                                 z,y,x max(0, −cz,y,x )
+tree routing minimizes total wire length to connect all required        The dominant layers z ∗ = arg maxz λz are passed to the
+nodes in the graph, utilizing intermediate GCells as Steiner         adaptive policy and LLM analyzer.
+points to reduce overall cost [8].                                      3) Congested cell fraction: This measures how closely
+   2) Large Nets (Prim MST and Flexible L-Route): Nets               cell utilization predicts overflow and is used to choose from
+with area An > 2, 500 use Prim’s minimum spanning tree               history-driven and present-driven cost inflation.
+(MST) on pin terminals, with Manhattan distance d(p1 , p2 ) =
+|x1 − x2 | + |y1 − y2 | + 40|z1 − z2 |. The weight of 40 is the                             |{(z, y, x) : cz,y,x < 0}|
+                                                                                     fc =                                         (5)
+via edge cost in the Manhattan distance to discourage the                                      NL · ymax · xmax
+algorithm from routing through unnecessary layer changes.               fc is congested cell fraction, defined as the ratio of GCells
+Each MST edge (pi , pj ) becomes a 2-pin sub-problem solved          with negative remaining capacity to the total grid size.
+through flexible L-routing.                                             4) Utilization-overflow correlation: Cell utilization is de-
+   3) Flexible dual L-shape routing: The L-shaped paths are          fined as uz,y,x = 1 − cz,y,x /c0z,y,x , where c0z,y,x is the
+evaluated with Horizontal-first and Vertical-first approaches        original capacity from the cap file. A SHAP-style permutation
+for each 2-pinPconnection. For each net, the congestion cost is      importance analyzer that decomposes post-routing overflow
+Ω(path) =       (z,y,x)∈path max(0, −cz,y,x ), and the L-shape       [7] is implemented without the external SHAP library; it runs
+with the lower congestion cost is selected. The complexity           in under 0.1 s on a 4.17 M-cell grid.
+for the given algorithm is O(|An |) cost per net without                The Pearson correlation between cell utilization and the
+overhead and latency of searching for the shortest path. The         binary overflow is computed over all cells as:
+metal layer for routing is assigned by the L-route through
+maximum remaining capacity among all layers whose segment                                      Cov(u, max(0, −c))
+orientation matches the preferred direction. Specifically, for a                      ruo =                                       (6)
+                                                                                                 σu · σmax(0,−c)
+                TABLE I: Adaptive Policy Rules                              where ce = min(cz,y1 ,x1 , cz,y2 ,x2 ) is the minimum remain-
+      SHAP signal                 Condition    Policy action
+                                                                         ing capacity of two cells incident to the edge. The history array
+                                                                         is persistent across all R&R iterations; cells that are repeatedly
+      Congested cell fraction     fc < 0.02    Increase pf
+      Util-overflow correlation   ruo > 0.5    Increase α                congested accumulate an increasing penalty.
+      Layer concentration         λz∗ > 0.50   Decrease via cost            2) Reroute cost: The Dijkstra algorithm uses combined edge
+                                                                         cost during rerouting:
+  INPUT: Routing iteration 1 metrics:
+                                                                                                                (k)
+  - Overflow (L2): 258,229 - Overflow delta from init:
+  +0.0% - Congested cells: 1.15% of grid - Util-overflow
+                                                                               cost(e) = W (e) + h(k) (e) + pf · max(0, −ce ),         (8)
+  correlation: 0.237 - Top layer overflow: 50.1% -
+  Current alpha: 0.4000 - Current present factor: 2.000 -                   where W (e) is the weight from Eq. (1). The three additive
+  Current via cost: 40.0 - Vias ripped this iteration: 0                 terms correspond to: the capacity-weighted base cost, accu-
+  { "path_action": "INCREASE", "pf_action": "INCREASE",                  mulated history penalty from past iterations, and the present
+  "via_action": "DECREASE", "alpha_value": 0.8,                          state overflow penalty pf .
+  "pf_value": 4.0, "via_value": 30.0, "reasoning": "High                    3) Automatic alpha growth: α grows by a factor of 1.15 each
+  overflow, concentrated congestion, and high top layer                  iteration, α(k+1) = α(k) × 1.15, ensuring the history penalty
+  overflow indicate need for stronger penalties and via                  increases even without LLM input.
+  cost reduction to spread routing demand." }                               4) SHAP-driven parameter rules: Table I showcases three
+                                                                         rules for which SHAP can override the default parameter
+Fig. 2: Example policy query at iteration 1: structured SHAP             trajectory. wvia is decreased when one layer dominates the
+metrics sent to the LLM (blue) and the returned JSON                     overflow; this forces the router to use other metal layers.
+parameter update with rationale (green).                                 G. Rip-Up Candidate Selection
+                                                                           Given the SHAP scores computed by Eq. (3), the rip-up
+                                                                         candidate set for iteration k is:
+   A high value of correlation (ruo > 0.5) is an indication of
+cell utilization being a reliable predictor of overflow, forcing                      R(k) = {n ∈ N : ψn ≥ ψ⌊(1−ρ)|N |⌋ }              (9)
+the policy to increase the history penalty weight α. A low
+correlation is an indication of congestion being structurally               where ρ = 0.20 is the rip-up fraction and N is the set of
+driven (e.g., macro blockages) rather than demand-driven, in             nets with ψ > 0. This selects the top 20% of nets ranked by
+which case the history penalty weight is not increased.                  overflow contribution. The capacity consumed by each ripped
+                                                                         net is restored before routing begins. The routing demand of
+E. LLM Log Analyzer                                                      the cell for that given net is incremented for every GCell (z,y,x)
+                                                                         that is now occupying the ripped net n. This is to ensure
+   LLMs are invoked after SHAP analysis is completed. A                  that Dijkstra can find the optimum path while considering the
+structured metric prompt is generated and sent to a locally              capacity of ripped cells. The number of ripped nets decreases
+running Ollama instance hosting Llama 3.2 3B. Groq API                   monotonically in the full ARIANE design across different
+endpoints hosting Llama 3.3 70B and GPT-OSS 120B were                    iterations.
+used for the ablation configurations to generate the logs. The
+prompt contains seven fields: current overflow ΩL2 , overflow            H. Dijkstra Maze Rerouting
+delta from the initial routing ∆Ω, congested cell fraction fc ,            Nets having area between 2, 500 < An ≤ 15, 000 use 3D
+utilization-overflow correlation ruo , dominant layer overflow           Dijkstra maze routing during the R&R. A local RustworkX
+percentage 100λz∗ , current α, and current pf . The LLM                  graph is built over the net bounding box with a margin of
+returns a structured JSON object containing actions and values           δ = 2 and having edge weights from Eq. (8). The shortest path
+for α, pf and via cost, plus a short natural-language rationale.         with Dijkstra detours around congested hotspots. Small nets
+The values suggested by LLMs are applied after checking                  (An ≤ 2, 500) use Steiner trees; large nets (An > 15, 000)
+validity from hard-coded rules from the knowledge graph,                 use MST+FlexL.
+otherwise the SHAP adaptive policy rules described in Table I            I. Knowledge Graph
+are applied.
+                                                                            The Knowledge Graph is a graph built on RustworkX which
+                                                                         keeps a record of routing decisions and outcomes of routing
+F. Adaptive PathFinder Policy
+                                                                         across all R&R iterations. It keeps a record of three node types:
+   The scalar parameters are used to govern the cost model: α               • Pattern: Characteristics of the net at the time of rerouting
+(history penalty growth rate), pf (present overflow), and wvia                consisting of net size, dominant layer, and overflow level
+(via cost, initial 40).                                                       λz .
+   1) History cost update: The history cost array h is updated              • Strategy: Keeps track of the routing algorithm and active
+for every edge e at the end of iteration k:                                                               (k)     (k)
+                                                                              policy parameters (α(k) , pf , wvia ).
+                                                                                                              (k)
+                                                                            • Outcome: the result ∆Ω = Ω          −Ω(k−1) of applying the
+          h(k+1) (e) = h(k) (e) + α(k) · max(0, −ce ),             (7)        strategy to the pattern.
+                IV. E XPERIMENTAL S ETUP                          A. Overflow Analysis
+   All experiments were run on a single NVIDIA A40 GPU
+                                                                     The overflow is presented across eight ablations and four
+(48 GB VRAM), 48 GB system RAM, 9 vCPUs, and 40 GB
+                                                                  benchmark circuits. The overflow reduction is consistent as
+disk. The router and ablation framework were implemented in
+                                                                  each component is progressively added.
+Python with open-source libraries, and the LLM-enabled runs
+                                                                     The overflow score for baseline A1 is the highest overflow
+used the Groq Open Models API for model inference in the
+                                                                  across all of the benchmarks with 1,517,789 for ARIANE,
+policy-analysis loop.
+                                                                  7,600,283 for BSG, 124,450 for MEMPOOL and 19,297,016
+A. Benchmarks                                                     for NVDLA. L-routing (A2) reduces it drastically by 82.9%
+   We evaluate AlphaRoute across benchmarks from the blind        for ARIANE, 79.1% for MEMPOOL, 43.6% for BSG and
+dataset of ISPD 2025. The benchmarks are ARIANE (10               43.3% for NVDLA. This conveys that L-routing very effi-
+layers, 646 × 646 GCells, 105,924 nets), BSG (10 layers,          ciently routes large nets.
+1384 × 1384 GCells, 768,239 nets), MEMPOOL (10 layers,               In A3, SHAP-based rip-up and reroutes are added for
+1120 × 1120 GCells, 157,744 nets), and NVDLA (10 layers,          nets causing overflow. This reduces overflow for ARIANE
+386 × 386 GCells, 135,814 nets). All the benchmarks consist       to ∼241,811 and MEMPOOL to ∼19,438. However, BSG
+of .cap and .net input formats.                                   and NVDLA are comparable with A2, indicating that SHAP-
+                                                                  driven rip-up and rerouting is more effective on circuits having
+B. Ablation Configurations                                        concentrated congestion hotspots.
+   Eight cumulative ablations are evaluated. A1 is the Steiner       The addition of Dijkstra maze routing in A4 produces
+tree baseline. A2 adds flexible L-routing. A3 adds SHAP-          the second major improvement, as the reduction in ARIANE
+driven rip-up and reroute. A4 adds Dijkstra maze rerouting        is 6.3%, MEMPOOL is 14.2% and NVDLA is 35%. BSG
+(Section III-H). A5 activates the knowledge graph. A6 adds        remains unchanged compared to A3, which suggests that
+Graph Neural Network (GNN)-based congestion scoring. A7           structural congestion may be resistant to maze routing alone.
+and A8 add LLM-guided policy adaptation using Llama 3.3              The overflow reduction from A5 through A8 remains
+70B and GPT-OSS 120B, respectively.                               marginal. The similar overflow between A4 and A5 proves
+                                                                  that the knowledge graph is only used for recording previous
+C. LLM Ablation
+                                                                  iterations’ policy parameters. Ablation of GNN achieves a
+   We compared two model families through the same prompt         small improvement on MEMPOOL to ∼1,726.
+format and constraints: Llama 3.3 70B Versatile 128k and             Further, LLM-guided policy adaptation yields identical re-
+GPT-OSS 120B 128k, both served via the Groq Open Models           sults to A4 and A5 and proves that overflow reduction is
+API. Across benchmarks, differences in WNS and TNS be-            saturated and LLMs contribute more to interpretability than to
+tween models were not statistically meaningful, indicating the    direct overflow reductions. The slight increase in overflow for
+policy modification layer is largely model-agnostic since hard    A7 and A8 is due to LLM-suggested parameter adjustments
+constraints and SHAP signals dominate final decisions.            that slightly over-penalize congested GCells on a design that
+                        V. R ESULTS                               has already reached near-optimal routing under GNN ordering,
+                                                                  as shown in the plot of the impact of overflow due to LLMs
+   The routing benchmark used in this work follows the ISPD       in Fig. 3.
+2025 Global Routing Contest specification, which defines the
+scoring metric Sorig , the congestion penalty Soverflow and the
+runtime penalty score Sscaled . AlphaRoute achieves Sorig =
+0.0538 and Sscaled = 0.0589 in ARIANE, representing a
+33.1× reduction in the original score and a 29.5× reduction
+in the scaled score relative to the current SOTA values of
+Sorig = 1.780 and Sscaled = 1.74 (ARIANE), demonstrating
+that the overflow reduction delivered by AlphaRoute decisively
+outweighs its runtime overhead in the final metric. Our wall-
+clock runtime is approximately 136× above the contest median      Fig. 3: Overflow with and without LLM-guided policy adap-
+(tmed = 19 s), which can be attributed to two compounding         tation (A6 vs. A7/A8); LLMs slightly over-penalize designs
+factors: (1) our implementation is written entirely in Python     already near optimal, contributing interpretability rather than
+rather than the optimized C++ employed by top contest             further reduction.
+entries, and (2) our experiments used a more constrained
+cloud instance than the contest reference hardware (200 GB
+RAM, 8 CPU cores, NVIDIA A100 (PG506-230) with 40 GB                Overall, the results demonstrate that flexible L-routing (A2),
+GPU memory). We acknowledge this runtime overhead as a            SHAP-guided rip-up (A3), and Dijkstra maze routing (A4)
+limitation; future work will address it through a C++/Rust re-    account for most overflow reductions, while GNNs and LLMs
+implementation or GPU-accelerated path search.                    provide interpretability.
+                                                                                             VI. C ONCLUSION
+                                                                     AlphaRoute demonstrates that SHAP-driven overflow de-
+                                                                  composition, adaptive PathFinder tuning, Dijkstra maze rerout-
+                                                                  ing, and LLM-guided policy adaptation can be composed into
+                                                                  a single closed-loop system that reduces congestion by up to
+                                                                  two orders of magnitude on ISPD 2025 benchmarks, achieving
+         (a) ARIANE                        (b) BSG                an original score over 33x lower than the published state of
+                                                                  the art on ARIANE despite a pure Python implementation.
+                                                                  Ablations confirm that flexible L-routing, SHAP-targeted rip-
+                                                                  up, and maze rerouting account for nearly all overflow re-
+                                                                  duction, while the knowledge graph and LLM layers provide
+                                                                  interpretability without degrading routing quality, and the pol-
+                                                                  icy loop remains model-agnostic across LLM families. Future
+                                                                  work includes porting critical loops to compiled code or GPU
+       (c) MEMPOOL                        (d) NVDLA               kernels to close the runtime gap, distilling a compact routing-
+Fig. 5: R&R convergence curves (overflow L2 vs. iteration)        specific language model from accumulated knowledge-graph
+for configurations A3–A8 across all four benchmarks.              logs, and extending the SHAP analyzer to capture net-to-
+                                                                  net coupling for structurally congested designs where per-net
+                                                                  marginal scores are least effective.
+
+                                                                                                 R EFERENCES
+                                                                   [1] “ISPD 2025 contest: Performance-driven global routing,” 2025,
+                                                                       contest specification and benchmarks. [Online]. Available: https:
+                                                                       //github.com/liangrj2014/ISPD25 contest
+                                                                   [2] M. R. Garey and D. S. Johnson, “The rectilinear steiner tree problem is
+                                                                       NP-complete,” SIAM Journal on Applied Mathematics, vol. 32, no. 4,
+                                                                       pp. 826–834, 1977.
+                                                                   [3] J. Liu, C.-W. Pui, F. Wang, and E. F. Y. Young, “CUGR: Detailed-
+                                                                       routability-driven 3d global routing with probabilistic resource model,”
+                                                                       in Proceedings of the 57th ACM/IEEE Design Automation Conference
+                                                                       (DAC). IEEE, 2020, pp. 1–6.
+                                                                   [4] S. Lin, L. Xiao, J. Liu, and E. F. Y. Young, “InstantGR: Scalable
+                                                                       GPU parallelization for global routing,” in Proceedings of the 43rd
+                                                                       IEEE/ACM International Conference on Computer-Aided Design (IC-
+                                                                       CAD). IEEE/ACM, 2024.
+                                                                   [5] L. McMurchie and C. Ebeling, “PathFinder: a negotiation-based
+                                                                       performance-driven router for FPGAs,” in Proceedings of the Third
+Fig. 4: Absolute overflow across cumulative ablations A1–A8            International ACM Symposium on Field-Programmable Gate Arrays
+for all four benchmarks; most reduction is delivered by L-             (FPGA). ACM, 1995, pp. 111–117.
+routing (A2), SHAP rip-up (A3), and maze routing (A4).             [6] R. A. Solovyev, I. A. Mkrtchan, D. V. Telpukhov, I. I. Shafeev, A. Y.
+                                                                       Romanov, Y. V. Stolbikov, and A. L. Stempkovsky, “PAGR: Accelerating
+                                                                       global routing for VLSI design flow,” IEEE Access, vol. 13, pp. 6440–
+                                                                       6450, 2025.
+B. R&R Convergence Analysis                                        [7] S. M. Lundberg and S.-I. Lee, “A unified approach to interpreting model
+                                                                       predictions,” in Advances in Neural Information Processing Systems
+   Fig. 5 shows overflow convergence over three R&R iter-              (NeurIPS), vol. 30, 2017, pp. 4765–4774.
+ations for A3–A8. On ARIANE, A4–A8 converge steeply                [8] C. Chu and Y.-C. Wong, “FLUTE: Fast lookup table based rectilinear
+                                                                       steiner minimal tree algorithm for VLSI design,” IEEE Transactions
+from ∼260,000 at iteration 0 to ∼148,000 by iteration 3;               on Computer-Aided Design of Integrated Circuits and Systems, vol. 27,
+MEMPOOL follows the same trend, dropping from ∼25,000                  no. 1, pp. 70–83, 2008.
+to below ∼2,000 (a 92% reduction) by iteration 2, and              [9] P. Veličković, G. Cucurull, A. Casanova, A. Romero, P. Liò, and
+                                                                       Y. Bengio, “Graph attention networks,” in International Conference on
+NVDLA falls from ∼1.1×107 to ∼4.0×106 . In every case A3               Learning Representations (ICLR), 2018.
+plateaus early, confirming that Dijkstra maze routing is needed   [10] A. Mirhoseini, A. Goldie, M. Yazgan, J. W. Jiang, E. Songhori, S. Wang,
+to escape local congestion minima on large or structurally             Y.-J. Lee, E. Johnson, O. Pathak, A. Nova, J. Pak et al., “A graph
+                                                                       placement methodology for fast chip design,” Nature, vol. 594, no. 7862,
+congested designs.                                                     pp. 207–212, 2021.
+   BSG illustrates the LLM’s role: A8 converges sub-linearly      [11] L. Zheng, W.-L. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin,
+as the LLM shifts from overflow reduction to logged reasoning          Z. Li, D. Li, E. P. Xing, H. Zhang, J. E. Gonzalez, and I. Stoica, “Judging
+                                                                       LLM-as-a-judge with MT-bench and chatbot arena,” in Advances in
+once routing nears its optimum, so LLM guidance helps most             Neural Information Processing Systems (NeurIPS), vol. 36, 2023.
+when residual congestion is significant and alternative paths     [12] L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin,
+exist. The near-identical A4–A7 trajectories on ARIANE and             C. Zhang, S. Agarwal, K. Slama, A. Ray et al., “Training language
+                                                                       models to follow instructions with human feedback,” in Advances in
+MEMPOOL confirm that the KG, GNN, and LLM layers do                    Neural Information Processing Systems (NeurIPS), vol. 35, 2022, pp.
+not alter convergence dynamics.                                        27 730–27 744.
+[13] L. Gao, J. Schulman, and J. Hilton, “Scaling laws for reward model
+     overoptimization,” in Proceedings of the 40th International Conference
+     on Machine Learning (ICML), vol. 202, 2023.
+[14] U. Khandelwal, O. Levy, D. Jurafsky, L. Zettlemoyer, and M. Lewis,
+     “Generalization through memorization: Nearest neighbor language mod-
+     els,” in International Conference on Learning Representations (ICLR),
+     2020.
+

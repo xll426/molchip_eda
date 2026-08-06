@@ -1,0 +1,1156 @@
+O PEN RTLS ET: A Fully Open-Source Dataset for
+Large Language Model-based Verilog Module
+Design
+Jinghua Wang∗ , Lily Jiaxin Wan∗ , Sanjana Pingali∗ , Scott Smith∗ , Manvi Jha∗ ,
+Shalini Sivakumar, Xing Zhao, Kaiwen Cao, Deming Chen
+
+arXiv:2606.10285v1 [cs.CL] 9 Jun 2026
+
+University of Illinois Urbana-Champaign
+{jinghua3, wan25, pingali4, scottcs2, manvij2, ss251, xingz6, kaiwenc2, dchen}@illinois.edu
+
+Abstract—O PEN RTLS ET1 introduces the largest fully opensource dataset for hardware design, offering over 131,000 diverse Verilog code samples to the research community and
+industry. Our dataset uniquely combines Verilog code from
+GitHub repositories (102k modules), VHDL translations (5k
+modules), and synthesizable C/C++ translations (24k modules),
+all freely accessible without proprietary restrictions. Using the
+reasoning model DeepSeek-R1, we generated paired natural
+language descriptions for each code sample, enabling fine-tuning
+of various language model families (e.g., Qwen and Granite) for
+Verilog code generation. Our dataset explores multiple options,
+including Verilator-generated C++ files as additional context
+during labeling, quantization techniques (INT4 vs. BF16), and
+performance differences across model sizes (7B-32B parameters).
+O PEN RTLS ET demonstrates that open-source approaches can
+achieve superior performance in hardware design tasks, establishing a new foundation for accessible research and commercial
+use in this domain.
+Index Terms—Large Language Models (LLMs), Verilog,
+Register-Transfer Level (RTL), dataset
+
+I. I NTRODUCTION
+Recent advancements in Large Language Models (LLMs),
+exemplified by systems such as CodeLlama [1], DeepSeekCoder [2] and Qwen-Coder [3], have redefined the landscape
+of automated code generation. These state-of-the-art models
+leverage extensive pretraining on massive, publicly available
+code corpora to internalize complex algorithmic patterns and
+API semantics, thereby enabling the generation of code in
+languages like Python [4] [5], JavaScript [6] [7], and C++ [8].
+Building on these successes, there is growing interest in extending LLM capabilities to hardware design—specifically, to
+the generation of Hardware Description Language (HDL) code
+from high-level specifications [9] [10] [11]. However, applying
+LLMs to Verilog—the predominant HDL in digital circuit
+design—faces a critical challenge: the severely limited availability of large-scale, high-quality training datasets [12] [13].
+Unlike software languages, which benefit from abundant opensource repositories, Verilog code is often restricted within
+specialized industrial domains. This scarcity, compounded
+* These
+
+authors contributed equally to this work.
+available at https://github.com/UIUC-ChenLab/OpenRTLSet; dataset
+and fine-tined LLMs available at https://huggingface.co/datasets/ESCAD/
+OpenRTLSet.
+1 Code
+
+by the proprietary nature of industrial hardware IP, has stifled progress in developing domain-specific models capable
+of generating syntactically and functionally correct Verilog
+code. The lack of accessible, standardized datasets remains
+a fundamental barrier to advancing LLM-driven automation
+in hardware engineering.
+Efforts to bridge this gap have produced domain-specific
+LLMs like DAVE [14], VeriGen [15], and CodeV [16], which
+fine-tune general-purpose models on limited HDL datasets.
+While datasets such as VGen [17] aggregate code from GitHub
+and textbooks, evaluations reveal persistent failures in generating basic constructs like Linear-Feedback Shift Registers (LFSRs) and syntax-compliant modules [18]. Commercial tools
+like Synopsys.ai [19] and ChipNeMo [20] address industrial
+needs but lack transparency. Several large-scale datasets like
+PyraNet [21] and MG-Verilog [22], and proprietary collections from industry leaders such as NVIDIA and Synopsys
+have emerged. Still, they do not guarantee fully open-source
+licensing and, thus, are not viable for free commercial use.
+This creates significant barriers for researchers and companies looking to build competitive commercial LLM solutions.
+These limitations underscore the need for fully open-source,
+large-scale datasets paired with reproducible methodologies to
+advance LLM-driven hardware design that can be freely used
+in both academic and commercial settings.
+In response to these challenges, we introduce O PEN RTLS ET. We summarize our contributions as follows:
+• We introduce O PEN RTLS ET —the largest fully opensource Verilog dataset containing 131k diverse
+Verilog modules from GitHub-sourced designs,
+VHDL/SystemVerilog translations, and HLS-generated
+RTL. Unlike other large-scale open-source Verilog
+datasets that are not completely open for commercial
+use, O PEN RTLS ET ensures complete reproducibility
+through traceable GitHub origins and permissive
+licensing, directly addressing a critical barrier to
+transparent research and commercial application in
+LLM-driven hardware design.
+• We develop a comprehensive fully open-source end-toend flow for high-quality data labeling that integrates
+reasoning-driven and prompt-engineering techniques, op-
+
+tionally including Verilator-generated C++ pairing with
+the Verilog modules during natural language labeling. By
+leveraging the DeepSeek-R1 model, we generate natural
+language descriptions of each Verilog module to form
+a high-quality dataset that can fine-tune various Coding
+LLMs into Verilog experts.
+• We conduct systematic evaluations of LLM performance
+on Verilog code generation. Through our experiments, we
+explore the effects of model quantization, dataset augmentation with cross-language Verilog representations,
+and structured prompt engineering techniques. Our comparative evaluation against existing datasets establishes
+O PEN RTLS ET as a definitive, high-quality benchmark
+for LLM-driven RTL generation research and application.
+• Using the MG-Verilog original dataset with multigranularity labeling as our baseline, we apply our labeling
+techniques to the complete 131k O PEN RTLS ET and finetune Qwen2.5-32B. This yields an absolute improvement
+of 5.7% in Pass@1, 8.3% in Pass@5 and 7.9% in
+Pass@10 on the VerilogEval-Machine benchmark. On
+the VerilogEval-Human benchmark, we observe absolute
+gains of 9.7% in Pass@1, 13.0% in Pass@5, and 14.2%
+in Pass@10. Across all evaluated LLMs from 7B to
+32B and all Pass@k metrics, O PEN RTLS ET consistently
+outperforms MG-Verilog.
+In the rest of the paper, Section II reviews some relevant
+background and discusses related work in LLM-based hardware design and existing datasets. Section III details our flow
+for creating O PEN RTLS ET, including data collection, parsing,
+and labeling. Section IV presents our experimental results and
+ablation studies comparing different model architectures finetuned on our dataset. Finally, Section V concludes the study.
+II. BACKGROUND & R ELATED W ORK
+A. Hardware Description Languages and Tools
+Numerous tools and languages can be used to express
+hardware designs. The focus of this dataset is the Verilog
+language.2 Another popular hardware language is VHDL. Both
+languages can express the low-level details of hardware design,
+such as the gates, registers, and timing necessary for a correct
+and high-performance design. High Level Synthesis (HLS)
+is a popular technique for designing hardware, especially
+for FPGAs [23]–[27]. HLS involves describing a hardware
+design in a higher-level language such as C or C++ and
+then transforming that code into actual hardware (e.g., by
+generating Verilog). Our dataset leverages all three of the
+aforementioned methods for describing hardware. We convert
+non-Verilog code into Verilog by leveraging techniques discussed in Section III.
+Other hardware languages and tools, such as Chisel [28],
+Veryl [29], and Spade [30] exist but are significantly less
+popular. There were on the order of a few hundred GitHub
+repositories for these languages/tools compared to the tens of
+2 Throughout this work, we state our target language as Verilog. However,
+our dataset is comprised of both Verilog and SystemVerilog modules.
+
+thousands of Verilog and VHDL repositories. Consequently,
+we ignored them during the creation of our dataset. We focused
+on the languages (Verilog, VHDL, and synthesizable C/C++)
+that would provide the most code samples.
+LLMs lack the extensive Verilog knowledge compared with
+programming languages such as Python, and C, C++. LLMs
+could generate better natural language descriptions of Verilog
+modules when provided with code from these programming
+languages as compared to Verilog. BetterV [31] introduces
+the idea of converting the Verilog code into C code to
+help the LLM better understand the Verilog design provided.
+Our research advances this concept through an innovative
+application of Verilator, enabling specialized Verilog-to-C++
+conversion that includes not only the Verilog but also the cross
+compiled C++ model. We analyze the effectiveness of labeling
+Verilog code with Verilator-generated C++ in Section IV.
+B. Hardware Design Datasets for LLMs
+Recent advances in LLM-assisted hardware design have
+underscored the need for datasets that not only cover a wide
+spectrum of design examples but also provide multi-grained
+information—from high-level design intents to detailed blocklevel labels. For instance, MG-Verilog [22] demonstrates that
+enriching training data with diverse, granular design examples
+significantly improves the quality of generated Verilog code.
+PyraNet [21] introduces a multi-tiered approach to Verilog
+design abstraction, enhancing LLMs’ ability to capture intricate design patterns across abstraction levels. However,
+PyraNet’s restrictive license limits its use in research and
+commercial applications. Commercial use would conflict with
+the ChatGPT terms of service [32] (ChatGPT output should
+not be used to train/fine-tune competitive LLM products). In
+contrast to existing approaches that either rely primarily on
+limited and simplistic RTL repositories or non-commercialpermissive source Verilog modules and/or flow, our work
+introduces a large-scale, fully open-source, and systematically
+curated collection of Verilog modules together with the dataset
+generation flow. Our dataset and flow are tailored for modular
+hardware design applications, bridging the gap between academic benchmarks and practical, real-world challenges.
+III. M ETHODOLOGY
+A. GitHub Scraping
+1) Data Collection: We leveraged a systematic and rigorous methodology to construct a high-quality dataset for finetuning a LLM capable of understanding and generating Verilog
+code. We initiated the process by conducting a comprehensive
+search on GitHub for open-source repositories containing
+Verilog, VHDL, and C/C++ files. All discovered files were
+downloaded for further examination.
+We only kept code licensed as completely free for use in
+both academic and commercial settings. During our parsing,
+we found approximately 81k open-source repositories containing Verilog code, 5k open-source repositories containing
+VHDL code, and 103k open-source repositories containing
+
+C/C++ code. Other repositories did not have permissive licenses and were pruned from the dataset.
+2) Language Translation: In addition to directly using
+Verilog code, we also transformed VHDL and synthesizable
+C/C++ code into Verilog. Approximately 5k VHDL files were
+converted into Verilog. VHDL files were converted using an
+open-source repository called vhd2vl [33]. VHDL files that
+failed conversion were not included in our dataset.
+C/C++ code was also collected from open source repositories on GitHub. However, many C/C++ repositories contain
+non-synthesizable code that cannot be directly converted to
+hardware. So, we passed all collected C/C++ code through
+a custom regular expression checker. We pruned away code
+that cannot be synthesized due to dynamic memory allocation,
+pointers, while loops, recursion, and branch control loops such
+as jmp, goto, etc. After this additional filtering, around 12k
+repositories were left. We used these to obtain Verilog code
+by converting the C/C++ code using Vitis HLS. From these
+12k only around 1k successfully generated Verilog modules
+through Vitis HLS. These failures are due to issues like certain
+C++ standard library calls that are not synthesizable (such
+as std::map). We obtained approximately 24k total Verilog
+modules from the synthesizable C/C++ code.
+3) Module Extraction: Verilog files containing multiple
+modules were decomposed into individual modules to enhance
+learning granularity and reusability. This was achieved by
+parsing files for module and endmodule keywords and saving
+each module as a separate .v file. Single-module files help
+the LLM focus on the structure and syntax of individual
+components and support targeted fine-tuning or testing.
+4) Preprocessing: To prepare the modules for fine-tuning,
+we applied several preprocessing steps aimed at cleaning, standardizing, and formatting the data. (1) We removed redundant
+elements such as comments and whitespace, (2) we ensured
+all code had uniform indentation and spacing, and (3) module
+names and I/O pins were extracted from the modules.
+5) Data Structuring: The preprocessed Verilog modules
+were organized into a structured dataset in the JSONL (JSON
+Lines) format, where each line represents a single Verilog
+module as a JSON object. This dataset is structured into two
+main fields: header and code. The ‘header’ field contains key
+metadata about the module, including its name, derived from
+the module declaration, and its I/O pins, which summarize
+the input, output, and bidirectional signals associated with the
+module. The ‘code’ field contains the cleaned and formatted
+Verilog, stripped of comments and unnecessary whitespace
+to focus solely on functional elements. This structured representation ensures compatibility with the LLM fine-tuning
+flow, enabling efficient processing and learning. Moreover, by
+separating metadata from functional code, the dataset enhances
+interpretability and supports diverse downstream applications.
+6) Data Cleaning: Before testing with the LLM, the dataset
+undergoes a comprehensive cleaning process to ensure quality
+and relevance. Summaries that, when combined with custom
+sentence initiators, terminators, and code headers, may exceed
+the token length limit are removed, along with those containing
+
+repetitive or incomplete text. Repetition is detected using token
+matching, while incomplete summaries are identified through
+the absence of sentence-ending punctuation (e.g., ‘.’) and
+addressed through manual review. Skeleton codes—modules
+containing only ‘module’ and ‘endmodule’ declarations without any functional logic—are also excluded. To further enhance consistency, all remaining data is uniformly formatted,
+ensuring compatibility with the testing flow and maximizing
+the dataset’s effectiveness.
+B. Dataset Statistics
+Table I provides a summary of the statistics for our dataset.
+The data is separated by input type (Verilog, VHDL, C/C++).
+Table I: Data collection statistics
+Language
+Verilog
+VHDL
+C/C++
+
+Total Open-Source Repositories
+81k
+5k
+103k
+
+Final Verilog Modules
+102k
+5k
+24k
+
+C. End-to-End Flow
+To effectively create, label, and evaluate our O PEN RTLS ET
+dataset, we developed a comprehensive end-to-end flow that
+spans from initial data collection to model evaluation. Figure
+1 illustrates this complete workflow. All labels were generated
+using tools that are completely open source, meaning the Verilog code and labels can be used in academic and commercial
+settings. Many LLMs such as ChatGPT have explicit policies
+against using their output data to train competitor LLMs [32].
+We ensured that all utilized tools do not have such policies.
+Our flow consists of three primary stages:
+1) Dataset Creation: The process begins with raw data
+collection, as discussed in Section III-A1.
+2) Dataset Labeling: We leverage the DeepSeek-R1 70B
+model, an open-source reasoning-focused LLM, to generate
+high-quality natural language descriptions for each Verilog
+module. This labeling process incorporates our novel approach
+of using Verilator [34]-generated C++ context to enhance
+semantic understanding, resulting in more accurate and comprehensive descriptions. The labeled dataset pairs each module
+with its corresponding natural language description, creating
+training data suitable for fine-tuning various LLMs.
+3) Model Fine-Tuning and Evaluation: Using the labeled
+dataset, we fine-tune multiple open-source language models,
+including the Granite series (8B) and Qwen series (7B and
+32B). These fine-tuned models are then evaluated using the
+VerilogEval benchmark to assess their Verilog generation capabilities through Pass@k metrics. This standardized evaluation
+allows for fair comparison across different model architectures
+and training configurations.
+This flow ensures complete reproducibility through traceable GitHub origins and permissive licensing. By maintaining
+transparency at each stage, we address a critical barrier in
+LLM-driven hardware design research. The systematic structure also facilitates ablation studies and comparative analyses,
+as detailed in the following section, allowing us to isolate the
+effects of different factors on model performance.
+
+Dataset of verilog &
+cpp-verilog samples
+
+Evaluating the
+Dataset
+
+Creating the Dataset
+
+DeepSeek
+-R1 70B
+
+Labeled
+Data
+
+Open-source reasoning
+model for labeling
+
+Dataset with English
+descriptions
+
+Raw- Data
+
+Qwen 2.5
+32B
+
+Granite 3.3
+8B
+
+Pass@k
+
+Pass@k values for
+each LLM
+
+Fine-Tuning
+Fine-Tuning
+
+VerilogEval for the
+Fine-tuned LLM
+
+Qwen 2.5
+7B
+
+Fine-tune Open-source LLMs using
+OpenRTLSet (labeled)
+
+Fig. 1: The end-to-end flow for O PEN RTLS ET creation, labeling, fine-tuning, and evaluation. The process begins with raw data
+collection from GitHub repositories, followed by labeling using DeepSeek-R1 70B, fine-tuning of multiple LLM architectures,
+and evaluation using the VerilogEval benchmark.
+
+IV. E XPERIMENTS
+In this section, we evaluate the effectiveness of our O PEN RTLS ET dataset and benchmark various language models
+for Verilog code generation. Our experimental framework
+addresses two main objectives: (1) optimizing prompt engineering strategies for generating natural language descriptions
+of Verilog modules, and (2) comparing the performance of
+models fine-tuned on our dataset with existing benchmarks.
+
+The conclusion of our ablation study guides our Comparative
+Benchmark Analysis in Section IV-B.
+3) Quantization Settings: For all labeling experiments, we
+use the reasoning-based DeepSeek-R1 70B model [35] to
+generate natural language descriptions, which are then used
+to fine-tune our Verilog code generation models. We compare
+the effects of INT4 and BF16 quantization on DeepSeek-R1
+70B during labeling. This study aims to balance computational
+efficiency and labeling fidelity optimally.
+
+A. Dataset Labeling Ablation Study
+
+B. Comparative Benchmark Analysis
+To improve the quality of the labels used for fine-tuning,
+we conduct an ablation study focusing on three factors:
+We benchmark O PEN RTLS ET against the MG-Verilog
+1) Code Source Configuration: We compare two settings: dataset [22]. Since MG-Verilog has 11,144 Verilog modules,
+one where Verilator [34] generates both C++ and Verilog code we downsample our O PEN RTLS ET to 11,144 Verilog modules
+to provide richer contextual cues, and another where only to fairly compare our dataset with MG-Verilog. Our analysis
+the original Verilog code is used. This experiment determines considers three configurations:
+if the additional context from Verilator-generated C++ code
+1) MG-Verilog with its original LLaMA-series labels.
+enhances label quality.
+2) MG-Verilog relabeled using our DeepSeek-R1 70B la2) Code Enhancement Strategy: We evaluate whether enbeling flow.
+hancing Verilog modules with their Verilator C++ code im3)
+Downsampled
+OMeta-Prompt
+PEN RTLS ET labeled using our
+Problem
+LL
+proves downstream
+performance. Out of the 11k Verilog
+modDeepSeek-R1
+70B
+flow.
+SLM
+Description
+ules in MG-Verilog dataset, approximately 40% of modules
+Comparing 1) and 2) enables evaluations on the effecsuccessfully pass the Verilator flow. In our ablation study,
+Designedvs.
+by SLM
+tiveness of the Meta-Prompt
+flow in MG-Verilog
+our labeling flow;
+Frozen LLM fo
+we Natural
+downsample
+MG-Verilog
+to 10% of its size (1k Verilog
+based on previous Rewards and
+Language
+Description
+comparing 2) and 3) enables
+evaluations
+on
+the quality of the
+Small-Language Model
+Gem
+trajectories
+modules)
+using
+random
+selections. Among
+these 1k Verilog
+of the
+problem
+statement
+DeepSeek-R1-Distill-Qwen-1.5B
+Verilog code in MG-Verilog vs. O PEN RTLS ET.
+modules, around 40% successfully pass the Verilator flow. We
+RL Environment;
+compare these labeling approaches: (1)
+Verilog
+RL augmenting
+Agent;
+Maps prompts to c
+C. EvaluationACTION
+Protocol
+modules with their corresponding C++
+code via
+generated
+Trained
+PPO via
+and provides feed
+1) Metrics: Model performance is evaluated using Pass@1,
+Verilator where available, (2) using only original Verilog
+metrics onare
+thecalculated
+VerilogEvalBased
+bench-on error
+code for all modules, and (3) using Verilog & Verilator C++ Pass@5, and Pass@10 Rewards
+mark
+[36].
+These
+metrics
+evaluate
+syntax
+compliance,
+funcfor only around 400 samples that successfully pass Verilamessage and generated
+code
+tional
+correctness,
+and
+overall
+code
+quality
+at
+a
+generation
+tor flow. Our abalation study helps determine whether the
+additional semantic context provided by Verilator C++ code temperature of 0.7.
+2) Model and Hardware Configuration: We fine-tune two
+improves the model’s understanding of hardware functionality
+and ultimately leads to better code generation capabilities. families of models—Granite-Code-Instruct (8B) [37] and
+
+DAFNY
+
+PYTHON
+
+Granite
+8B
+
+Qwen2.5-Coder (7B and 32B parameters) [38]—with hyperparameters such as batch size, learning rate, and quantization
+settings optimized for each model size.
+The flow runs on compute nodes equipped with NVIDIA
+A40-48GB GPUs managed through a SLURM workload
+scheduler. The compute resources per SLURM job are 16 CPU
+cores, 160GB system memory, and 2 A40 GPUs. Fine-tuned
+model checkpoints are loaded from a remote storage system,
+and data is processed in configurable chunks to maintain
+memory efficiency and consistent processing speeds. Input
+data includes standalone Verilog modules and optional C++
+code generated by Verilator.
+D. Results and Discussion
+Table II: Performance metrics for base LLMs on the
+VerilogEval-Machine Benchmark
+Base LLMs
+Granite3.3-8B
+Qwen2.5-7B
+Qwen2.5-32B
+Claude-3.7 Sonnet
+GPT-3.5-turbo
+GPT-4o
+
+Release date
+2025-04-16
+2024-09-18
+2024-11-11
+2025-02-24
+2024-01-25
+2024-08-06
+
+Pass@1
+0.120
+0.047
+0.526
+0.119
+0.076
+0.503
+
+Pass@5
+0.200
+0.165
+0.642
+0.146
+0.187
+0.599
+
+Pass@10
+0.227
+0.243
+0.670
+0.154
+0.238
+0.621
+
+1) Dataset Labeling Ablation Studies: Table II presents
+the VerilogEval-Machine Pass@k results for base LLMs,
+encompassing both open-source models and state-of-the-art
+closed-source reasoning models such as Claude [39] and the
+GPT family [40]. Noteably, the 8B-parameter Granite3.3-8B
+outperforms both Claude 3.7 and GPT-3.5-turbo, proving that
+a smaller model can beat larger ones. Among these models, only GPT-4o and Qwen2.5-32B demonstrate substantial
+performance on Verilog generation tasks. These two models
+establish our baseline for evaluating the effectiveness of our
+various fine-tuning strategies and dataset configurations.
+Table III shows the VerilogEval-Machine Pass@k results
+of various configurations of our labeling flow on MG-Verilog
+Verilog modules on three LLMs in our ablation study. “Verilog” means we use all samples in the downsampled 1k
+dataset that are all re-labeled using our flow without using
+Verilator; “Verilog & C++” means we use all samples in the
+downsampled 1k dataset relabeled with our flow where 40%
+of the modules (all those that pass Verilator) are augmented
+with C++; “Verilator Passed” means we only include the 40%
+of the downsampled 1k dataset that passed Verilator (and are
+augmented with C++).
+Our results indicate smaller LLMs of 7-8B size generally
+have weaker performances and thereby, lower Pass@k values
+compared to Qwen2.5-32B, with Pass@10 of up to 0.772
+from Qwen2.5-32B, 0.655 from Qwen2.5-7B, and 0.565 from
+Granite3.3-8B. Comparing Pass@k results of our 2 Qwen
+and the Granite3.3-8B LLM in Table II and Table III, we
+see all these 3 LLMs have clearly higher Pass@k rates after
+fine-tuning on our downsampled relabeled MG-Verilog, which
+shows fine-tuning significantly improves LLMs’ capability of
+generating correct Verilog designs.
+
+“Verilog & C++” and “Verilog” are preferred in our labeling
+flow compared to “Verilator Passed” on all three LLMs. This
+indicates that having a large dataset volume is more important
+than trying different labeling flow configurations. Table III
+shows different LLMs have different preferences on “Verilog
+& C++” vs “Verilog”: Granite3.3-8B and Qwen2.5-7B prefer
+“Verilog & C++”, while Qwen2.5-32B achieves better results
+on “Verilog”.
+Our results suggest that INT4 and BF16 have their respective strengths, but ultimately, INT4 is selected to label our
+dataset using DeepSeek-R1 70B inference to save computational resources. The model Qwen2.5-32B with quantization
+scheme INT4 and “Verilog” labeling flow setting has the
+highest mean Pass@10 of 0.772 as highlighted in the table.
+2) Comparative Benchmark Analysis: The comparative
+benchmark analysis in Section IV-B isolates and quantifies
+the contributions of the dataset composition and labeling flow
+to the model performance. Table IV shows comparisons of
+six datasets each with 11k Verilog modules in fine-tuning
+three LLMs then running VerilogEval: two datasets are from
+original MG-Verilog, one with just the detailed descriptions
+as labels (Single-granularity) and the other with all the detailed, high-level, and block-level descriptions as labels (Multigranularity); two datasets are from relabeled MG-Verilog using
+our DeepSeek-R1 70B flow, one using “Verilog & C++”, and
+the other using “Verilog”, both defined in the same way as
+the subsection IV-D1; two datasets are from downsampled
+O PEN RTLS ET, also with one using “Verilog & C++”, and
+the other using “Verilog”.
+We consider the original MG-Verilog dataset [22] as a
+baseline with its original LLaMA-series-generated labels. As
+shown in Table IV, the original MG-Verilog dataset in both
+multi-granularity and single-granularity module description
+labels mostly yield the worst performance across all Pass@k
+metrics on all three LLMs.
+To assess the impact of our labeling flow, we re-labeled
+MG-Verilog using our DeepSeek-R1 70B prompting framework. We provide two configurations of our flow: “Verilog
+& C++” and “Verilog”, defined in the same way as the
+subsection IV-D1. We use both two configurations to re-label
+all 11k Verilog modules from MG-Verilog using our flow.
+The re-labeled MG-Verilog mostly yields performance gains
+across all Pass@k evaluation metrics, with the most substantial
+improvements observed in Pass@10.
+To further analyze the effect of dataset quality, we evaluate
+a downsampled version of O PEN RTLS ET, consisting of 11k
+samples to match the scale of MG-Verilog. This version is
+also labeled using DeepSeek-R1 70B prompting framework,
+ensuring a controlled comparison where only the dataset
+content varies. Again, both “Verilog & C++” and “Verilog”
+are provided. Our downsampled O PEN RTLS ET surpasses the
+original MG-Verilog dataset in all cases.
+3) Key Insights and Findings: Several key insights emerge
+from our study. First, among all the three LLMs, dataset
+quality has the biggest impact at lower number of trials on
+VerilogEval, with the most significant improvements observed
+
+Table III: Comparison of different models and configurations for our fine-tuning ablation study using a downsampled 1k
+dataset. “Verilog” means we use all samples in the downsampled 1k dataset that are all re-labeled using our flow without using
+Verilator; “Verilog & C++” means we use all samples in the downsampled 1k dataset relabeled with our flow where 40%
+of the modules (all those that pass Verilator) are augmented with C++; “Verilator Passed” means we only include the 40%
+of the downsampled 1k dataset that passed Verilator (and are augmented with C++). Bold numbers represent the best among
+“Verilog”, “Verilog & C++”, and “Verilator Passed” under the same quantization and language model.
+Language Model
+Verilog
+Granite3.3-8B
+Qwen2.5-7B
+Qwen2.5-32B
+
+INT4
+BF16
+INT4
+BF16
+INT4
+BF16
+
+0.356
+0.393
+0.403
+0.401
+0.643
+0.625
+
+Pass@1
+Verilog
+& C++
+0.367
+0.391
+0.499
+0.453
+0.595
+0.542
+
+Verilator
+Passed
+0.370
+0.379
+0.426
+0.350
+0.566
+0.567
+
+Verilog
+0.502
+0.504
+0.532
+0.532
+0.746
+0.723
+
+Pass@5
+Verilog
+& C++
+0.500
+0.516
+0.608
+0.614
+0.728
+0.672
+
+Verilator
+Passed
+0.457
+0.512
+0.584
+0.467
+0.692
+0.674
+
+Verilog
+0.546
+0.547
+0.576
+0.567
+0.772
+0.757
+
+Pass@10
+Verilog
+Verilator
+& C++
+Passed
+0.543
+0.481
+0.565
+0.540
+0.640
+0.624
+0.655
+0.524
+0.767
+0.736
+0.704
+0.713
+
+Table IV: Comparison of language models on VerilogEval using 11k dataset configurations. Datasets: (1) MG-Verilog Original:
+original Verilog modules with their LLaMA-series generated descriptions; (2) MG-Verilog Re-labeled: identical Verilog modules
+with descriptions generated by labeling flow; (3) O PEN RTLS ET Downsampled: modules from our dataset downsampled to 11k
+samples with our generated descriptions. Labeling configurations include Multi-granularity (detailed, high-level, and block-level
+descriptions), Single-granularity (detailed descriptions only), and either Verilog-only or Verilog with C++ augmentation.
+Language Model
+
+Dataset
+
+Labeling
+
+Granite3.3-8B
+
+MG-Verilog Original
+
+Multi-granularity
+Single-granularity
+Verilog & C++
+Verilog
+Verilog & C++
+Verilog
+Multi-granularity
+Single-granularity
+Verilog & C++
+Verilog
+Verilog & C++
+Verilog
+Multi-granularity
+Single-granularity
+Verilog & C++
+Verilog
+Verilog & C++
+Verilog
+
+MG-Verilog Re-labeled
+
+Qwen2.5-7B
+
+O PEN RTLS ET Downsampled
+and Labeled
+MG-Verilog Original
+MG-Verilog Re-labeled
+
+Qwen2.5-32B
+
+O PEN RTLS ET Downsampled
+and Labeled
+MG-Verilog Original
+MG-Verilog Re-labeled
+O PEN RTLS ET Downsampled
+and Labeled
+
+in Pass@1, increasing by up to 0.164 (e.g., Qwen2.5-32B improving from 0.495 to 0.659). This highlights the importance
+of well-crafted datasets for generating high-confidence outputs
+in the first trial. Second, while re-labeling MG-Verilog significantly narrows the performance gap with O PEN RTLS ET, the
+latter still retains a clear edge, confirming that both dataset
+and label quality contribute to model performance.
+E. Results on the Full 131k O PEN RTLS ET
+In addition to the experiments in Section IV-D, we also performed extensive evaluations of the entire 131k O PEN RTLS ET
+on the VerilogEval Benchmark. Table V shows comparisons
+of the best results in various code enhancement strategies on
+the downsampled 11k-size O PEN RTLS ET in Section IV-D
+vs. the result of the complete 131k O PEN RTLS ET on the
+VerilogEval-Machine Benchmark; Table VI presents the same
+comparisons as Table V on the VerilogEval-Human Benchmark. As in Sections IV-C and IV-D, we fine-tune two families
+
+VerilogEval-Machine
+Pass@1
+Pass@5
+Pass@10
+0.445
+0.642
+0.693
+0.409
+0.614
+0.679
+0.441
+0.621
+0.675
+0.470
+0.646
+0.691
+0.431
+0.613
+0.664
+0.441
+0.628
+0.681
+0.539
+0.695
+0.745
+0.481
+0.669
+0.726
+0.537
+0.701
+0.748
+0.530
+0.679
+0.723
+0.543
+0.687
+0.728
+0.538
+0.686
+0.734
+0.594
+0.765
+0.814
+0.495
+0.690
+0.741
+0.623
+0.803
+0.836
+0.515
+0.733
+0.793
+0.632
+0.807
+0.839
+0.618
+0.775
+0.817
+
+VerilogEval-Human
+Pass@1
+Pass@5
+Pass@10
+0.132
+0.251
+0.300
+0.206
+0.314
+0.357
+0.198
+0.330
+0.384
+0.165
+0.303
+0.366
+0.191
+0.327
+0.377
+0.188
+0.331
+0.389
+0.278
+0.412
+0.457
+0.223
+0.391
+0.455
+0.181
+0.333
+0.396
+0.267
+0.395
+0.443
+0.260
+0.411
+0.465
+0.280
+0.415
+0.471
+0.327
+0.457
+0.500
+0.231
+0.401
+0.463
+0.297
+0.474
+0.530
+0.358
+0.529
+0.534
+0.383
+0.539
+0.581
+0.369
+0.531
+0.578
+
+of models—Granite-Code-Instruct (8B) and Qwen2.5-Coder
+(7B and 32B).
+Table V: Performance metrics for LLMs finetuned on 11k vs.
+131k O PEN RTLS ET on the VerilogEval-Machine Benchmark
+LLMs
+Granite3.3-8B
+Qwen2.5-7B
+Qwen2.5-32B
+
+Dataset & Strategy
+Best of 11k Datasets
+O PEN RTLS ET 131k
+Best of 11k Datasets
+O PEN RTLS ET 131k
+Best of 11k Datasets
+O PEN RTLS ET 131k
+
+Pass@1
+0.470
+0.471
+0.543
+0.579
+0.632
+0.651
+
+Pass@5
+0.646
+0.660
+0.701
+0.749
+0.807
+0.848
+
+Pass@10
+0.693
+0.727
+0.748
+0.802
+0.839
+0.893
+
+Table V shows significant and consistent improvements in
+VerilogEval-Machine Pass@k of all three fine-tuned LLMs on
+the complete 131k O PEN RTLS ET compared against downsampled 11k O PEN RTLS ET, with up to 3.6% absolute gains in
+Pass@1, up to 4.8% absolute gains in Pass@5, and up to 5.4%
+absolute gains in Pass@10. All three fine-tuned LLMs have
+>3% absolute gains in Pass@10. Among all three evaluated
+
+LLMs, Qwen2.5-7B achieves the largest gains among the three
+VerilogEval-Machine Pass@k metrics when comparing finetuning on the complete 131k OpenRTLSet with fine-tuning
+on the best 11k dataset. Remarkably, Qwen 2.5-32B LLM
+achieves 89.3% of Pass@10 without using any additional
+inference-time enhancements like RAG or CoT.
+Table VI: Performance metrics for LLMs finetuned on 11k vs.
+131k O PEN RTLS ET on the VerilogEval-Human Benchmark
+LLMs
+Granite3.3-8B
+Qwen2.5-7B
+Qwen2.5-32B
+
+Dataset & Strategy
+Best of 11k Datasets
+O PEN RTLS ET 131k
+Best of 11k Datasets
+O PEN RTLS ET 131k
+Best of 11k Datasets
+O PEN RTLS ET 131k
+
+Pass@1
+0.206
+0.207
+0.280
+0.284
+0.383
+0.424
+
+Pass@5
+0.331
+0.344
+0.415
+0.456
+0.539
+0.587
+
+Pass@10
+0.389
+0.391
+0.471
+0.519
+0.581
+0.642
+
+Table VI also shows consistent improvements in
+VerilogEval-Human Pass@k in all three fine-tuned LLMs
+on the O PEN RTLS ET 131k compared against downsampled
+O PEN RTLS ET 11k, with up to 4.1% absolute gains in
+Pass@1 ratio, up to 4.8% absolute gains in Pass@5 ratio,
+and up to 6.1% absolute gains in Pass@10 ratio. Among
+all three evaluated LLMs, Qwen2.5-32B achieves the largest
+gains across all VerilogEval-Human Pass@k metrics when
+comparing fine-tuning on the complete 131k OpenRTLSet
+with fine-tuning on the best 11k dataset.
+V. C ONCLUSION
+There is significant interest in leveraging LLMs to aid in
+the development of hardware designs. However, there are
+relatively fewer open-source hardware designs compared to
+software. Furthermore, LLMs still face significant challenges
+in generating correct hardware designs. O PEN RTLS ET is the
+largest fully open-source Verilog dataset comprised of more
+than 131,000 unique Verilog modules each with high-quality
+natural language description. Each Verilog module is labeled
+and linked to the original source repository. We conducted
+extensive studies on our flow and dataset to evaluate their
+effectiveness and provide insight into possible future research
+directions. Our O PEN RTLS ET will help pave the way towards
+more comprehensive and powerful LLM tools for hardware
+design in both academic and commercial use cases.
+VI. ACKNOWLEDGMENTS
+This work is supported by the AMD Center of Excellence,
+the AMD HACC Initiative, the SRC grant 2023-CT-3175, and
+the NSF ACCESS computing resources.
+This work leverages the National Center for Supercomputing Applications (NCSA) Delta cluster. We are supported by
+the National Science Foundation (award OAC 2005572) and
+the State of Illinois.
+R EFERENCES
+[1] B. Roziere, J. Gehring, F. Gloeckle, S. Sootla, I. Gat, X. E. Tan, Y. Adi,
+J. Liu, R. Sauvestre, T. Remez et al., “Code llama: Open foundation
+models for code,” arXiv preprint arXiv:2308.12950, 2023.
+
+[2] D. Guo, Q. Zhu, D. Yang, Z. Xie, K. Dong, W. Zhang, G. Chen,
+X. Bi, Y. Wu, Y. Li et al., “Deepseek-coder: When the large language
+model meets programming–the rise of code intelligence,” arXiv preprint
+arXiv:2401.14196, 2024.
+[3] B. Hui, J. Yang, Z. Cui, J. Yang, D. Liu, L. Zhang, T. Liu, J. Zhang,
+B. Yu, K. Dang et al., “Qwen2. 5-coder technical report,” arXiv preprint
+arXiv:2409.12186, 2024.
+[4] Y. Zhang, Y. Pan, Y. Wang, and J. Cai, “Pybench: Evaluating llm agent
+on various real-world coding tasks,” arXiv preprint arXiv:2407.16732,
+2024.
+[5] J. Pan, A. Sadé, J. Kim, E. Soriano, G. Sole, and S. Flamant, “Stelocoder:
+a decoder-only llm for multi-language to python code translation,” arXiv
+preprint arXiv:2310.15539, 2023.
+[6] T. Vadoce, J. Pritchard, and C. Fairbanks, “Enhancing javascript source
+code understanding with graph-aligned large language models,” 2024.
+[7] T. K. Le, S. Alimadadi, and S. Y. Ko, “A study of vulnerability repair
+in javascript programs with large language models,” in Companion
+Proceedings of the ACM Web Conference 2024, 2024, pp. 666–669.
+[8] X. Yu, L. Liu, X. Hu, J. W. Keung, J. Liu, and X. Xia, “Where are
+large language models for code generation on github?” arXiv preprint
+arXiv:2406.19544, 2024.
+[9] L. J. Wan, Y. Huang, Y. Li, H. Ye, J. Wang, X. Zhang, and D. Chen,
+“Software/hardware co-design for llm and its application for design
+verification,” in 2024 29th Asia and South Pacific Design Automation
+Conference (ASP-DAC). IEEE, 2024, pp. 435–441.
+[10] Y. Huang, L. J. Wan, H. Ye, M. Jha, J. Wang, Y. Li, X. Zhang,
+and D. Chen, “New solutions on llm acceleration, optimization, and
+application,” in Proceedings of the 61st ACM/IEEE Design Automation
+Conference, 2024, pp. 1–4.
+[11] K. Xu, R. Qiu, Z. Zhao, G. L. Zhang, U. Schlichtmann, and
+B. Li, “Llm-aided efficient hardware design automation,” arXiv preprint
+arXiv:2410.18582, 2024.
+[12] J. Pan, G. Zhou, C.-C. Chang, I. Jacobson, J. Hu, and Y. Chen, “A survey
+of research in large language models for electronic design automation,”
+ACM Transactions on Design Automation of Electronic Systems, 2025.
+[13] S. Alsaqer, S. Alajmi, I. Ahmad, and M. Alfailakawi, “The potential of
+llms in hardware design,” Journal of Engineering Research, 2024.
+[14] H. Pearce, B. Tan, and R. Karri, “Dave: Deriving automatically verilog
+from english,” in Proceedings of the 2020 ACM/IEEE Workshop on
+Machine Learning for CAD, 2020, pp. 27–32.
+[15] S. Thakur, B. Ahmad, H. Pearce, B. Tan, B. Dolan-Gavitt, R. Karri, and
+S. Garg, “Verigen: A large language model for verilog code generation,”
+ACM Transactions on Design Automation of Electronic Systems, vol. 29,
+no. 3, pp. 1–31, 2024.
+[16] Y. Zhao, D. Huang, C. Li, P. Jin, Z. Nan, T. Ma, L. Qi, Y. Pan,
+Z. Zhang, R. Zhang, X. Zhang, Z. Du, Q. Guo, X. Hu, and Y. Chen,
+“Codev: Empowering llms for verilog generation through multi-level
+summarization,” https://iprc-dip.github.io/CodeV, accessed: 2024-11-22.
+[17] S. Thakur, B. Ahmad, Z. Fan, H. Pearce, B. Tan, R. Karri, B. DolanGavitt, and S. Garg, “Benchmarking large language models for automated verilog rtl code generation,” in 2023 Design, Automation & Test
+in Europe Conference & Exhibition (DATE), 2023, pp. 1–6.
+[18] J. Blocklove, S. Garg, R. Karri, and H. Pearce, “Evaluating llms for
+hardware design and test,” in 2024 IEEE LLM Aided Design Workshop
+(LAD), 2024, pp. 1–6.
+[19] A. Narayanan, “Redefining chip design with ai-powered eda
+tools:
+Synopsys.ai,”
+https://www.synopsys.com/blogs/chip-design/
+synopsys-ai-eda-tools.html, Mar. 2023, accessed: 2024-11-22.
+[20] M. Liu, M. Kang, G. B. Hamad, S. Suhaib, and H. Ren, “Domainadapted llms for vlsi design and verification: A case study on formal
+verification,” in 2024 IEEE 42nd VLSI Test Symposium (VTS), 2024, pp.
+1–4.
+[21] B. Nadimi, G. O. Boutaib, and H. Zheng, “Pyranet: A multi-layered
+hierarchical dataset for verilog,” arXiv preprint arXiv:2412.06947, 2024.
+[22] Y. Zhang, Z. Yu, Y. Fu, C. Wan, and Y. C. Lin, “Mg-verilog: Multigrained dataset towards enhanced llm-assisted verilog generation,” in
+2024 IEEE LLM Aided Design Workshop (LAD), 2024, pp. 1–5.
+[23] J. Cong, B. Liu, S. Neuendorffer, J. Noguera, K. Vissers, and Z. Zhang,
+“High-level synthesis for fpgas: From prototyping to deployment,” IEEE
+Transactions on Computer-Aided Design of Integrated Circuits and
+Systems, vol. 30, no. 4, pp. 473–491, 2011.
+[24] J. Cong, J. Lau, G. Liu, S. Neuendorffer, P. Pan, K. Vissers, and
+Z. Zhang, “Fpga hls today: Successes, challenges, and opportunities,”
+
+[25]
+[26]
+[27]
+[28]
+
+[29]
+[30]
+[31]
+
+[32]
+[33]
+[34]
+[35]
+
+[36]
+[37]
+[38]
+[39]
+[40]
+
+ACM Trans. Reconfigurable Technol. Syst., vol. 15, no. 4, aug 2022.
+[Online]. Available: https://doi.org/10.1145/3530775
+H. Ye et al., “Scalehls: A new scalable high-level synthesis framework
+on multi-level intermediate representation,” in HPCA, 2022.
+——, “Scalehls: a scalable high-level synthesis framework with multilevel transformations and optimizations,” in DAC, 2022.
+——, “Hida: A hierarchical dataflow compiler for high-level synthesis,”
+in ASPLOS, 2024.
+J. Bachrach, H. Vo, B. Richards, Y. Lee, A. Waterman, R. Avižienis,
+J. Wawrzynek, and K. Asanović, “Chisel: constructing hardware in
+a scala embedded language,” in Proceedings of the 49th Annual
+Design Automation Conference, ser. DAC ’12. New York, NY, USA:
+Association for Computing Machinery, 2012, p. 1216–1225. [Online].
+Available: https://doi.org/10.1145/2228360.2228584
+N. Hatta, T. Ishitani, and R. Shioya, “Veryl: A new hardware description
+language as an altarnative to systemverilog,” 2024. [Online]. Available:
+https://arxiv.org/abs/2411.12983
+F. Skarman and O. Gustafsson, “Spade: An expression-based hdl with
+pipelines,” 2023. [Online]. Available: https://arxiv.org/abs/2304.03079
+Z. Pei, H.-L. Zhen, M. Yuan, Y. Huang, and B. Yu, “Betterv:
+Controlled verilog generation with discriminative guidance,” arXiv
+preprint arXiv:2402.03375v3, May 2024. [Online]. Available: https:
+//arxiv.org/abs/2402.03375
+OpenAI, 2024. [Online]. Available: https://openai.com/policies/
+row-terms-of-use/
+Ldoolitt, “Ldoolitt/vhd2vl,” https://github.com/ldoolitt/vhd2vl, accessed:
+2024-11-22.
+W. Snyder, “Veripool,” https://www.veripool.org/verilator/, accessed:
+2024-11-22.
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma,
+P. Wang, X. Bi et al., “Deepseek-r1: Incentivizing reasoning capability
+in llms via reinforcement learning,” arXiv preprint arXiv:2501.12948,
+2025.
+M. Liu, N. Pinckney, B. Khailany, and H. Ren, “Verilogeval: Evaluating
+large language models for verilog code generation,” 2023. [Online].
+Available: https://arxiv.org/abs/2309.07544
+I. Granite Team, “Granite 3.0 language models,” 2024.
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu,
+F. Huang, H. Wei et al., “Qwen2. 5 technical report,” arXiv preprint
+arXiv:2412.15115, 2024.
+Anthropic, “Claude,” https://www.anthropic.com/claude, 2024, accessed:
+2024-03-14.
+OpenAI, “Gpt-4o: Enabling ai for daily life,” https://openai.com/blog/
+gpt-4o, 2024, accessed: 2024-03-14.
+
+

@@ -1,0 +1,1586 @@
+RTLCurator: Label-Efficient Data Curation for RTL Generation
+Siyang Cai1,3 , Cangyuan Li3 , Wenjing Chang4 , Kun Wang2,3 ,
+Haoyu Gao1,3 , Yinhe Han3 , Ying Wang3
+1
+
+School of Advanced Interdisciplinary Sciences, University of Chinese Academy of Sciences, Beijing, China
+2
+Hangzhou Institute for Advanced Study, University of Chinese Academy of Sciences, Hangzhou, China
+3
+CICS, Institute of Computing Technology, Chinese Academy of Sciences, Beijing, China
+4
+Computer Network Information Center, Chinese Academy of Sciences, Beijing, China
+caisiyang23@mails.ucas.ac.cn
+
+arXiv:2607.29283v1 [cs.AR] 31 Jul 2026
+
+Abstract
+Training large language models (LLMs) to write registertransfer level (RTL) requires large corpora of paired specifications and code, and such data is scarce enough that most
+public corpora are now synthesized. Synthesis provides scale
+but not correctness, and in two widely used RTL datasets only
+24.4% and 53.5% of pairs pass generated functional tests.
+This raises the question of how much of such a corpus to
+keep and which part of it. Correctness alone is a poor answer. A pair that misbehaves in one corner case still shows
+valid syntax and interface conventions, and complex sequential designs are both harder to generate and harder to validate,
+so filtering by correctness leaves a corpus of short and simple
+modules. Correctness is also hard to obtain, since behavior
+leaves little trace on the surface in RTL, and validating an entire corpus only sorts pairs into passed and failed. We present
+RTLC URATOR, which learns a behavior-aware compatibility
+prior by contrasting each specification with implementations
+that fail simulation, and calibrates it to a new corpus using
+a small number of validated pairs. It then constructs the retained subset by balancing alignment, representation coverage, and RTL structural richness. On CodeV and RTLCoder,
+keeping 80% of the corpus this way improves on training with
+the full corpus across all reported metrics while validating
+only 10% of the pool, whereas ranking by the score alone
+falls below random selection and filtering the whole pool by
+simulation does no better.
+
+Introduction
+Modern chip design turns system-level requirements into
+physical silicon through a long and highly specialized design flow. Once architectural and microarchitectural decisions have been made, designers must encode the intended hardware behavior in RTL code, establishing the pivotal implementation-level representation that connects highlevel design intent to logic synthesis and subsequent physical design. Generally, producing high-quality RTL requires
+substantial expert effort to faithfully capture hardware behavior in a form that synthesizes into an efficient implementation, and remains a major human bottleneck in the flow.
+Large language models offer a way to automate this step,
+and recent domain-adapted models already show measurable gains on hardware code generation [Liu et al. 2024a,
+Cui et al. 2024, Zhao et al. 2024]. Training such a model requires a large number of aligned specification–RTL (spec–
+RTL) pairs, and this data is hard to obtain. High-quality
+
+wangying2009@ict.ac.cn
+Spec: On each rising edge of
+clk, y outputs the d value
+sampled one clock earlier.
+Non-Blocking Assignments
+always @(posedge clk)
+begin
+q <= d;
+y_nb <= q;
+end
+
+Mixed Assignments
+always @(posedge clk)
+begin
+q = d;
+y_b <= q;
+end
+
+Waveform
+clk
+d
+q
+y_nb
+y_b
+
+Figure 1: A one-operator edit can preserve syntax and structure while violating cycle-level spec–RTL alignment.
+
+RTL is tied to protected intellectual property (IP) and internal design flows, and even the code that is public rarely
+comes with the natural language specification that would
+make it a usable training target. Publicly available Verilog
+code resources are over two orders of magnitude scarcer
+than resources for general-purpose programming languages
+[Chang et al. 2024], so collecting real data at the scale these
+models need is not realistic.
+Recent work builds training corpora by synthesis. Instructions and responses are generated with a strong model and
+filtered by a syntax checker [Liu et al. 2024a, Chang et al.
+2024], or descriptions are summarized from crawled RTL
+[Zhao et al. 2024]. This produces corpora of the required
+size, but nothing in the process checks that a response actually implements what its specification asks for. An audit of
+two such datasets found that among 1,000 sampled examples, only 24.4% of RTLCoder and 53.5% of OriGen pairs
+passed generated functional tests [Wei et al. 2025]. Training
+on everything therefore means training on a large amount of
+wrong behavior, while keeping only the pairs that pass validation means throwing most of the corpus away. This raises
+a natural question: which part of a synthetic RTL corpus
+should be kept, and how much of it?
+For an existing synthetic corpus, we argue that curation
+should decide which pairs to keep under a fixed retention
+budget rather than which pairs to remove. This raises two
+issues. The first issue is about the retention criterion. The
+obvious criterion is whether a pair passes functional verifi-
+
+cation, but a pair that fails functionally can still be correct
+in other respects, such as its syntax, its interface conventions, and its coding style. Complex sequential designs also
+fail more often than simple ones, so a corpus filtered this
+way is both much smaller and shifted toward short and simple modules. The second issue is about corpus-wide quality
+estimation. Surface form does not reveal behavior in RTL.
+One specification admits many implementations that look
+nothing alike yet behave identically, while replacing a nonblocking assignment with a blocking one changes cyclelevel behavior without changing appearance, as shown in
+Figure 1. Validation does reveal behavior but is expensive
+and unreliable, and even validating every pair would only
+sort them into passed and failed, which gives no order among
+the majority that fails.
+To this end, we propose RTLC URATOR, a verificationefficient curation framework to address both issues. To obtain an ordering that reflects behavior without simulating every pair, we train an encoder by contrasting each specification with implementations that fail simulation, so the resulting score follows behavior rather than wording and applies
+to every pair of a new corpus. To make that score reliable on
+a corpus it was not trained on, we verify a small and actively
+chosen part of the corpus and resolve the undecided cases
+by expert adjudication, then use the results to correct the
+score. To keep the decision from collapsing onto the highest
+scores, we spread the retention budget over score strata, clusters of similar specifications, and RTL structural richness.
+On CodeV and RTLCoder, ranking by score alone falls below random selection and shrinks the average retained module from 37.7 to 29.2 lines, and keeping only the pairs that
+pass verification does no better even though it requires verifying everything. Balancing the three criteria at an 80% budget improves on training with the full corpus across all reported metrics on VerilogEval and RTLLM while verifying
+only 10% of the pool.
+We make three contributions.
+• We frame RTL corpus curation as deciding what to keep
+under a retention budget, and show that behavioral correctness serves better as a signal for this decision than as
+the criterion itself.
+• We train a behavior-aware alignment score that transfers
+to unseen corpora and is corrected from a small number
+of validated pairs.
+• We design a selection policy that balances this score
+against representation coverage and structural richness.
+
+Related Work
+RTL corpus construction and quality control. Corpus
+construction has evolved from forward instruction–RTL
+synthesis with syntax filtering [Liu et al. 2024a], to codegrounded augmentation and reverse summarization [Chang
+et al. 2024, Cui et al. 2024, Zhao et al. 2024], and to correctby-construction generation [Liu et al. 2025a]. Quality control has moved from construction-side safeguards to functional evidence. OpenLLM-RTL [Liu et al. 2024b] retains an
+assertion-checked subset, VeriCoder [Wei et al. 2025] generates unit tests and repairs pairs through simulation feed-
+
+back, and CodeV-R1 [Zhu et al. 2025] and STG [Huang
+et al. 2026] screen against trusted references with equivalence checking and structured testbenches. These pipelines
+verify or repair every candidate they keep. We instead spend
+a small validation budget on an existing pool and use it to
+rank the rest.
+Text–code and hardware representation learning. General text embeddings [Chen et al. 2024] and software code
+models [Feng et al. 2020, Wang et al. 2021, Li et al. 2025]
+align natural language with programs for retrieval and understanding. Hardware additionally depends on structural
+and temporal behavior, which circuit encoders [Shi et al.
+2023, Fang et al. 2025, Wu et al. 2025] and RTL-specific
+models [Liu et al. 2025b,c, Zhao et al. 2026] target directly.
+These representations scale to a whole corpus, but similarity alone does not establish functional correctness, which is
+why our encoder is trained against implementations that fail
+simulation.
+Data selection and label-efficient quality control. Code
+pipelines combine rule-based filters, model-based scores,
+and executable feedback [Kocetkov et al. 2022, Zhang et al.
+2025b, Ma et al. 2025, Xu et al. 2025], and instruction-data
+selection balances quality, diversity, influence, and rating reliability [Liu et al. 2024c, Xia et al. 2024, Pang et al. 2025].
+Large-scale studies caution that score-driven selection gives
+limited gains once diversity collapses [Ivison et al. 2025, Xia
+et al. 2025], and active learning offers budgeted alternatives
+based on coverage, uncertainty, and gradient diversity [Hu
+et al. 2023, Sener and Savarese 2018, Ash et al. 2020, Park
+et al. 2022, Ruff et al. 2020]. None of these signals reports
+whether a specification and its RTL agree, and obtaining that
+judgment is expensive, so we separate where validation is
+spent from how the retained subset is built.
+
+Method
+In this section, we present RTLC URATOR, a framework that
+composes an RTL training corpus under a validation budget B and a retention budget K. The key insight is that a
+compatibility prior trained on functionally refuted negatives
+carries enough behavioral signal that a small number of validated labels suffices to calibrate it into a corpus-wide ordering. The entire framework is illustrated in Figure 2.
+
+Problem Formulation
+Notation. Let U = {xi = (si , ri )}N
+i=1 denote a target corpus of N spec–RTL pairs, where si is a specification and ri
+is its corresponding RTL response. For each queried pair xi ,
+the validation pipeline produces a resolved binary alignment
+label yi ∈ {0, 1}, where 1 denotes alignment and 0 denotes
+misalignment. We use Q ⊆ U for the queried set and allow
+at most B ≪ N queried labels. We use S ⊆ U for the retained subset and require |S| = K < N . Here, B and K are
+the validation and retention budgets, respectively.
+Problem Definition. Our goal is to use at most B resolved
+alignment labels to select K original pairs whose supervised
+fine-tuning yields high downstream utility. Under a fixed
+
+② Budgeted Validation & Calibration
+
+① Compatibility Prior Training
+
+③ Retention-Budgeted Selection
+
+Spec Embedding
+
+Target
+
+Stage2A:
+In-cluster Contrastive
+Stage2B:
+Functional Contrastive
+Pairs of
+Source Pool
+
+Cosine Similarity
+
+…
+
+Frozen fθ
+
+…
+
+Encode
+
+Stage1:
+Retrieval Initialization
+
+RTL Embedding
+
+Compatibility
+Prior qi
+
+Representation
+Coverage
+
+Ground Truth yi
+
+Spec-RTL
+Encoder fθ
+
+Progressive Curriculum Learning
+
+Activeselected
+Queries B
+
+Validation
+
+Compatibility
+Bi
+Prior qi
+Testbench Compiler
+Iterate at most Rtb rounds
+
+Structural
+Feature i
+
+Alignment
+
+Initialization
+
+Target
+
+Infernce
+MLP
+Alignment
+Calibrator g
+Score pi
+
+Structural
+Richness
+
+Curated
+S(B,K)
+
+Calibration
+
+Figure 2: Overview of RTLC URATOR. An encoder is first trained on the source corpus with a progressive curriculum whose
+negatives move from random responses to responses that fail functional validation, which yields a compatibility prior for every
+pair of a target corpus before any pair is validated. A budgeted acquisition loop then queries at most B pairs for validation and
+uses the resolved labels to calibrate this prior into an Alignment Score over the full pool. The selection stage finally distributes
+the retention budget K across Alignment Score strata, representation clusters, and RTL structural richness.
+model and training recipe, the ideal retained subset is
+⋆
+SK
+
+= arg max J (A(θ0 , S)) ,
+S⊆U
+|S|=K
+
+(1)
+
+where A denotes supervised fine-tuning from the initial
+model θ0 , and J denotes downstream utility. The validation
+budget B limits the supervision available for estimating this
+subset, whereas K determines its final size. Because downstream utility cannot be evaluated repeatedly during curation, RTLC URATOR does not optimize Equation 1 directly.
+
+Training the Compatibility Prior
+We aim to learn a prior that separates implementations that
+are behaviorally distinct but lexically close, a distinction
+that random negatives leave unlearned. We initialize the
+encoder from the Qwen3-Embedding-4B backbone[Zhang
+et al. 2025a] and train it in three cumulative stages of increasing negative difficulty. In the source corpus Dsrc , each
+specification is paired with a validated response and candidates refuted by source-side simulation.
+Shift-Aware Preprocessing. Target corpora differ from
+Dsrc in specification style and level of detail, shifting the input distribution seen by the source-trained encoder. To construct an encoder-familiar view, we provide both the original
+target specification si and its candidate RTL response ri to
+the rewriting model and ask it to generate a specification in
+the source-corpus style,
+sei = R(si , ri ),
+
+(2)
+
+where sei is an auxiliary specification used only by the encoder pathway, which supplies the prior and the embedding
+geometry for clustering, acquisition routing, calibration, and
+coverage allocation. It does not replace si as the behavioral
+contract. Testbench generation and validation always use the
+original si , and every retained index is mapped to its original
+pair (si , ri ) for LLM training.
+Stage 1: Retrieval Initialization. Verified pairs and random cross-pair RTL negatives first establish broad correspondence between design intent and implementation
+
+through a multiple-negatives objective Lretr . This warm
+start creates meaningful global neighborhoods before they
+are used for mining, acquisition, and coverage. Random negatives alone remain insufficient because coarse functional
+or interface differences can separate them without resolving
+nearby competing implementations.
+Stage 2A: In-Cluster Contrastive Learning. Using the
+Stage 1 embedding space, we next contrast each verified response with RTL drawn from the same representation cluster but paired with a different specification. These neighbors
+share broad semantic or structural context, so the encoder
+must decide which response actually matches the specification rather than rely on topical similarity. Replay of Stage 1
+relations preserves the global organization while this local
+discrimination is learned.
+Stage 2B: Functional Contrastive Learning. The final
+stage contrasts a validated response with same-specification
+candidates from multiple generation sources that appear
+plausible in the preceding embedding space but fail sourceside functional validation. Holding the specification fixed removes cross-specification shortcuts, while multiple sources
+broaden the observed failure modes. This supervision sharpens the prior exactly where candidates are most similar,
+among RTL responses written for the same specification.
+Curriculum Objective. All curriculum relations are
+formed from source-corpus records. The encoder fθ produces normalized specification and RTL embeddings, whose
+cosine similarity defines the compatibility prior qθ (s, r) =
+cos(fθ (s), fθ (r)). Stages 2A and 2B share a single loss form
+and differ only in how the negative is drawn. For a positive response ri+ and a negative ri− , we form the marginviolation term
+∆i = qθ (si , ri− ) − qθ (si , ri+ ) + µ,
+
+(3)
+
+where µ > 0 is the margin, and we take the logistic loss
+ℓi = log(1 + exp(∆i )) .
+
+(4)
+
+Drawing ri− as an in-cluster cross-specification negative and
+averaging ℓi over those relations gives Lcross for Stage 2A,
+
+while drawing it as a same-specification functional failure
+gives Lfunc for Stage 2B.
+The cumulative stage objectives are
+L1 = Lretr ,
+replay
+L2A = λA
++ λA
+r Lretr
+c Lcross ,
+
+L2B =
+
+replay
+λB
+r Lretr
+
++
+
+λB
+c Lcross
+
+(5)
++
+
+λB
+f Lfunc .
+
+where Lreplay
+replays Stage 1 relations under the current enretr
+coder and λ•r , λ•c , λB
+f ≥ 0 are stage weights. The cumulative curriculum preserves the corpus-scale embedding space
+needed for scoring and coverage while sharpening sensitivity to local, behaviorally consequential mismatches.
+
+Budgeted Validation and Calibration
+With the source encoder fixed, RTLC URATOR assigns every
+target record the compatibility prior qi = qθ (R(si , ri ), ri ).
+It partitions the embeddings of sei once into C fixed clusters,
+where c(i) ∈ {1, . . . , C} denotes the cluster assignment of
+record i. The same assignments are used across all acquisition rounds and retention budgets. Before any target label
+is available, routing uses the rank-normalized compatibility
+prior qi . After calibration begins, it uses the current Alignment Score pi .
+Acquisition Routing. Each acquisition batch divides its
+quota evenly among five routes that target the decision
+boundary induced by the requested retention budget K, the
+ambiguous center of the ranking, clusters with little resolved
+evidence, and the two ranking tails. When several retention budgets are requested, the routes cover their associated
+boundaries and the acquired labels are shared across the resulting subsets. Unfilled quota is reassigned to the remaining
+eligible candidates. These routes determine where evidence
+is acquired, rather than which pairs are retained.
+Validation Protocol. For each queried record xi , the validation pipeline evaluates ri using compilation, simulation,
+and testbench evidence. When the testbench does not exercise behavior sufficient to distinguish alignment from misalignment, it is revised and rerun for at most Rtb rounds.
+A case that remains unresolved after this limit is escalated
+to a panel of LLM judges or expert review. This process
+produces a binary alignment label yi . Generated testbenches
+provide evidence only, without replacing the original RTL
+response.
+Target Calibration. Let ϕi denote the lightweight calibration features for candidate xi , and let ηi > 0 be its evidenceconfidence weight. At round t, let Qt ⊆ Q contain the
+queried records resolved so far. The calibrator gψ predicts
+pbiψ = gψ (qi , ϕi ),
+and is fit using the binary cross-entropy (BCE) loss:
+
+
+X
+ψ ⋆ = arg min
+ηj ℓBCE yj , pbjψ ,
+ψ
+
+(6)
+
+(7)
+
+xj ∈Qt
+⋆
+
+The Alignment Score is pi = pbiψ ∈ [0, 1]. The calibrator
+is refit after each round; the updated scores route the next
+round, and the final fit scores all of U after at most B labels.
+
+Retention-Budgeted Selection Policy
+RTLC URATOR balances Alignment Score, Representation
+Coverage, and Structural Richness through a staged selection policy. Alignment Score strata determine how the retention budget is distributed across quality regions. Representation Coverage distributes each stratum quota across clusters.
+Alignment Score and Structural Richness then jointly determine which records are retained within each resulting cell.
+PLet Km denote the quota assigned to stratum m, with
+m Km = K. The stratum with the highest Alignment
+Scores receives the largest nominal share. The remaining
+strata receive equal smaller shares. If a stratum cannot fill its
+quota, the excess is redistributed according to the remaining
+capacities. Within each stratum, Km is distributed across the
+fixed clusters in proportion to their candidate counts. Candidates within each resulting cell are then ranked using the
+Alignment Score and Structural Richness.
+Let z i ∈ [0, 1]d contain the normalized RTL structural
+features. Token, line, and port counts use percentile normalization over the full pool. Counts of control logic are clipped,
+while finite-state machine (FSM) and clock cues are binary.
+Structural Richness is defined by the fixed weighted combination
+ρ(ri ) = w⊤ z i ,
+
+w ⪰ 0,
+
+1⊤ w = 1.
+
+(8)
+
+Within each cell defined by one stratum and one cluster, a
+fixed bonus determined from the quantile of ρ(ri ) is added
+to the Alignment Score pi .
+
+Complexity Analysis
+Curation costs one encoder pass and one clustering over U ,
+O(N ) and O(N |C|) respectively, T calibrator refits on at
+most B labels, and one O(N log N ) sort for stratification.
+The dominant real cost is the B calls to O, which is why
+B ≪ N is the budget that matters rather than N itself.
+
+Experiments
+Experimental Setup
+Datasets and Benchmarks. We curate two synthetic corpora, CodeV [Zhao et al. 2024] (164,111 pairs) and RTLCoder [Liu et al. 2024a] (26,532 pairs), retaining 50–90%
+of each pool. The encoder that produces the compatibility
+prior is trained on the public VeriCoder/OriGen release [Wei
+et al. 2025, Cui et al. 2024] with a 90/5/5 split, which contains no CodeV or RTLCoder data. From this source corpus, we construct the Stage 2B function-hard negatives using
+the RTL-specialized model CodeV-R1 [Zhu et al. 2025] and
+two general-purpose models MiniMax-M2.7 and DeepSeekV4-Flash. Validation labels on the two target pools are
+collected separately (Sec. ). We evaluate on VerilogEval
+[Liu et al. 2023], whose Machine and Human splits contain HDLBits-derived module-level specifications, and on
+RTLLM v1.0/v1.1 [Lu et al. 2024], which comprises larger
+design-level problems. Before selection, we remove pairs
+that duplicate a VerilogEval or RTLLM problem.
+
+Table 1: Downstream supervised fine-tuning performance at the 80% budget. Bold, italics, and underline mark the first-, second, and third-best results within each corpus block, respectively, and ties share the same mark. Results are five-run means (%).
+VerilogEval Machine VerilogEval Human
+Corpus
+
+Policy
+
+Budget
+
+Functional
+@1
+
+0%
+
+@5
+
+@10
+
+Functional
+@1
+
+@5
+
+@10
+
+RTLLM v1.0
+
+RTLLM v1.1
+
+Syntax Functional Syntax Functional
+@5
+
+@5
+
+@5
+
+@5
+
+–
+
+Base Model
+
+56.85 65.23
+
+67.16
+
+30.80 41.15 44.43
+
+60.60
+
+30.05
+
+65.89
+
+35.18
+
+CodeV
+
+Full
+100% 77.90 84.52
+Random
+80% 76.82 83.77
+DS2
+80% 75.63 81.12
+LESS
+80% 76.19 85.43
+Align. top
+80% 74.06 82.76
+RTLC URATOR 80% 79.22 89.77
+
+86.52
+85.57
+82.18
+87.84
+86.10
+90.38
+
+45.54
+45.96
+44.68
+44.74
+42.60
+47.49
+
+60.36
+60.41
+61.12
+59.29
+56.10
+62.45
+
+65.72
+64.81
+65.40
+63.32
+60.44
+67.89
+
+86.62
+85.94
+85.79
+86.94
+82.95
+89.05
+
+56.89
+57.44
+56.88
+56.84
+61.40
+63.67
+
+90.72
+89.34
+90.52
+87.82
+89.83
+94.31
+
+52.86
+56.29
+56.21
+56.12
+61.77
+63.97
+
+Full
+100% 65.28 71.36
+Random
+80% 64.20 74.09
+DS2
+80% 61.61 71.09
+RTLCoder
+LESS
+80% 60.70 70.60
+Align. top
+80% 63.60 73.39
+RTLC URATOR 80% 66.24 74.67
+
+73.24
+76.38
+73.03
+73.45
+75.99
+75.86
+
+39.52
+39.71
+37.69
+39.07
+39.71
+40.42
+
+42.77
+48.40
+48.02
+47.61
+47.87
+48.67
+
+43.53
+50.77
+51.06
+50.05
+50.42
+52.60
+
+82.50
+78.50
+79.78
+80.50
+79.81
+83.94
+
+51.56
+49.68
+47.45
+52.01
+50.56
+56.00
+
+84.98
+82.73
+78.74
+81.98
+79.01
+86.30
+
+51.33
+44.94
+45.11
+47.14
+39.85
+52.18
+
+Baselines. We compare RTLC URATOR against five selection policies. Full keeps the whole corpus, while other policies retain a matched fraction of it. Random samples uniformly. DS2 [Pang et al. 2025] and LESS [Xia et al. 2024]
+are data selection methods developed for general-purpose
+instruction tuning. Align. top keeps the highest-scoring pairs
+under our alignment score, it uses the same signal as RTLC URATOR but none of the coverage or structural balancing.
+Metrics. We report functional pass@1/5/10 on VerilogEval Machine/Human [Liu et al. 2023] and syntax and
+functional pass@5 on RTLLM v1.0/v1.1 [Lu et al. 2024].
+Each result is averaged over five independent draws of k
+samples per problem. We also report diagnostics of the encoder and the calibrator. Retrieval over the full candidate
+pool uses recall at 1 (R@1), mean reciprocal rank at 10
+(MRR@10), and normalized discounted cumulative gain at
+10 (nDCG@10). Ranking one compatible implementation
+against plausible failures for the same specification uses
+pairwise accuracy, average precision (AP), area under the
+receiver operating characteristic curve (AUROC), and fullgroup R@1, which is recall at 1 within a single specification’s candidate group rather than over the pool.
+Implementation Details. Each selected subset is used to
+fine-tune DeepSeek-Coder-6.7B-Instruct [Guo et al. 2024]
+under identical hyperparameters across all policies and retention budgets. Selection never modifies data, so a pair is
+either kept as it is or dropped. Full hyperparameters, hardware, and runtime are reported in the technical appendix.
+
+Main Results
+Table 1 compares all policies at a retention budget of 80%,
+where every subset policy keeps the same number of pairs
+and differs only in which ones. Sec. reports the full 50–90%
+range. RTLC URATOR outperforms Full on all ten metrics in both corpora and leads every other policy except on
+
+Table 2: Mean lines of code in the retained subsets at the
+80% retention budget. Full is the uncurated corpus, which
+every policy draws from.
+Corpus
+
+Full
+
+Random
+
+Align. top
+
+RTLC URATOR
+
+CodeV
+RTLCoder
+
+37.6
+46.7
+
+37.7
+40.5
+
+29.2
+30.6
+
+33.6
+36.8
+
+Table 3: Full-pool validation comparison on RTLCoder. Results are five-run means (%), and bold marks the best value.
+Dataset
+VerilogEval Machine
+VerilogEval Human
+RTLLM v1.0
+RTLLM v1.1
+
+Metric Full-Val RTLC URATOR
+F@1
+F@5
+F@1
+F@5
+F@1
+F@5
+F@1
+F@5
+
+64.30
+74.25
+40.35
+48.03
+41.40
+51.36
+30.11
+44.52
+
+66.24
+74.67
+40.42
+48.67
+43.40
+56.00
+37.59
+52.18
+
+RTLCoder Machine pass@10, where Random is 0.52 points
+higher. The base model, hyperparameters, and subset size
+are identical across policies, so the difference comes from
+which pairs are kept rather than how many. Neither more
+data nor indiscriminate pruning explains it, since Full loses
+and Random trails on 19 of these 20 comparisons. Dropping
+20% of CodeV raises Machine pass@5 from 84.52 to 89.77
+and RTLLM v1.1 functional pass@5 from 52.86 to 63.97.
+The other policies show where the gain comes from. DS2
+and LESS do not consistently improve over Random and
+lead no cell in either corpus, falling below it on VerilogEval
+pass@1 in both corpora by up to 3.50 points. Neither signal
+reports whether a specification and its RTL implementation
+
+PassPass
+Pass
+raterate
+(%)
+rate(%)
+(%)
+PassPass
+Pass
+raterate
+(%)
+rate(%)
+(%)
+
+CodeV
+CodeV
+CodeV
+RTLCoder
+RTLCoder
+RTLCoder
+
+RTLCurator
+RTLCurator
+
+Random
+Random
+
+Align. top
+Align. top
+
+RTLCurator
+
+Random
+
+Align. top
+
+VerilogEval
+F@1
+VerilogEval Machine
+Machine
+F@1
+79.2
+(a)
+79.2
+80 VerilogEval
+(a)
+Machine
+F@1
+80
+80
+72
+72
+
+79.2
+
+(a)
+
+72
+64
+64
+64
+
+66.2
+66.2
+
+72
+64
+64
+
+66.2
+
+50
+50
+50
+
+60
+60
+
+70
+70
+
+80
+80
+
+Budget (%)
+60 Budget
+70 (%) 80
+Budget (%)
+
+90
+90
+90
+
+48 (f)
+48 (f)
+(f)
+44
+48
+44
+40
+44
+40
+36
+40
+36
+50
+36 50
+50
+
+70
+70
+
+80
+80
+
+Full (100%)
+Full (100%)
+
+LESS
+
+Full (100%)
+
+RTLLM
+RTLLM v1.0
+v1.0 F@5
+F@5
+
+RTLLM
+RTLLM v1.1
+v1.1 F@5
+F@5
+
+70 (d)
+64.0
+70 (d)
+RTLLM v1.1 64.0
+F@5
+60
+70
+64.0
+60 (d)
+50
+60
+50
+40
+50
+40
+
+63.7
+66 (c)
+66 (c) RTLLM v1.0 63.7
+F@5
+63.7
+60
+66
+60 (c)
+54
+60
+54
+48
+54
+48
+
+70 (h)
+70 (h)
+60
+70
+60 (h)
+50
+60
+50
+40
+50
+40
+
+90
+90
+
+66 (g)
+66 (g)
+60
+66
+60 (g)
+54
+60
+54
+48
+54
+48
+48 50
+50
+
+90
+
+50
+
+40.4
+
+Budget (%)
+60 Budget
+70 (%) 80
+Budget (%)
+
+LESS
+LESS
+
+40
+
+40.4
+40.4
+
+60
+60
+
+DS
+
+2
+
+48
+
+36
+
+(e)
+80 (e)
+80
+(e)
+80
+72
+72
+
+64
+
+VerilogEval
+F@1
+VerilogEval Human
+Human
+F@1
+47.5
+
+47.5
+48 (b)
+VerilogEval Human
+F@1
+48 (b)
+47.5
+(b)
+44
+48
+44
+40
+44
+40
+36
+40
+36
+
+DS22
+DS
+
+56.0
+56.0
+56.0
+
+60
+60
+
+70
+70
+
+80
+80
+
+Budget (%)
+60 Budget
+70 (%) 80
+Budget (%)
+
+90
+90
+
+40 50
+50
+
+90
+
+50
+
+52.2
+52.2
+52.2
+
+60
+60
+
+70
+70
+
+80
+80
+
+Budget (%)
+60 Budget
+70 (%) 80
+Budget (%)
+
+90
+90
+90
+
+Figure 3: Budget sensitivity of downstream supervised fine-tuning on CodeV and RTLCoder. Curves show five-run mean
+performance (%) for all policies over 50–90% retention, where F@k denotes functional pass@k. Dotted horizontal lines denote
+corpus-matched Full (100%) fine-tuning, and blue bands mark 80%.
+actually agree. Align. top tests the opposite case. It ranks by
+our alignment score, which does reflect behavior, but keeps
+only the top of that ranking, and it also falls below Random
+on pass@1 in both corpora. A behavior-aware score alone is
+therefore not enough, and it has to be spent across the corpus instead of concentrated at the top. The effect is clearest
+on the larger RTLLM designs, where Random drops below
+Full on RTLCoder by up to 6.39 points while RTLC URA TOR stays above it in both corpora.
+
+Selection Policy Comparison
+Table 1 also compares three policies at the same 80% budget. Align. top keeps the alignment ranking but drops the
+cluster-proportional and structure-aware allocation. RTLC URATOR exceeds both controls on all six metrics in both
+corpora, by up to 5.52 points on CodeV and 7.24 on RTLCoder over whichever control is stronger, while Align. top
+does not consistently improve over Random. Mean RTL
+length shows what goes wrong. As shown in Table 2, random selection already shortens the average RTLCoder module from 46.7 to 40.5 lines, Align. top shrinks it to 30.6, and
+RTLC URATOR keeps 36.8 while performing best. Ranking
+by score alone pulls the subset toward short, easily satisfied
+modules, which coverage and structural balance counteract
+together.
+Replacing the learned score with simulation gives a
+stronger version of the same comparison. Using the released
+VeriCoder testbenches [Wei et al. 2025], Full-Val validates
+the entire RTLCoder pool and retains the passing subset,
+about 20% of it, with no coverage or structural balance. Table 3 shows that RTLC URATOR outperforms it on all reported metrics while validating only 10% of the pool. Only
+19.9% of pairs pass, so the filtered subset is four times
+smaller than ours and also structurally narrower, with a mean
+module length of 30.8 lines against 36.8.
+
+Retention Budget Sensitivity
+Figure 3 sweeps the retention budget from 50% to 90% with
+each policy held fixed. Utility does not grow with the budget. RTLC URATOR peaks at 80% and falls at 90% on both
+corpora and all four metrics shown, the 80% subset also outperforms Full, and no other policy peaks at 80% in both
+corpora. The peak sits at 80% even though far fewer than
+80% of pairs in these corpora pass a functional test [Wei
+et al. 2025]. A pair whose behavior deviates from its specification can still show valid syntax, interface conventions, and
+coding style, so removing pairs aggressively loses usable supervision faster than it removes noise. What matters is which
+pairs are kept rather than how many, and the agreement between VerilogEval and RTLLM shows this is not specific to
+one task size.
+
+Encoder and Calibration Analysis
+Cross-Corpus Retrieval. Table 4 asks whether a specification retrieves its own implementation out of the full
+pool. On held-out OriGen data the encoder reaches 97.39
+R@1, so training on functional contrasts does not damage
+matching on the source corpus. It also transfers. Against
+the strongest baseline, Qwen3-Emb-4B, RTLC URATOR
+gains 11.71 and 11.40 R@1 points on the original CodeV
+and RTLCoder specifications, with similar margins on
+MRR@10 and nDCG@10, while ranking against 164,111
+and 26,532 candidates respectively. The LLM column evaluates the preprocessing view, which regenerates each specification in the source-corpus style from both the original
+specification and its candidate implementation, and all models are given the same rewritten queries. Under that condition RTLC URATOR gains about 30 points on CodeV and
+keeps a margin of at least 19.40 points over the strongest
+baseline. RTLCoder gains about 11 points over its 24,780
+rewritten records. The larger CodeV shift matches how that
+corpus was built, since its specifications are summaries writ-
+
+Table 4: Cross-corpus retrieval between specifications and RTL code (%). OriGen is in-domain (ID) for the encoder, which
+was trained on it, whereas the two target corpora are out-of-domain (OOD). N is both the query count and the ranked RTL
+candidate count. ‘Raw’ uses the original target specifications. ‘LLM’ uses specifications regenerated in the source-corpus style
+from both the original specification and its candidate implementation. Bold and underline denote the best and second-best
+values, respectively.
+OriGen (ID)
+Model
+
+CodeV (OOD)
+
+Test
+N = 6,086
+
+Raw
+N = 164,111
+
+RTLCoder (OOD)
+Raw
+N = 26,532
+
+LLM
+N = 164,111
+
+LLM
+N = 26,532
+
+R@1 MRR@10 nDCG@10 R@1 MRR@10 nDCG@10 R@1 MRR@10 nDCG@10 R@1 MRR@10 nDCG@10 R@1 MRR@10 nDCG@10
+36.75
+79.67
+1.47
+32.81
+85.22
+87.48
+
+40.57
+82.39
+2.06
+36.99
+87.67
+89.45
+
+10.40
+11.44
+0.04
+2.34
+19.66
+25.03
+
+13.91
+15.45
+0.08
+3.63
+24.93
+31.13
+
+15.98
+17.75
+0.11
+4.45
+27.91
+34.52
+
+13.30
+30.79
+0.08
+4.50
+32.69
+45.44
+
+17.15
+37.17
+0.17
+6.77
+39.43
+53.26
+
+19.37
+40.63
+0.23
+8.17
+43.06
+57.27
+
+19.23
+27.01
+0.24
+6.15
+35.39
+42.06
+
+25.60
+34.03
+0.47
+9.63
+44.19
+51.20
+
+29.25
+37.90
+0.64
+11.81
+48.99
+56.11
+
+13.03
+32.01
+0.17
+7.17
+40.13
+54.76
+
+17.22
+39.95
+0.39
+11.05
+48.50
+63.69
+
+19.59
+44.25
+0.53
+13.44
+52.91
+68.09
+
+RTLC URATOR
+
+98.45
+
+98.83
+
+36.74
+
+43.11
+
+46.46
+
+67.02
+
+73.58
+
+76.67
+
+53.46
+
+60.82
+
+64.43
+
+64.39
+
+71.85
+
+75.42
+
+97.39
+
+Qwen3-Emb-4B - RTLCurator ator
+61.6 61.6
+
+Pairwise
+Pairwise
+AP AP
+
+44.7 44.7
+
+AUROC
+AUROC
+Full Full
+R@1R@1
+
+8.51 8.51
+
+53.1 53.1
+48.8 48.8
+
+4.07 4.07
+
+57.8 57.8
+
+51.0 51.0
+
+6.77 6.77
+74.3 74.3
+
+52.5 52.5
+
+21.8921.89
+
+40 40 50 50 60 60 70 70 80 80
+
+Focused
+Focused
+scorescore
+scalescale
+(%) (%)
+
+Figure 4: Functional-proxy ranking on held-out OriGen
+test-set groups containing compatible RTL code and multisource functional failures. Qwen3-Emb-4B abbreviates
+Qwen3-Embedding-4B. Endpoints report scores (%), and
+right-side labels report gains in percentage points (pp).
+
+Top-bottom gap (pp)
+
+BGE-M3
+30.09
+BGE-Code-v1
+73.92
+Qwen2.5-Coder-3B 0.67
+CodeV-R1-Qwen-7B 25.34
+Qwen3-Emb-8B
+79.67
+Qwen3-Emb-4B
+82.93
+
+75.8
+
+80
+
+78.8
+
+66.0
+
+60
+49.2 pp increase at 1% budget
+
+40
+20
+0
+
+16.8
+
+0
+
+1
+
+5
+
+10
+
+Annotation budget (% of target pool)
+
+Figure 5: RTLCoder target-domain calibration across cumulative validation budgets. At each budget, records are ranked
+by the current score, and the plotted top–bottom gap is the
+observed accept rate among the top 1,000 records minus that
+among the bottom 1,000. The 0% point uses the uncalibrated
+encoder prior, and pp denotes percentage points.
+
+ten from crawled RTL.
+Ranking Correct against Failing Implementations. Retrieval does not show whether the encoder can tell a correct
+implementation from a wrong one written for the same specification. We therefore build a second test from the held-out
+OriGen data, pairing each specification with one implementation that passes its testbench and several that look reasonable but fail (4,181 groups, 19,131 candidates). As Figure 4
+shows, the trained encoder improves over its initialization
+backbone by 8.51 points in pairwise accuracy, 4.07 in AP,
+6.77 in AUROC, and 21.89 in picking the correct implementation out of its whole group. The last number is the important one, since picking the one correct implementation from
+a field of plausible failures is exactly the decision selection
+has to make.
+Effect of the Validation Budget. Figure 5 tracks what target labels buy on RTLCoder. At each budget we rank the
+pool by the current score and measure the gap in accept rate
+between the top 1,000 and the bottom 1,000 records. Before
+any target label the gap is 16.8 points. The first 1% of labels widens it to 66.0 points, and 5% and 10% reach 75.8
+and 78.8, so the first 1% accounts for about 79% of the total
+
+widening. At the largest budget the loop has labeled 2,700
+examples, and the top and bottom groups accept at 85.3%
+and 6.5%. Selection uses the ranking rather than a fixed cutoff, so this gap is the quantity that matters, and it is reached
+after labeling a small part of the pool.
+
+Conclusion
+In this work, we present RTLC URATOR, which overcomes
+the limitation of validation-based curation by scoring every
+pair for spec–RTL alignment before any pair is validated and
+by balancing that score against representation coverage and
+structural richness. This keeps a large corpus while removing the pairs that hurt most, and it shows that behavioral correctness serves better as an input to curation than as its objective. Experiments on CodeV and RTLCoder confirm that
+the selected subsets outperform full-corpus fine-tuning and
+every matched-budget baseline. The alignment score transfers to corpora it was never trained on, which suggests it
+can support other hardware data pipelines. Isolating the contributions of coverage and structural richness is a valuable
+direction for future research.
+
+References
+Jordan T. Ash, Chicheng Zhang, Akshay Krishnamurthy,
+John Langford, and Alekh Agarwal. Deep batch active
+learning by diverse, uncertain gradient lower bounds. In
+The Eighth International Conference on Learning Representations, 2020. URL https://openreview.net/forum?id=
+ryghZJBKPS.
+Kaiyan Chang, Kun Wang, Nan Yang, Ying Wang, Dantong Jin, Wenlong Zhu, Zhirong Chen, Cangyuan Li, Hao
+Yan, Yunhao Zhou, Zhuoliang Zhao, Yuan Cheng, Yudong
+Pan, Yiqi Liu, Mengdi Wang, Shengwen Liang, Yinhe Han,
+Huawei Li, and Xiaowei Li. Data is all you need: Finetuning LLMs for chip design via an automated designdata augmentation framework. In Proceedings of the 61st
+ACM/IEEE Design Automation Conference, 2024. doi:
+10.1145/3649329.3657356.
+Jianlyu Chen, Shitao Xiao, Peitian Zhang, Kun Luo,
+Defu Lian, and Zheng Liu.
+M3-embedding: Multilinguality, multi-functionality, multi-granularity text embeddings through self-knowledge distillation. In Findings of the Association for Computational Linguistics: ACL
+2024, pages 2318–2335, Bangkok, Thailand, 2024. Association for Computational Linguistics. doi: 10.18653/v1/
+2024.findings-acl.137. URL https://aclanthology.org/2024.
+findings-acl.137/.
+Fan Cui, Chenyang Yin, Kexing Zhou, Youwei Xiao,
+Guangyu Sun, Qiang Xu, Qipeng Guo, Demin Song, Dahua
+Lin, Xingcheng Zhang, and Yun Liang. OriGen: Enhancing
+RTL code generation with code-to-code augmentation and
+self-reflection. In Proceedings of the IEEE/ACM International Conference on Computer-Aided Design, pages 99:1–
+99:9, 2024. doi: 10.1145/3676536.3676830.
+Wenji Fang, Shang Liu, Jing Wang, and Zhiyao Xie. CircuitFusion: Multimodal circuit representation learning for
+agile chip design. In The Thirteenth International Conference on Learning Representations, 2025. URL https:
+//openreview.net/forum?id=rbnf7oe6JQ.
+Zhangyin Feng, Daya Guo, Duyu Tang, Nan Duan, Xiaocheng Feng, Ming Gong, Linjun Shou, Bing Qin, Ting
+Liu, Daxin Jiang, and Ming Zhou. CodeBERT: A pretrained model for programming and natural languages. In
+Findings of the Association for Computational Linguistics:
+EMNLP 2020, pages 1536–1547. Association for Computational Linguistics, 2020. doi: 10.18653/v1/2020.findingsemnlp.139. URL https://aclanthology.org/2020.findingsemnlp.139/.
+Daya Guo, Qihao Zhu, Dejian Yang, Zhenda Xie, Kai
+Dong, Wentao Zhang, Guanting Chen, Xiao Bi, Y. Wu,
+Y. K. Li, Fuli Luo, Yingfei Xiong, and Wenfeng Liang.
+DeepSeek-Coder: When the large language model meets
+programming—the rise of code intelligence, 2024.
+Qiang Hu, Yuejun Guo, Xiaofei Xie, Maxime Cordy, Lei
+Ma, Mike Papadakis, and Yves Le Traon. Active code learning: Benchmarking sample-efficient training of code models, 2023. URL https://arxiv.org/abs/2306.01250.
+En-Ming Huang, Yu-Hung Kao, Ren-Hao Deng, Wei-Po
+Hsin, Yao-Ting Hsieh, Cheng Liang, Hsiang-Yu Tsou, Mu-
+
+Chi Chen, Yu-Kai Hung, Shao-Chun Ho, Po-Hsuang Huang,
+Shih-Hao Hung, and H. T. Kung. Structured testbench
+generation for LLM-driven HDL design and verificationoriented data curation, 2026.
+Hamish Ivison, Muru Zhang, Faeze Brahman, Pang Wei
+Koh, and Pradeep Dasigi. Large-scale data selection for instruction tuning, 2025.
+Denis Kocetkov, Raymond Li, Loubna Ben Allal, Jia Li,
+Chenghao Mou, Carlos Muñoz Ferrandis, Yacine Jernite,
+Margaret Mitchell, Sean Hughes, Thomas Wolf, Dzmitry
+Bahdanau, Leandro von Werra, and Harm de Vries. The
+Stack: 3 TB of permissively licensed source code, 2022.
+URL https://arxiv.org/abs/2211.15533.
+Chaofan Li, Jianlyu Chen, Yingxia Shao, Defu Lian, and
+Zheng Liu. Towards a generalist code embedding model
+based on massive data synthesis, 2025. URL https://arxiv.
+org/abs/2505.12697.
+Mingjie Liu, Nathaniel Pinckney, Brucek Khailany, and
+Haoxing Ren. VerilogEval: Evaluating large language models for Verilog code generation. In Proceedings of the
+IEEE/ACM International Conference on Computer-Aided
+Design, pages 1–8, 2023. doi: 10.1109/ICCAD57390.2023.
+10323812.
+Mingjie Liu, Yun-Da Tsai, Wenfei Zhou, and Haoxing
+Ren. CraftRTL: High-quality synthetic data generation
+for Verilog code models with correct-by-construction nontextual representations and targeted code repair. In The
+Thirteenth International Conference on Learning Representations, 2025a. URL https://openreview.net/forum?id=
+8KQzoD5XAr.
+Shang Liu, Wenji Fang, Yao Lu, Qijun Zhang, Hongce
+Zhang, and Zhiyao Xie. RTLCoder: Outperforming GPT3.5 in design RTL generation with our open-source dataset
+and lightweight solution. In Proceedings of the IEEE LLMAided Design Workshop, pages 1–5, 2024a. doi: 10.1109/
+LAD62341.2024.10691788.
+Shang Liu, Yao Lu, Wenji Fang, Mengming Li, and Zhiyao
+Xie. OpenLLM-RTL: Open dataset and benchmark for
+LLM-aided design RTL generation. In Proceedings of the
+IEEE/ACM International Conference on Computer-Aided
+Design, pages 60:1–60:9, 2024b. doi: 10.1145/3676536.
+3697118.
+Wei Liu, Weihao Zeng, Keqing He, Yong Jiang, and Junxian
+He. What makes good data for alignment? a comprehensive study of automatic data selection in instruction tuning.
+In The Twelfth International Conference on Learning Representations, 2024c. URL https://openreview.net/forum?id=
+BTKAeLqLMw.
+Yi Liu, Changran Xu, Yunhao Zhou, Zeju Li, and Qiang Xu.
+DeepRTL: Bridging Verilog understanding and generation
+with a unified representation model. In The Thirteenth International Conference on Learning Representations, 2025b.
+URL https://openreview.net/forum?id=2hcfoCHKoB.
+Yi Liu, Hongji Zhang, Yunhao Zhou, Zhengyuan Shi,
+Changran Xu, and Qiang Xu. DeepRTL2: A versatile model
+for RTL-related tasks. In Findings of the Association for
+Computational Linguistics: ACL 2025, pages 6485–6500,
+
+2025c. doi: 10.18653/v1/2025.findings-acl.336. URL https:
+//aclanthology.org/2025.findings-acl.336/.
+Yao Lu, Shang Liu, Qijun Zhang, and Zhiyao Xie. RTLLM:
+An open-source benchmark for design RTL generation with
+large language models. In Proceedings of the Asia and
+South Pacific Design Automation Conference, pages 722–
+727, 2024. doi: 10.1109/ASP-DAC58780.2024.10473904.
+Yichuan Ma, Yunfan Shao, Peiji Li, Demin Song, Qipeng
+Guo, Linyang Li, Xipeng Qiu, and Kai Chen. UnitCoder:
+Scalable iterative code synthesis with unit test guidance,
+2025.
+Jinlong Pang, Jiaheng Wei, Ankit Shah, Zhaowei Zhu, Yaxuan Wang, Chen Qian, Yang Liu, Yujia Bao, and Wei Wei.
+Improving data efficiency via curating LLM-driven rating
+systems. In The Thirteenth International Conference on
+Learning Representations, 2025. URL https://openreview.
+net/forum?id=DKkQtRMowq.
+Dongmin Park, Yooju Shin, Jihwan Bang, Youngjun Lee,
+Hwanjun Song, and Jae-Gil Lee. Meta-query-net: Resolving
+purity–informativeness dilemma in open-set active learning.
+In Advances in Neural Information Processing Systems, volume 35, 2022.
+Lukas Ruff, Robert A. Vandermeulen, Nico Görnitz,
+Alexander Binder, Emmanuel Müller, Klaus-Robert Müller,
+and Marius Kloft. Deep semi-supervised anomaly detection. In The Eighth International Conference on Learning
+Representations, 2020. URL https://openreview.net/forum?
+id=HkgH0TEYwH.
+Ozan Sener and Silvio Savarese. Active learning for convolutional neural networks: A core-set approach. In The
+Sixth International Conference on Learning Representations, 2018. URL https://openreview.net/forum?id=H1aIukRW.
+Zhengyuan Shi, Hongyang Pan, Sadaf Khan, Min Li, Yi Liu,
+Junhua Huang, Hui-Ling Zhen, Mingxuan Yuan, Zhufei
+Chu, and Qiang Xu. DeepGate2: Functionality-aware circuit
+representation learning. In Proceedings of the IEEE/ACM
+International Conference on Computer-Aided Design, pages
+1–9, 2023.
+Yue Wang, Weishi Wang, Shafiq Joty, and Steven C. H.
+Hoi. CodeT5: Identifier-aware unified pre-trained encoderdecoder models for code understanding and generation. In
+Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing, pages 8696–8708. Association for Computational Linguistics, 2021. doi: 10.
+18653/v1/2021.emnlp-main.685. URL https://aclanthology.
+org/2021.emnlp-main.685/.
+Anjiang Wei, Huanmi Tan, Tarun Suresh, Daniel Mendoza,
+Thiago S. F. X. Teixeira, Ke Wang, Caroline Trippel, and
+Alex Aiken. VeriCoder: Enhancing LLM-based RTL code
+generation through functional correctness validation, 2025.
+Haoyuan Wu, Haisheng Zheng, Yuan Pu, and Bei Yu. Circuit representation learning with masked gate modeling and
+Verilog–AIG alignment. In The Thirteenth International
+Conference on Learning Representations, 2025. URL https:
+//openreview.net/forum?id=US9k5TXVLZ.
+
+Mengzhou Xia, Sadhika Malladi, Suchin Gururangan, Sanjeev Arora, and Danqi Chen. LESS: Selecting influential
+data for targeted instruction tuning. In Proceedings of the
+41st International Conference on Machine Learning, 2024.
+Tingyu Xia, Bowen Yu, Kai Dang, An Yang, Yuan Wu,
+Yuan Tian, Yi Chang, and Junyang Lin. Rethinking data
+selection at scale: Random selection is almost all you need.
+In Findings of the Association for Computational Linguistics: EMNLP 2025, pages 2698–2711, Suzhou, China, 2025.
+Association for Computational Linguistics. doi: 10.18653/
+v1/2025.findings-emnlp.146. URL https://aclanthology.org/
+2025.findings-emnlp.146/.
+Zhangchen Xu, Yang Liu, Yueqin Yin, Mingyuan Zhou, and
+Radha Poovendran. KodCode: A diverse, challenging, and
+verifiable synthetic dataset for coding, 2025.
+Yanzhao Zhang, Mingxin Li, Dingkun Long, Xin Zhang,
+Huan Lin, Baosong Yang, Pengjun Xie, An Yang, Dayiheng
+Liu, Junyang Lin, Fei Huang, and Jingren Zhou. Qwen3 Embedding: Advancing text embedding and reranking through
+foundation models, 2025a.
+Yuyu Zhang, Jing Su, Yifan Sun, Chenguang Xi, Xia Xiao,
+Shen Zheng, Anxiang Zhang, Kaibo Liu, Daoguang Zan,
+Tao Sun, Jinhua Zhu, Shulin Xin, Huang Dong, Chao Li,
+Jianchong Chen, Hanzhi Zhou, Yifan Huang, Guanghan
+Ning, Xierui Song, Jiaze Chen, Siyao Liu, Kai Shen, Liang
+Xiang, and Yonghui Wu. Seed-Coder: Let the code model
+curate data for itself, 2025b. URL https://arxiv.org/abs/2506.
+03524.
+Mingyu Zhao, Xun He, Jiawei Liu, Jianwang Zhai, and
+Chuan Shi. Topology matters in RTL circuit representation
+learning. In The Fourteenth International Conference on
+Learning Representations, 2026. URL https://openreview.
+net/forum?id=bn6bD7TowO.
+Yang Zhao, Di Huang, Chongxiao Li, Pengwei Jin, Ziyuan
+Nan, Tianyun Ma, Lei Qi, Yansong Pan, Zhenxing Zhang,
+Rui Zhang, Xishan Zhang, Zidong Du, Qi Guo, Xing Hu,
+and Yunji Chen. CodeV: Empowering LLMs for Verilog
+generation through multi-level summarization, 2024. URL
+https://arxiv.org/abs/2407.10424.
+Yaoyu Zhu, Di Huang, Hanqi Lyu, Xiaoyun Zhang, Chongxiao Li, Wenxuan Shi, Yutong Wu, Jianan Mu, Jinghua Wang,
+Yang Zhao, Pengwei Jin, Shuyao Cheng, Shengwen Liang,
+Xishan Zhang, Rui Zhang, Zidong Du, Qi Guo, Xing Hu,
+and Yunji Chen. CodeV-R1: Reasoning-enhanced verilog
+generation, 2025. URL https://arxiv.org/abs/2505.24183.
+
+

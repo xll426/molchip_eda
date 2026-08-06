@@ -1,0 +1,977 @@
+                                        IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS                                                          1
+
+
+
+
+                                        SINA: A Fully Automated Circuit Schematic Image
+                                          to Netlist Generator Using Artificial Intelligence
+                                          Saoud Aldowaish∗ , Yashwanth Karumanchi∗ , Kai-Chen Chiang∗ , Mohammed Ayman Habib∗ , Finn Murphy† ,
+                                                                       Rishen Cao∗ , Morteza Fayazi∗ , Member, IEEE
+
+
+
+                                           Abstract—Recent advances in Artificial Intelligence (AI) have        contain rich, validated circuit design information. However,
+                                        revolutionized Electronic Design Automation (EDA), particularly         such valuable visual knowledge is not directly interpretable
+                                        through Large Language Models (LLMs) for circuit design tasks.          by EDA tools. To facilitate simulation, verification, and reuse
+                                        However, their application to analog and mixed-signal domains
+                                        remains limited by the lack of machine-readable representations         of these designs, as well as the construction of comprehensive
+arXiv:2607.01609v1 [cs.LG] 2 Jul 2026
+
+
+
+
+                                        of existing circuit design knowledge. Circuit schematic images          databases for circuit-oriented AI-based models, these schemat-
+                                        found in research manuscripts, textbooks, and websites constitute       ics should be converted into machine-readable netlists [10],
+                                        a vast repository of validated designs; however, these visual repre-    [11].
+                                        sentations cannot be directly processed by EDA tools. Converting           Currently, the image-to-netlist conversion process in EDA
+                                        them into machine-readable netlists is essential for enabling simu-
+                                        lation, verification, and building comprehensive databases for AI-      tools relies on manual transcription, which is both time-
+                                        based models. Current conversion methods lack generalization            consuming and error-prone [12], [13]. For example, several
+                                        across both Integrated Circuit (IC) and Printed Circuit Board           LLM-based tools for analog Integrated Circuit (IC) design
+                                        (PCB) level schematics. Moreover, they struggle with component          automation build their knowledge bases manually by con-
+                                        recognition and connectivity inference, and fail to distinguish         verting circuit schematic images within research manuscripts,
+                                        between connected junctions and crossing wires. In this paper, we
+                                        propose SINA, an open-source circuit schematic image-to-netlist         textbooks, and websites into netlists [14], [15]. Similarly,
+                                        generator. SINA is a fully automated pipeline that integrates deep      FASCINET [16], [17] introduces an AI-based approach for
+                                        learning for robust component detection, connected-component            Printed Circuit Board (PCB) design automation that also
+                                        labeling for accurate connectivity inference, Optical Character         depends on a manually populated database of PCB schematic
+                                        Recognition (OCR) for component reference designator extrac-            netlists. This reliance on manual image-to-netlist conversion
+                                        tion, and a Vision-Language Model (VLM) for reliable reference
+                                        designator assignment. SINA handles both IC- and PCB-level              severely restricts the design space supported by such EDA
+                                        schematics and incorporates dedicated crossing-wires detection          tools, creating a significant bottleneck that limits both their
+                                        to differentiate wire intersections from connections. We validate       accuracy and general applicability [18].
+                                        the correctness of the generated netlists using graph isomorphism          Although automated approaches have been studied to ad-
+                                        techniques. Our experiments demonstrate an overall netlist              dress this challenge, existing methods for converting schematic
+                                        generation accuracy of 96.67%, which is 2.72x higher compared
+                                        to state-of-the-art approaches.
+                                                                                                                images into netlists face five persistent limitations:
+                                                                                                                 1) Limited generalization: Most methods fail to general-
+                                          Index Terms—Automated netlist generator, open source, circuit             ize across both IC- and PCB-level schematics. IC-level
+                                        design automation, component detection, Connected-Component
+                                        Labeling (CCL), Optical Character Recognition (OCR), Vision-                schematics often feature dense, transistor-level diagrams,
+                                        Language Model (VLM), graph isomorphism, Artificial Intelli-                whereas PCB-level schematics consist of rectangular dis-
+                                        gence (AI), deep learning, Large Language Models (LLMs).                    crete components. Existing tools are typically tailored to
+                                                                                                                    one domain [8], [19], [20], limiting their suitability for
+                                                               I. I NTRODUCTION                                     real-world applications.
+                                                                                                                 2) Inaccurate component recognition: Traditional systems
+
+                                        R     ECENT advances in Artificial Intelligence (AI) have
+                                              significantly transformed Electronic Design Automation
+                                        (EDA), particularly through the integration of Large Language
+                                                                                                                    usually rely on rule-based techniques that use shape
+                                                                                                                    descriptors, manually defined templates, or line-tracing
+                                                                                                                    heuristics to identify components and wires [21], [22].
+                                        Models (LLMs) into circuit design workflows [1]–[3]. While                  While effective on clean printed schematics, these ap-
+                                        LLMs have achieved remarkable success in digital circuit gen-               proaches are highly sensitive to distortions, visual noise,
+                                        eration and verification [4]–[6], their potential in analog and             and hand-drawn variations. Even minor deviations in com-
+                                        mixed-signal domains remains constrained by a fundamental                   ponent appearance or slight imperfections in lines can lead
+                                        challenge: the lack of machine-readable representations of                  to inaccurate results.
+                                        existing circuit design knowledge [7]–[9]. Circuit schematic             3) Unreliable connectivity inference: Although recent meth-
+                                        images found in research manuscripts, textbooks, and websites               ods employ deep learning-based object detection models,
+                                           ∗ The Department of Electrical and Computer Engineering, Univer-         such as YOLO [23]–[27], they often fail to accurately
+                                        sity of Utah, Salt Lake City, UT, 48112 USA. † The Department               infer connectivity between components. Many approaches
+                                        of Electrical, Computer & Energy Engineering, University of Col-            rely on overly simplistic assumptions, such as straight-line
+                                        orado Boulder, Boulder, CO 80309, USA. (e-mail: u1275778@utah.edu,
+                                        u1518595@utah.edu, kai.chiangutah.edu, m.habib@utah.edu, Finn.Murphy-       wire paths or isolated junctions [11], [28], [29], which do
+                                        Blanchard@colorado.edu, u1437761@utah.edu, m.fayazi@utah.edu).              not hold in dense, irregular, or hand-drawn schematics.
+IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS                                                      2
+
+
+
+    As a result, even systems with high detection accuracy          their assignments to components. The VLM enhances relia-
+    frequently produce structurally invalid netlists.               bility by reasoning over the schematic images and reference
+ 4) Inability to distinguish crossing wires from true connec-       designator context, reducing misassignments in cluttered or
+    tions: Most existing methods are unable to distinguish be-      visually inconsistent diagrams.
+    tween connected wire junctions and non-connected cross-            We evaluate SINA on diverse benchmarks comprising
+    ing wires. In circuit schematics, wires often cross without     schematics from both IC- and PCB-level sources. SINA
+    forming electrical connections, a distinction typically indi-   achieves a component detection precision of 98% for IC-level
+    cated by the absence of a junction dot. Current approaches      and 94% for PCB-level circuits, along with a text (components
+    either incorrectly assume that all wire intersections repre-    reference designator and values) extraction accuracy of 97.5%.
+    sent connections or rely on overly simplistic heuristics that   Moreover, SINA achieves an overall netlist generation accu-
+    fail in complex layouts [23], [28], [29].                       racy of 96.67%, which is 2.72x higher compared to a state-
+ 5) Weak reference designator extraction and assignment:            of-the-art open-source method [8]. All databases, benchmarks,
+    A reference designator is a textual combination of letters      and codes are open-sourced to encourage reproducibility and
+    and numbers assigned to uniquely identify components            future research.
+    within a schematic [30]. Optical Character Recognition             The main contributions of the paper are as follows:
+    (OCR) engines can extract such reference designators (e.g.         • Introducing an open-source, schematic-to-netlist tool that
+    “R1”, “C2”) as well as component values (e.g. “10kΩ”,                 supports both IC- and PCB-level schematics.
+    “5µF”) in schematics. However, they often misread over-            • Integrating YOLO and a VLM to detect, validate, and
+    lapping or rotated text and incorrectly assign reference des-         extract circuit components from schematic images.
+    ignators with nearby components [22], [31]. While Vision-          • Achieving robust connectivity inference by applying CCL
+    Language Models (VLMs) offer strong visual-textual rea-               to generate SPICE-compatible netlists.
+    soning capabilities [29], when used in isolation, they             • Incorporating crossing-wires detection to distinguish con-
+    may misassign reference designators, misidentify similar              nected from non-connected wire intersections.
+    components, or overlook circuit-specific context.                  • Employing a graph isomorphism-based method to verify
+   In this paper, an extension of [32], we present SINA, an               the structural correctness of the generated netlists.
+open-source1 , fully automated pipeline that converts circuit
+schematic images into SPICE-compatible netlists. SINA is                      II. BACKGROUND AND R ELATED W ORK
+designed to be robust across a wide range of circuit styles,          While prior work has advanced schematic understanding,
+and it makes no assumptions about color, orientation, style,        many pipelines remain domain-specific, assume ideal input
+domain, or resolution of the input image. The goals of SINA         conditions, or struggle with noise, ambiguous wire geometry,
+are fivefold: (a) generalizing across both IC and PCB domains,      or complex schematics.
+including hand-drawn and scanned schematics; (b) achieving
+high component detection accuracy; (c) inferring connectivity       A. Rule-Based and Heuristic Approaches
+accurately, even in dense or irregular layouts; (d) identifying
+                                                                       Rule-based systems employ non-learning-based pipelines
+and handling crossing wires correctly; and (e) extracting and
+                                                                    that involve line detection, heuristics, and image morphol-
+assigning component reference designators reliably.
+                                                                    ogy [36]. For instance, Mohan et al. [37] and Huom-
+   To support generalization across diverse schematic formats,
+                                                                    ing et al. [38] develop rule-driven pipelines that apply edge
+SINA is trained on a database containing both IC- and PCB-
+                                                                    detection and pixel connectivity to extract components and
+level designs, including hand-drawn and scanned schematics.
+                                                                    wires in hand-drawn schematics. These methods often utilize
+This variety enables the model to generalize effectively to
+                                                                    the Hough Line Transform [39] for detecting lines, along with
+real-world circuit images [33]. To achieve high component
+                                                                    thresholding and dilation operations for segmenting wires.
+detection accuracy, SINA uses a YOLO-based object detection
+                                                                    While effective under constrained conditions, such systems
+model [25] trained on a diverse set of schematics, allowing
+                                                                    become brittle in the presence of distortions or visual clutter.
+it to learn different component configurations and remain
+                                                                    Kelly et al. [22] build a comprehensive pipeline using pattern
+robust across varying styles. To infer connectivity, SINA
+                                                                    matching, OCR, and symbolic layout reconstruction to gen-
+applies Connected-Component Labeling (CCL) [34] to group
+                                                                    erate netlists. Their reference designator assignment relies on
+wire segments and identify connections between component
+                                                                    simple spatial heuristics following OCR extraction using tools
+terminals based on shared wiring regions. This method avoids
+                                                                    such as Tesseract [40]. While effective on clean schematics,
+the limitations of strict geometric assumptions, e.g. straight
+                                                                    their system assumes minimal visual noise and lacks support
+lines.
+                                                                    for hand-drawn or irregular inputs. In contrast, SINA avoids
+   SINA implements a dedicated crossing-wires detection             fragile tracing heuristics by leveraging CCL [34] for con-
+module that uses morphological transformations [35] and             nectivity inference, which improves robustness to schematic
+contour analysis to identify and distinguish non-connected          variation.
+wire intersections from actual junctions, preventing false con-
+nections in the generated netlist. Finally, SINA combines OCR
+                                                                    B. Template-Based Recognition
+with a VLM [29] to extract reference designators and validate
+                                                                      Template-based methods detect components by match-
+  1 https://anonymous.4open.science/r/SINA-213F/README.md           ing schematic elements with predefined component patterns.
+IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS                                                                            3
+
+
+
+                                                                            Component detection
+
+
+
+
+                        2kΩ
+                              R1        R3     2kΩ            VLM           #components
+                                   R5
+                        Qp                    Qn V1 +                       & their types           Check
+                               0.1kΩ                1.2V
+                                                                            #components           consistency     Circuit image
+
+
+                        1kΩ
+                              R2    1kΩ        R4
+                                                                            & their types                         with detected
+                                                               YOLO
+                                                                                                                  components
+                       Input image schematic                                         (1)
+
+
+                                                            Reference designator
+                                                           extraction & assignment
+
+
+
+                                                                                                                   Netlist  V1 0 5 Volt_src 1.2V
+                                                                      (3)                                        generation Qp 2 3 7 BJT
+            Mask components                  Crossing       Find components        Generate                                   Qn 1 4 6 BJT
+             & identify real                   wires        connection points       netlist                VLM                R4   0   1   Res   1kΩ
+                                                                                                Netlist                       R3   6   5   Res   2kΩ
+                 nodes                       detection         with nodes          structure
+                                                                                                                              R2   0   2   Res   1kΩ
+                                                                                               structure         (4)          R1   7   5   Res   2kΩ
+                                         Connectivity inference (2)                                                           R5   3   4   Res   0.1kΩ
+                                                                                                                                       Final netlist
+
+Fig. 1. The proposed SINA’s workflow. The image schematic is given as input. (1) Component detection stage. (2) Connectivity inference stage. (3) Reference
+designator extraction & assignment stage. (4) Netlist generation stage.
+
+
+
+Roy et al. [41] and Mittal et al. [21] use contour matching and                   use YOLOv5 [26] for object detection, followed by Hough
+shape templates to identify parts, such as resistors and capac-                   Line Transforms [39] to extract wiring paths. This approach
+itors. Moetesum et al. [21] extract texture and shape features                    performs well on synthetic or printed schematics but breaks
+to distinguish components, showing high accuracy on clean                         down with curved or noisy wires.
+images. These methods are usually limited by their reliance on                       Rachala et al. [20] employ YOLO for component detection
+fixed component libraries and break down when presented with                      and node recognition to identify wire junctions. Their method
+rotated or hand-drawn components. Such approaches do not                          assumes clearly defined geometric patterns, which limits
+scale well to varied component styles and are unsuitable for                      performance on irregular or implicit connections. Similarly,
+large-scale projects. On the other hand, SINA uses a YOLO-                        ElectroNet [24] enhances small-component detection through
+based model [25], [26] trained on diverse schematic samples,                      architectural modifications, but it also relies on heuristic-based
+enabling strong generalization across IC and PCB domains.                         connectivity inference, which limits its ability to generalize in
+                                                                                  complex layouts.
+C. Graph-Based Connectivity Methods                                                  Other approaches target a specific circuit domain. Bo-
+   Graph-based methods model circuit topology as graphs                           hara et al. [44] propose a deep learning framework for
+to infer connectivity between components. Hu et al. [29]                          recognizing power converter circuits. However, their model is
+introduce a vision-transformer pipeline that combines object                      tailored specifically to power converters and is evaluated only
+detection with graph attention networks [42] to infer structure.                  on a synthetic benchmark generated under clean, constrained
+Their system includes an OCR module (e.g. EasyOCR [43])                           conditions, thereby limiting its generalization. Similarly, Bhan-
+followed by proximity heuristics to assign reference designa-                     dari et al. [8] introduce Masala-CHAI, a vision-language-
+tors and values to detected components. While accurate on                         based framework for generating SPICE netlists [45] from
+IC-level diagrams, this method, which assumes precise com-                        circuit diagrams. While effective, their system is tailored
+ponent and terminal detection, performs poorly in cluttered                       specifically to analog IC schematics and lacks support for
+schematics.                                                                       PCB-level designs.
+
+D. Deep Learning Approaches
+   Deep learning has become the dominant approach for auto-                                         III. P ROPOSED F RAMEWORK
+mated schematic-to-netlist conversion, with numerous recent
+methods leveraging neural networks for component detection.                         SINA is a fully automated pipeline that converts circuit
+Img2Sim-V2 [23] combines a convolutional neural network-                          schematic images into SPICE-compatible netlists. As depicted
+based component detector with line-tracing heuristics to con-                     in Fig. 1, it comprises four main stages: 1) component
+struct netlists. However, its reliance on straight-line assump-                   detection, 2) connectivity inference, 3) reference designator
+tions and heuristic wire-following makes it fragile in the                        extraction & assignment, and 4) final netlist generation. The
+presence of curved or noisy wiring. Similarly, Reddy et al. [28]                  pipeline begins with an input schematic image.
+IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS                                                                                                                           4
+
+
+
+
+                                         Res                Res
+                                                                                                                                                                    V1 0 5 Volt_src 1.2V
+
+
+
+
+                                                                         2kΩ
+                                                                                                                                                                    Qp 2 3 7 BJT
+ 2kΩ
+
+
+
+
+                                                                                                                        2kΩ
+                                   2kΩ
+       R1        R3    2kΩ               R1         R3      2kΩ                R1        R3     2kΩ                           R1        R3     2kΩ
+            R5                                 R5           Volt_src                R5                                             R5                               Qn 1 4 6 BJT
+Qp                     Qn V1 +     Qp                      Qn V1 +       Qp                    Qn V1                    Qp                    Qn V1 +
+                                                                                    0.1kΩ
+                                                                                                                                                                    R4   0   1   Res   1kΩ
+        0.1kΩ                                 Res          BJT                                                                 0.1kΩ
+                            1.2V         BJT 0.1kΩ                1.2V                               1.2V                                          1.2V             R3   6   5   Res   2kΩ
+
+
+
+
+                                                                         1kΩ
+ 1kΩ
+
+
+
+
+                                                                                                                        1kΩ
+                                   1kΩ
+       R2    1kΩ       R4                R2     1kΩ         R4                 R2      1kΩ      R4                            R2    1kΩ       R4                    R2   0   2   Res   1kΩ
+                                         Res                Res
+                                                                                                                                                                    R1   7   5   Res   2kΩ
+                                         GND        GND           GND                                                                                               R5   3   4   Res   0.1kΩ
+                 (a)                                 (b)                                 (c)                                            (d)                                        (e)
+
+Fig. 2. An example of SINA’s pipeline on an IC-level schematic. (a) The original circuit schematic image. (b) The detection model output with identified
+components and their bounding boxes. (c) Removing components and clustering nodes. (d) Nodes and their connections to the components. (e) The final
+generated netlist.
+
+
+
+A. IC-Level
+                                                                                                                                                                                   RD        RD
+1) Component Detection: SINA employs a YOLOv11-based
+object detection model to identify circuit components. The                                                                                                                   M1                    M2
+model returns bounding boxes, component types, and unique                                              RD                                     RD
+                                                                                                              RD                                      RD
+identifiers for each detected component, as illustrated in                                                                                                                                   ISS
+
+Fig. 2(b). To improve the reliability of the results, we im-                                    M1                       M2             M1                     M2
+plement an independent VLM-based verification step using                                                                                                                           RD        RD
+GPT-4o [46]. The VLM independently identifies components                                                          ISS                                    ISS
+in the input schematic, and its findings are compared with the                                                                                                               M1                    M2
+
+YOLO’s detections. A confidence score is reported based on                                                  (a)                                    (b)
+                                                                                                                                                                                             ISS
+the concordance between both systems regarding component
+types and counts. Any discrepancies between the two systems
+(e.g. when a component is detected by one system but not                                                                                                                               (c)
+the other) are automatically flagged for further inspection by                                 Fig. 3. An example of crossing-wires detection steps. (a) The original image
+the user. Also, this approach detects and flags potential edge                                 with crossing wires. (b) Applying intersection analysis to identify crossing
+cases where components outside YOLO’s training set may                                         points on the image with removed components. (c) Removing crossing points;
+                                                                                               The disconnected wires are reconnected one at a time.
+appear. In the VLM verification step, the Temperature [46],
+a hyperparameter controlling the variance of the output, is set
+to 0 to ensure deterministic and reproducible results for all                                  wire crossings are detected in the schematic, SINA employs
+API queries.                                                                                   a specialized disambiguation approach to prevent incorrect
+2) Connectivity Inference                                                                      electrical connections, as detailed in the following section.
+2.1) Overview: Following component detection, SINA iden-                                       2.2) Crossing-Wires Detection: An important feature that is
+tifies the electrical connectivity between components. The                                     missing in almost all other schematic-to-netlist frameworks
+goal is to determine which component terminals are electri-                                    is the ability to detect crossing wires within the schematic.
+cally connected through shared wires or nodes. To extract                                      Crossing-wires detection in SINA’s workflow operates on
+the circuit’s wiring network, SINA masks out the detected                                      a simplified version of the schematic where both detected
+components using their bounding boxes, leaving only the                                        components and connection dots have been removed using the
+wire traces visible. The resulting image is processed using                                    YOLO object detection model and morphological operations,
+the Connected-Component Labeling (CCL) method, which                                           leaving only the wire network visible. The wire network
+segments the wiring into discrete connected regions.                                           image is binarized and then processed using morphological
+    The CCL algorithm is an application of graph theory in                                     operations to extract lines. The algorithm identifies individual
+which subsets of connected components are assigned unique                                      line segments by detecting contours and computing bounding
+labels [34]. Each region represents a candidate node in the                                    boxes around them to determine each line’s endpoints.
+circuit. However, many of these regions, such as wire stubs,                                      To determine which lines cross each other, SINA applies a
+loops, or gaps, are artifacts that should be filtered out. Nodes                               geometric intersection algorithm that evaluates whether two
+are retained only if they connect to two or more components,                                   line segments intersect by analyzing the relative positions
+consistent with the definition of an electrical net [47]. Electri-                             of their endpoints. Since circuit schematics typically feature
+cally equivalent nodes, such as multiple ground connections,                                   perpendicular crossings, SINA only checks for intersections
+are merged into a single node as shown in Fig. 2(c). SINA                                      between perpendicular line pairs. When an intersection is
+establishes component-to-node connections by identifying in-                                   detected, the exact crossing point coordinates are calculated
+tersection points between component bounding boxes and                                         using geometric formulas. All detected crossings, along with
+node regions, determining which terminals are connected to                                     their coordinates and the line segments involved, are stored in
+which nodes. This procedure is illustrated in Fig. 2(d). This                                  JSON format for use in the subsequent disambiguation stage.
+stage outputs a complete component-to-node mapping that                                        2.3) Crossing Disambiguation: Once crossings are detected,
+defines the circuit’s structure for netlist generation. When                                   SINA must resolve the ambiguity to determine the correct
+IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS                                                                                                                                                                  5
+
+
+
+                                                                                                                     R1
+                                                                U1
+                                                                           AT42QT                                                                                                  AT42QT
+                                    VDD
+
+
+
+
+                                                                                                                                    0.1µF
+                                                                      Cap Touch Sensor                                  10k                                                   Cap Touch Sensor
+
+
+
+
+                                                                                                              22nF
+
+
+
+
+                                                                                                                               C2
+                                                 VDD        5                                       3
+                                                              VDD                 SNS_K
+
+
+
+
+                                                                                                        C1
+                                   C3
+                                                 GND        2                           4                         VDD
+
+
+
+
+                                         0.1µF
+                                                              VSS                   SNS
+                                                  OUT       1
+                                                              OUT              SYNCMODE 6
+                                                                       VDD: 1.8 - 5.5V                                                                                         VDD: 1.8 - 5.5V
+                                                                      Temp: -40º - 85ºC                                                                                       Temp: -40º - 85ºC
+                                                                AT42QT
+
+                                                                                      (a)                                                                                                     (b)
+
+                         U1       0.99                                         R1   0.83                                                    U1
+                                                                                                                                                                                       R1
+                                                                                                                                                                                                            U1 OUT 0 3 4 VDD VDD DISC AT42QT
+                                   AT42QT                                                                                                             AT42QT
+                                                                                                             VDD
+
+
+
+
+                                                                                                                                                                                                    0.1µF
+                                                                                                                                                 Cap Touch Sensor                       10k
+                                                                                                                                                                                                            C1 3 4 cap 22nF
+
+
+
+
+                                                                                                                                                                                22nF
+ VDD
+
+
+
+
+                                                                                            0.1µF
+                              Cap Touch Sensor                                  10k
+
+
+
+
+                                                                                                                                                                                               C2
+                                                                        22nF
+
+
+
+
+                                                                                       C2
+               VDD   5                                  3
+                                                                                                                              VDD   5                                3
+                                                                                                                                      VDD                SNS_K
+
+
+
+
+                                                                                                                                                                         C1
+                     VDD              SNS_K                                                                                                                                                                 C2 1 0 cap 0.1µF
+ C3
+
+
+
+
+                                                                 C1
+
+
+
+
+                                                                                                             C3
+               GND 2                                                                                                          GND   2                          4                VDD
+
+
+
+
+                                                                                                                     0.1µF
+                                                        4               VDD                                                           VSS                  SNS
+       0.1µF
+
+
+
+
+                     VSS                SNS
+               OUT 1 OUT                                6                                                                     OUT   1
+                                                                                                                                      OUT             SYNCMODE 6                                            C3 VDD 0 cap 0.1µF
+                                   SYNCMODE
+                               VDD: 1.8 - 5.5V                                                                                                    VDD: 1.8 - 5.5V                                           R1 3 1 DISC 10kΩ
+                              Temp: -40º - 85ºC                                                                                                  Temp: -40º - 85ºC
+
+                         AT42QT                                                                                                             AT42QT
+
+                                          (c)                                                                                                               (d)                                                            (e)
+
+Fig. 4. An example of SINA’s pipeline on a PCB-level schematic. (a) The original circuit schematic image. (b) Removing texts. (c) YOLO-predicted component
+bounding boxes (green) and their probabilities. (d) Identified pins for the rectangular shapes (discrete components). (e) The final generated netlist.
+
+
+
+electrical connectivity without falsely connecting the crossing                                                                                        where GPT-4o assigns final reference designators and values.
+wires. For each detected crossing, SINA creates two separate                                                                                           Direct OCR extraction is essential because even in simple
+modified images from the original schematic. In the first                                                                                              circuits VLMs (e.g. GPT-4o) often struggle to accurately deter-
+image, the crossing point is removed by filling it with the                                                                                            mine component locations and their textual annotations [8]. By
+background color, and the first wire is redrawn to maintain                                                                                            separating text extraction from semantic interpretation, SINA
+its continuity while the second wire is left disconnected. The                                                                                         leverages each tool’s strengths: OCR for reliable text detection
+second image does the opposite: the second wire is connected                                                                                           and VLMs for contextual understanding.
+while the first remains disconnected. To track where the                                                                                               4) Netlist Generation: In the final stage, SINA synthesizes
+disconnected wire would connect if it were present, SINA                                                                                               all the extracted information to generate the SPICE-compatible
+places virtual bridge components at that wire’s endpoints in                                                                                           netlist. GPT-4o receives three inputs: the OCR-extracted text
+each modified image.                                                                                                                                   reference designators, the component-to-node connectivity
+   Each modified image is then processed through the complete                                                                                          mappings, and the original schematic image for visual context.
+connectivity inference pipeline independently. This includes                                                                                           Using this combined information, the model assigns the ap-
+component masking, connection dot removal, and connected-                                                                                              propriate reference designators and values to each component.
+component labeling to extract the circuit’s node structure. The                                                                                        It then generates a netlist that accurately captures both the
+bridge components are treated as regular circuit components                                                                                            circuit’s structure and parameters, as shown in Fig. 2(e). The
+during this process, allowing them to connect to nearby nodes                                                                                          generated netlist follows standard SPICE syntax, enabling
+just like any other component. Each processing pass produces                                                                                           direct use in circuit simulation tools such as Ngspice [48] or
+its own netlist that captures the connectivity of one wire while                                                                                       integration into databases for AI-based circuit design automa-
+marking the endpoints of the other. Finally, the two separate                                                                                          tion models.
+netlists are merged into a unified representation. The bridge
+components serve as markers that indicate where the discon-                                                                                            B. PCB-Level
+nected wires should connect in the final netlist. By combining
+                                                                                                                                                       1) Component Detection: PCB-level schematics introduce
+the connectivity information from both processing passes,
+                                                                                                                                                       additional complexity due to dense structure and the preva-
+SINA produces a complete netlist that correctly represents both
+                                                                                                                                                       lence of discrete components (usually depicted as rectangles)
+crossing wires without introducing false electrical connections
+                                                                                                                                                       with varying pin locations. To address this, we extend SINA
+between them. An example of these steps is depicted in Fig. 3.
+                                                                                                                                                       with a dedicated subpipeline tailored for these representations.
+3) Reference Designator Extraction and Assignment: SINA                                                                                                A visual overview example of this process is shown in
+employs EasyOCR [43] to extract textual annotations from                                                                                               Fig. 4. First, SINA preprocesses the input by removing textual
+the schematic, associating component reference designators                                                                                             reference designators and values that could interfere with the
+and values with the detected components. “R1” and “C2”                                                                                                 component detection step as illustrated in Fig. 4(b). To this
+are examples of reference designators, whereas “10kΩ” and                                                                                              end, SINA uses OCR, followed by an inpainting method [49],
+“5µF” are examples of component values. To improve recog-                                                                                              to generate a clean and text-free schematic.
+nition accuracy across diverse font styles and image qualities,                                                                                           SINA then applies a YOLO-based object detector and pose
+SINA applies various preprocessing steps, including contrast                                                                                           estimators to identify components. SINA fine-tunes the YOLO
+enhancement, denoising, and adaptive thresholding [35].                                                                                                model with rectangular shapes in addition to common circuit
+   The extracted text is then mapped to detected components                                                                                            components (e.g. resistors).
+based on spatial proximity. This OCR-based approach provides                                                                                           2) Pin Identification: To identify pins for discrete compo-
+crucial context for the subsequent netlist generation stage,                                                                                           nents, we have explored two methods. First, Edge Scan [50],
+IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS                                                                            6
+
+
+
+    Component         Instances                   Variations                                               TABLE II
+                                                                                  C OMPARISON OF DIFFERENT YOLO MODELS TESTED ON SINA FOR
+      Resistor         1,550                                                        THE IC- LEVEL COMPONENT DETECTION . M AP: M EAN AVERAGE
+                                                                                                          P RECISION
+Transistor (MOSFET)    1,290
+                                                                                        Model          Training Time       Inference Time     mAP
+      Ground           1,040                                         GND
+                                                                                      YOLOv11m         27.63 minutes        39.0 minutes      97%
+                                                                                      YOLOv11n         20.52 minutes        26.2 minutes      95%
+     Capacitor          650
+
+
+  Transistor (BJT)      420
+                                                                                                             TABLE III
+                                                                                       SINA’ S IC- LEVEL COMPONENT DETECTION PERFORMANCE
+                                       +              +        VCC
+   Voltage Source       300                                                                                 EVALUATION .
+
+
+      Inductor          180                                                      Precision    Recall     F1 Score      Weighted Mean Average Precision
+                                                                                   93%         99%         96%                     98%
+   Current Source       160
+
+       Diode            140
+
+
+      OPAMP              90
+                                                                                IC- and PCB-level diagrams, research manuscripts, scanned
+                                                                                textbooks, and hand-drawn sketches, with the complexity
+                                                                                distribution summarized in Table I. SINA augments its training
+Fig. 5. Distribution of circuit components across the database, including the   database by scaling, brightness jitter, and flipping [52].
+number of instances and visual variations per component type.
+
+                                                                                A. IC-Level
+                                      TABLE I
+    D ISTRIBUTION OF SCHEMATIC COMPLEXITY ACROSS THE DATABASE .                 1) Component Detection: To evaluate the component detec-
+S IMPLE : <6 COMPONENTS , M EDIUM : 6–20 COMPONENTS , C OMPLEX : >20            tion performance, the models are tested on a benchmark
+                            COMPONENTS .
+                                                                                consisting of 75 schematics with more than 1,000 components
+       Complexity                    Components                  Percentage     from 10 distinct types, including resistors, capacitors, etc. Our
+         Simple                         <6                         47.8%        training database and test benchmark include both computer-
+        Medium                         6–20                        42.1%        generated and hand-drawn schematics in a well-mixed fashion,
+        Complex                         >20                        10.1%        ensuring the model learns robust features across diverse input
+                                                                                styles. The full list of component types can be found in Fig. 5.
+                                                                                   To achieve optimal performance, YOLOv11m and
+which heuristically identifies pin locations by scanning bina-                  YOLOv11n models [53] are analyzed. The results are
+rized component edges for foreground pixel discontinuities.                     summarized in Table II. Despite YOLOv11n’s faster
+However, our evaluations show that this technique results in                    inference, YOLOv11m’s higher mean Average Precision
+a low recall. As a more robust alternative, SINA adopts the                     (mAP) makes it the better choice for accurate component
+Skeleton OCR method [51]: wires are skeletonized after mask-                    detection. Also, the component detection achieves 93%
+ing text, and pin candidates are derived by clustering skeleton                 precision and 99% recall, resulting in an F1 score of 96%, as
+endpoints that intersect with dilated component bounding                        detailed in Table III. These metrics reflect performance across
+boxes. This method significantly improves both precision and                    this diverse mix of schematic formats, demonstrating SINA’s
+recall.                                                                         ability to generalize across both hand-drawn and digitally
+                                                                                created circuits. Moreover, the normalized confusion matrix
+3) Connectivity Reconstruction and Netlist Generation:
+                                                                                in Fig. 6 shows a strong diagonal, with most components
+Once pins are identified, SINA assigns each pin to its nearest
+                                                                                achieving over 90% correct classification.
+wire segment based on spatial proximity. The Skeleton OCR
+method improves this step by ensuring reliable association,                     2) Crossing-Wire Detection: The crossing-wires detection al-
+even in the presence of noise or partial occlusion. The detected                gorithm is tested on a benchmark containing both orthogonal
+components, their pins, reference designators, and interconnec-                 and diagonal wire crossings. Two metrics are used to evaluate
+tions are passed to GPT-4o to generate the final netlist similar                the crossing-wires detection performance:
+to the IC-level part.                                                             •   Crossing Accuracy: Measures the fraction of crossings
+                                                                                                                    True Detected
+                                                                                      that are correctly detected ( Total Crossing ).
+                                  IV. E VALUATION
+  To evaluate the overall performance of SINA, we create                          •   Crossing Precision: Measures                 the fraction of
+an open-source benchmark comprising schematics that vary                              detected crossings that are                   actually correct
+                                                                                               True Positive
+widely in style, complexity, and number of components, with                           ( True Positive + False Positive ).
+a detailed breakdown given in Fig. 5. SINA fine-tunes its                          SINA achieves a crossing accuracy of 87% and a crossing
+object detection model on a custom database of more than 700                    precision of 100%, indicating high detection accuracy with no
+annotated schematics, including diverse visual styles such as                   false positives.
+IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS                                                                                                                                                                            7
+
+
+
+                                                                                                                                                   1.0
+               Resistor   0.91                                                                                                  0.22                                                   TABLE V
+              Capacitor   0.07 0.95                                         0.14                                                0.19                       F UNCTIONAL VALIDATION RESULTS OF SINA- GENERATED NETLISTS
+                                                                                                                                                          ACROSS 40 IC- LEVEL TEST CIRCUITS . Functional Pass: T HE NUMBER OF
+                                                                                                                                                   0.8
+               Inductor                          1.00                                                                           0.06                      SINA- GENERATED NETLISTS WHOSE SIMULATIONS RUN SUCCESSFULLY
+                                                                                                                                                         WITHOUT ERRORS . Topological Match: T HE NUMBER OF SINA- GENERATED
+                   BJT                                      1.00                                                                0.08
+Predicted
+
+
+
+
+                                                                                                                                                           NETLISTS WHOSE CIRCUIT STRUCTURE AND CONNECTIVITY MATCH THE
+              MOSFET      0.01                                     1.00                                                         0.13               0.6        CORRESPONDING GROUND TRUTH . Exact Match: T HE NUMBER OF
+                                                                                                                                                           SINA- GENERATED NETLISTS WHOSE SIMULATION OUTPUTS MATCH THE
+            Voltage_src              0.01                                   0.80                                                0.10
+                                                                                                                                                                   GROUND TRUTH WITHIN A 5% RELATIVE TOLERANCE .
+            Current_src                                                                    1.00                                 0.02               0.4
+                                                                                                                                                                                   Metric                         Count                  Accuracy
+                  GND                                                                                    0.92                   0.16
+                                                                                                                                                                               Functional Pass                    39/40                   97.5%
+               OPAMP                                                                                            1.00            0.03                                          Topological Match                   37/40                   92.5%
+                                                                                                                                                   0.2
+                 Diode                                                                                                  0.82 0.02                                               Exact Match                       36/40                   90.0%
+
+            Background    0.01 0.04                                         0.06                         0.08           0.18
+                                                                                                                                                   0.0
+                                                            BJT
+
+
+
+
+                                                                                                                        Diode
+                                                                   MOSFET
+
+
+
+
+                                                                                                         GND
+                                     Capacitor
+
+
+
+
+                                                                                                                OPAMP
+                                                 Inductor
+
+
+
+
+                                                                                           Current_src
+                                                                             Voltage_src
+
+
+
+
+                                                                                                                                Background
+                          Resistor
+
+
+
+
+                                                                                                                                                                            Vcc + 9          R2        R3       R4           Vin 5 0 Volt_src 3
+                                                                                                                                                                                                                             Q2 3 4 0 BJT
+                                                                                                                                                                                             10k       10k       220
+                                                                                                                                                                                              C1                             Q1 2 6 0 BJT
+                                                                                                                                                                                                               Vout          R1 5 6 Res 2.2k
+                                                                            True                                                                                                  R1         2.2µ             Q2             R3 1 4 Res 10kΩ
+                                                                                                                                                                                        Q1                                   R2 1 2 Res 10kΩ
+Fig. 6. IC-level component detection confusion matrix.                                                                                                   Vin + 3 2.2k                                                        R4 1 3 Res 220
+                                                                                                                                                                                                                             C1 2 4 cap 2.2
+                                                                                                                                                                                                                             Vcc 0 1 Volt_src 9
+
+                          TABLE IV                                                                                                                                                       (a)                                        (b)
+P ERFORMANCE COMPARISON BETWEEN SINA AND M ASALA -CHAI [8] ON
+                                                                                                                                                                        6.5
+                40 IC- LEVEL TEST SCHEMATICS .                                                                                                                                                                                            Vin
+                                                                                                                                                                                                                                          Vout - GT
+                                                                                                                                                                        6                                                                 Vout - SINA
+                       Text                          Component                                                  Circuit                       Overall
+    Method
+                    Extraction                    Detection F1 Score                                           Structure                     Accuracy
+                                                                                                                                                                        5.5
+    SINA             97.55%                             99.7%                                                   99.4%                        96.67%
+   Masala-                                                                                                                                                              5
+                     95.09%                                       62.4%                                         59.8%                         35.5%
+                                                                                                                                                          Voltage [V]
+
+
+
+
+  CHAI [8]
+                                                                                                                                                                        4.5
+
+
+                                                                                                                                                                        4
+
+3) Comparison with Masala-CHAI: We compare SINA with                                                                                                                    3.5
+Masala-CHAI [8], the only publicly available state-of-the-art
+open-source framework for netlist generation, using the same                                                                                                            3
+
+curated set of 40 schematics. These schematics were chosen to                                                                                                           2.5
+                                                                                                                                                                              0    1     2         3    4        5       6      7    8       9      10
+ensure a fair and meaningful evaluation: we restricted the set to                                                                                                                                            Time [ms]
+circuits composed of components supported by both systems                                                                                                                                                      (c)
+and avoided cases that Masala-CHAI cannot currently process,
+such as schematics containing wire crossings.                                                                                                            Fig. 7. An example of an exact match. (a) Input schematic. (b) SINA-
+   To verify the structural correctness of the generated netlists                                                                                        generated netlist, which is the same as the corresponding Ground Truth (GT)
+of SINA and Masala-CHAI against the ground truth, we                                                                                                     netlists. (c) Transient analysis.
+employ graph isomorphism [54]. For this purpose, each netlist
+is modeled as a bipartite graph, where components (e.g. resis-
+                                                                                                                                                                         racy (correct component interconnections) and structure
+tors) and circuit nodes form vertices, and edges connect each
+                                                                                                                                                                         score (graph structural similarity).
+component to its corresponding nodes. This graph-theoretic
+                                                                                                                                                                    •    Overall Accuracy: Product of all three metrics (text
+approach enables robust comparisons that are invariant to com-
+                                                                                                                                                                         extraction accuracy × component detection F1 score ×
+ponent reference designators and spatial arrangement, focusing
+                                                                                                                                                                         circuit structure accuracy).
+solely on electrical connectivity.
+   We evaluate both SINA and Masala-CHAI approaches on                                                                                                     As listed in Table IV, SINA outperforms Masala-CHAI [8]
+four key metrics relative to the ground truth netlists:                                                                                                  across all the aforementioned metrics. In particular, SINA
+                                                                                                                                                         achieves an overall accuracy of 96.67%, outperforming
+     •      Text Extraction Accuracy: Measures the accuracy of
+                                                                                                                                                         Masala-CHAI by a factor of 2.72x.
+            extracting component reference designators and values
+            against ground truth.                                                                                                                        4) Functional Validation: The SINA-generated netlists are
+     •      Component Detection F1 Score: F1 score combining                                                                                             validated through simulation to ensure correct circuit behavior.
+            precision and recall for component identification. In other                                                                                  Using Ngspice [48], transient analysis is performed on both
+            words, F1 Score = 2×Precision×Recall
+                                  Precision+Recall .                                                                                                     SINA outputs and manually created ground truth netlists for
+     •      Circuit Structure Accuracy: Average of connection accu-                                                                                      a set of 40 schematics. We evaluate each circuit across three
+IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS                                                                                                8
+
+
+
+                              R1                      Vout
+                                                                           Ground Truth (GT) Netlist
+                Vin          5Ω
+                                                                                                                                      TABLE VII
+                                   C1     1 µF R2                      Vin 2 0 Volt_src SIN(0 1 50)
+               sine                                   1Ω                                                    P IN IDENTIFICATION PERFORMANCE COMPARISON APPLIED ON SINA’ S
+                                                                       C1 1 0 1u cap
+               50 Hz                                                                                                      WORKFLOW FOR PCB- LEVEL SCHEMATICS .
+                                                                       R1 1 2 Res 5
+                                        (a)                            R2 1 0 Res 1
+                                                                                                                      Method              Precision    Recall     F1 Score
+                1
+                                                      Vin
+                                                      Vout - GT            SINA-Generatred Netlist             SINA - Edge-Scan [50]       75.4%       30.7%       43.6%
+Voltage [V]
+
+
+
+
+              0.5                                     Vout - SINA
+                                                                       Vin 2 0 Volt_src SIN(0 1 50)          SINA - Skeleton-OCR [51]      93.6%       97.1%       95.3%
+                0
+                                                                       C1 1 0 1u cap
+              -0.5                                                     R1 1 0 Res 5
+               -1
+                     0     0.02    0.04      0.06   0.08       0.1     R2 1 2 Res 1
+                                      Time [s]
+                                        (c)                                          (b)                   including detection and pose estimation variants, on a diverse
+                                                                                                           set of schematics. In total, our PCB-level benchmark contains
+Fig. 8. An example of a topological match netlist that is not an exact match.                              over 50 schematics, containing more than 500 components and
+(a) Input schematic. (b) SINA-generated and the corresponding Ground Truth
+(GT) netlists. The only difference between them is the swapping of R1 and                                  3,300 pins. As shown in Table VI, pose estimation models
+R2. (c) Transient analysis.                                                                                significantly outperform traditional object detectors in both
+                                                                                                           precision and recall. The YOLOv8m-pose model achieves the
+                                                                                                           highest overall performance, with a mAP50–95 of 94%, preci-
+                                        TABLE VI                                                           sion of 94%, and recall of 98%. Here, mAP50-95 denotes the
+              P ERFORMANCE COMPARISON OF YOLO OBJECT DETECTION AND POSE
+                  ESTIMATION MODELS TESTED ON PCB- LEVEL SCHEMATICS . P:
+                                                                                                           average of the mean average precision calculated at varying
+                                  P RECISION , R: R ECALL                                                  Intersection over Union (IoU) thresholds, ranging from 0.50
+                                                                                                           to 0.95 [55]. Despite having a higher GFLOPs and parameter
+                                           Parameters                       mAP50-
+                         Model
+                                            Number
+                                                              GFLOPs
+                                                                              95
+                                                                                            P          R   count, its superior detection quality makes it a suitable choice
+                YOLOv8n                      3.0 M                   8.1     87%           100%      93%   for high-fidelity PCB analysis.
+                YOLOv9n                      2.0 M                   7.6     86%           94%       94%   2) Pin Identification Accurate pin identification is critical for
+               YOLOv10n                      2.3 M                   6.5     83%           97%       80%
+              YOLOv8n-pose                   3.1 M                   8.3     85%           95%       91%
+                                                                                                           correct netlist generation. To evaluate this, we use the Hungar-
+              YOLOv8m-pose                  26.4 M                  80.8     94%           94%       98%   ian algorithm [56], a combinatorial optimization technique that
+                                                                                                           finds the optimal one-to-one matching between predicted and
+                                                                                                           ground truth pin coordinates by minimizing total Euclidean
+                                                                                                           distance. This enables a fair and precise evaluation of pin
+metrics of increasing strictness, as defined in Table V.                                                   placement accuracy. Table VII lists a comparative evaluation
+   • Functional Pass: The number of SINA-generated netlists                                                of pin identification accuracy across different methods applied
+      whose simulations run successfully without errors.                                                   on SINA’s framework. SINA while using Skeleton-OCR out-
+   • Topological Match: The number of SINA-generated                                                       performs Edge-Scan in all metrics by achieving an F1 score
+      netlists whose circuit structure and connectivity match                                              of 95.3%.
+      the corresponding ground truth.
+   • Exact Match The number of SINA-generated netlists
+                                                                                                                                  V. C ONCLUSION
+      whose simulation outputs match the ground truth within
+                                                                                                              This paper presents SINA, a fully automated, open-source
+      a 5% relative tolerance.
+                                                                                                           pipeline that converts circuit schematic images into SPICE-
+   Out of the 40 circuits, 97.5% are simulated successfully                                                compatible netlists using different AI-based methods. Our
+without errors, while 92.5% are topologically correct, match-                                              approach integrates YOLOv11-based object detection, CCL
+ing the ground truth in terms of circuit structure and connectiv-                                          for connectivity inference, OCR for text extraction, and a
+ity. Moreover, 90.0% achieve complete functional equivalence                                               VLM for reliable component reference designator assignment.
+with the ground truth.                                                                                     SINA incorporates dedicated crossing-wires detection to dif-
+   Fig. 7 illustrates an example of an exact match. As shown,                                              ferentiate wire intersections from connections, addressing a
+the SINA-generated netlist is identical to the ground truth                                                critical challenge in schematic interpretation. This multi-stage
+netlist, resulting in equivalent circuit functionality, as demon-                                          approach ensures robust performance across both IC and PCB
+strated by the transient analysis results. On the other hand,                                              domains without relying on fragile geometric assumptions.
+Fig. 8 depicts an example of a topological match netlist that                                              Our experiments demonstrate an overall netlist generation
+is not an exact match. As shown in Fig. 8(b), the only differ-                                             accuracy of 96.67%, which is 2.72x higher compared to state-
+ence between the ground truth and the corresponding SINA-                                                  of-the-art approaches.
+generated netlist is the swapping of R1 and R2. Although
+the circuit topology remains unchanged, this modification
+results in different circuit functionality, as demonstrated by
+the transient analysis results.
+
+B. PCB-Level
+1) Component Detection To assess SINA’s performance on
+PCB-level schematics, we evaluate five YOLO-based models,
+IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS                                                                                9
+
+
+
+                              R EFERENCES                                        [28] K. V. Reddy and S. Panicker, “Automated Netlist Generation from
+                                                                                      Offline Hand-Drawn Circuit Diagrams,” in IEEE Intl. Conf. on Image
+ [1] S. Thakur et al., “AutoChip: Automating HDL Generation Using LLM                 Processing (ICIP), 2021.
+     Feedback,” arXiv preprint arXiv:2311.04887, 2023.                           [29] Y. Hu et al., “Parsing Netlists of Integrated Circuits from Images via
+ [2] K. Chang et al., “ChipGPT: How far are we from natural language                  Graph Attention Network,” Sensors, vol. 24, no. 2, 2024.
+     hardware design,” arXiv preprint arXiv:2305.14019, 2023.                    [30] B. Matisoff, “Reference Designations for Electrical and Electronics Parts
+ [3] P. Abbineni et al., “MuaLLM: A Multimodal Large Language Model                   and Equipment,” in Handbook of Electronics Manufacturing Engineer-
+     Agent for Circuit Design Assistance with Hybrid Contextual Retrieval-            ing. Springer, 1997, pp. 342–365.
+     Augmented Generation,” in 2026 31st Asia and South Pacific Design           [31] L. Jamieson, C. F. Moreno-Garcia, and E. Elyan, “Deep Learning for
+     Automation Conference (ASP-DAC). IEEE, 2026, pp. 646–652.                        Text Detection and Recognition in Complex Engineering Diagrams,” in
+ [4] S. Thakur et al., “VeriGen: A Large Language Model for Verilog Code              Proc. IEEE Int. Joint Conf. on Neural Networks (IJCNN), 2020.
+     Generation,” ACM Transactions on Design Automation of Electronic            [32] S. Aldowaish, Y. Karumanchi, K. Chiang, S. Noorzad, and M. Fayazi,
+     Systems, 2024.                                                                   “SINA: A Circuit Schematic Image–to–Netlist Generator Using Artifi-
+ [5] Y. Lu, S. Liu, Q. Zhang, and Z. Xie, “RTLLM: An Open-Source                      cial Intelligence,” arXiv preprint arXiv:2601.22114, 2026.
+     Benchmark for Design RTL Generation with Large Language Model,”             [33] J. K. Nurminen, E. I. Jääskeläinen, M. Hautamäki, and J. Härkönen,
+     in ASP-DAC, 2024, pp. 722–727.                                                   “Object Detection in Design Diagrams with Machine Learning,” in
+ [6] J. Blocklove, S. Garg, R. Karri, and H. Pearce, “Chip-Chat: Challenges           CORES, vol. 977. Springer, 2019, pp. 27–36.
+     and Opportunities in Conversational Hardware Design,” in ACM/IEEE           [34] C. Grana, F. Bolelli, L. Baraldi, and R. Vezzani, “YACCLAB - Yet
+     5th Workshop on Machine Learning for CAD (MLCAD), 2023, pp. 1–6.                 Another Connected Components Labeling Benchmark,” in International
+ [7] Y. Lai et al., “AnalogCoder: Analog Circuit Design via Training-Free             Conference on Pattern Recognition (ICPR), IEEE, pp. 3109–3114, 2016.
+     Code Generation,” arXiv preprint arXiv:2405.14918, 2024.                    [35] R. C. Gonzalez and R. E. Woods, “Digital Image Processing,” 4th ed.
+ [8] J. Bhandari et al., “Masala-CHAI: A Large-Scale Spice Netlist                    Pearson, 2017.
+     Dataset for Analog Circuits by Harnessing AI,” arXiv preprint               [36] P. De, S. Mandal, and P. Bhowmick, “Recognition of Electrical Symbols
+     arXiv:2411.14299, 2025.                                                          in Document Images Using Morphology and Geometric Analysis,” in
+ [9] M. Fayazi, Z. Colter, E. Afshari, and R. Dreslinski, “Applications of            ICIP, IEEE, pp. 1–6, 2011.
+     Artificial Intelligence on The Modeling and Optimization for Analog         [37] A. Mohan, A. Mohan, B. Indushree, M. Malavikaa, and C. Narendra,
+     and Mixed-Signal Circuits: A Review,” IEEE TCAS-I, vol. 68, no. 6,               “Generation of Netlist from a Hand drawn Circuit through Image
+     2021.                                                                            Processing and Machine Learning,” in AISP, IEEE, pp. 1–4, 2022.
+[10] R. Matsuo et al., “Schemato – An LLM for Netlist-to-Schematic               [38] Z. Huoming and S. Lixing, “Research on K nearest neighbor identifica-
+     Conversion,” arXiv preprint arXiv:2411.13899, 2024.                              tion of hand-drawn circuit diagram,” in Journal of Physics: Conference
+[11] D. Hemker, J. Maalouly, H. P. Mathis, and E. Ravanan, “From schemat-             Series, IOP Publishing, p. 012233, 2019.
+     ics to netlists–electrical circuit analysis using deep-learning methods,”   [39] G. Bradski and A. Kaehler, Learning OpenCV 2: Computer Vision with
+     Advances in Radio Science, vol. 22, pp. 61–75, 2024.                             the OpenCV Library. O’Reilly Media, Inc., 2010.
+                                                                                 [40] R. Smith, “An Overview of the Tesseract OCR Engine,” in Proc. Intl.
+[12] M. Rabbani, R. Khoshkangini, H. S. Nagendraswamy, and M. Conti,
+                                                                                      Conf. on Document Analysis and Recognition (ICDAR), 2007.
+     “Hand Drawn Optical Circuit Recognition,” Procedia Computer Science,
+                                                                                 [41] S. Roy, A. Bhattacharya, N. Sarkar, S. Malakar, and R. Sarkar, “Offline
+     vol. 84, pp. 41–48, 2016.
+                                                                                      hand-drawn circuit component recognition using texture and shape-based
+[13] R. Lin et al., “Beyond Schematic Capture: Meaningful Abstractions
+                                                                                      features,” Multimedia Tools and Applications, vol. 79, 2020.
+     for Better Electronics Design Tools,” in Proceedings of the 2019 CHI
+                                                                                 [42] P. Veličković et al., “Graph Attention Networks,” arXiv preprint
+     Conference on Human Factors in Computing Systems, 2019, pp. 1–13.
+                                                                                      arXiv:1710.10903, 2017.
+[14] H. Zhang, S. Sun, Y. Lin, R. Wang, and J. Bian, “AnalogXpert:
+                                                                                 [43] JaidedAI, “EasyOCR: Ready-to-use OCR with 80+ Languages Sup-
+     Automating Analog Topology Synthesis by Incorporating Circuit Design
+                                                                                      ported,” https://github.com/JaidedAI/EasyOCR, 2020.
+     Expertise into Large Language Models,” in ISEDA. IEEE, pp. 772–777,
+                                                                                 [44] R. Bohara and V. Krishnamoorthy, “Deep Learning-Based Framework
+     2025.
+                                                                                      for Power Converter Circuit Identification and Analysis,” IEEE Trans.
+[15] J. Gao, W. Cao, J. Yang, and X. Zhang, “AnalogGenie: A Generative                Industrial Electronics, 2022.
+     Engine for Automatic Discovery of Analog Circuit Topologies,” in The        [45] T. Nakura, “Spice Simulation,” in Essential Knowledge for Transistor-
+     Thirteenth International Conference on Learning Representations, 2025.           Level LSI Circuit Design. Springer, 2016, pp. 19–47.
+[16] M. Fayazi et al., “FASCINET: A Fully Automated Single-Board Com-            [46] J. Achiam et al., “GPT-4 Technical Report,” arXiv preprint
+     puter Generator Using Neural Networks,” IEEE TCAD, vol. 41, no. 12,              arXiv:2303.08774, 2023.
+     pp. 5435–5448, 2022.                                                        [47] P. R. Gray, P. J. Hurst, S. H. Lewis, and R. G. Meyer, Analysis and
+[17] Z. Colter et al., “Tablext: A combined neural network and heuristic              Design of Analog Integrated Circuits. John Wiley & Sons, 2009.
+     based table extractor,” Array, vol. 15, p. 100220, 2022.                    [48] P. Nenzi and H. Vogt, “Ngspice User’s Manual Version 23,” 2011.
+[18] Z. Tao et al., “AMSNet: Netlist Dataset for AMS Circuits,” arXiv            [49] M. Bertalmio, G. Sapiro, V. Caselles, and C. Ballester, “Image In-
+     preprint arXiv:2405.09045, 2024.                                                 painting,” in Proceedings of the 27th annual conference on Computer
+[19] K. Kunal et al., “GANA: Graph Convolutional Network Based Auto-                  graphics and interactive techniques, pp. 417–424, 2000.
+     mated Netlist Annotation for Analog Circuits,” in DATE, 2020, pp. 55–       [50] M. Gao et al., “Circuit Diagram Retrieval Based on Hierarchical Circuit
+     60.                                                                              Graph Representation,” arXiv preprint arXiv:2503.11658, 2024.
+[20] R. R. Rachala and M. R. Panicker, “Hand-Drawn Electrical Circuit            [51] Z. Huang et al., “Context Attention Network for skeleton Extraction,”
+     Recognition using Object Detection and Node Recognition,” SN Com-                in Proceedings of the IEEE/CVF Conference on Computer Vision and
+     puter Science, vol. 3, p. 244, 2022.                                             Pattern Recognition Workshops (CVPRW), 2022.
+[21] M. Moetesum et al., “Segmentation and Recognition of Electronic             [52] C. Shorten and T. M. Khoshgoftaar, “A Survey on Image Data Aug-
+     Components in Hand-Drawn Circuit Diagrams,” in EAI Endorsed Trans-               mentation for Deep Learning,” Journal of Big Data, vol. 6, pp. 1–48,
+     actions on Scalable Information Systems, vol. 5, 2018.                           2019.
+[22] J. Kelly and M. Cole, “Digitizing images of electrical-circuit schemat-     [53] R. Khanam and M. Hussain, “YOLOv11: An Overview of the Key
+     ics,” in Proc. ACM Symposium on Document Engineering, 2023.                      Architectural Enhancements,” arXiv preprint arXiv:2410.17725, 2024.
+[23] H. B. Gurbuz, M. Gul, I. Savidis, and B. Aksanli, “Img2sim-v2: A CAD        [54] A. Hagberg, P. J. Swart, and D. A. Schult, “Exploring network structure,
+     Tool for User-Independent Simulation of Circuits in Image Format,” in            dynamics, and function using NetworkX,” in SciPy2008, pp. 11–15,
+     SMACD, 2023, pp. 1–4.                                                            2007.
+[24] M. Uzair et al., “ElectroNet: An Enhanced Model for Small-Scale Object      [55] B. Jiao, Y. Wang, P. Wang, H. Wang, and H. Yue, “RS-YOLO: An
+     Detection in Electrical Schematic Diagrams,” in Springer LNCS, 2024.             efficient object detection algorithm for road scenes,” Digital Signal
+[25] J. Redmon, S. Divvala, R. Girshick, and A. Farhadi, “You Only Look               Processing, vol. 157, p. 104889, 2025.
+     Once: Unified, Real-Time Object Detection,” in Proc. CVPR, 2016, pp.        [56] H. W. Kuhn, “The Hungarian method for the assignment problem,”
+     779–788.                                                                         Naval Research Logistics Quarterly, vol. 2, no. 1-2, pp. 83–97, 1955.
+[26] G. Jocher et al. “Ultralytics/yolov5: v3. 0,”, in Zenodo 2020.
+[27] H. Bhanbhro, Y. K. Hooi, W. Kusakunniran, and Z. H. Amur, “A Symbol
+     Recognition System for Single-Line Diagrams Developed Using a Deep-
+     Learning Approach,” Applied Sciences, vol. 13, no. 15, p. 8816, 2023.
+IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS                                                                        10
+
+
+
+                   Saoud Aldowaish is a Research Assistant at the                                   Rishen Cao was born in Guangzhou, China, in 1998.
+                   University of Utah, specializing in machine learn-                               In 2025, he received his B.Sc. in Computer Science
+                   ing, computer vision, and AI-driven automation. He                               from the University of Utah, Salt Lake City, UT,
+                   holds a bachelor’s degree in Computer Engineer-                                  USA. His academic interests include Android de-
+                   ing from the University of Utah, where he built a                                velopment and cybersecurity. He is passionate about
+                   strong foundation in software development, machine                               exploring innovative solutions to complex problems
+                   learning, and data analysis. His current research                                and hopes to contribute to the fields of software
+                   focuses on developing a machine-learning model                                   development and cybersecurity in the future.
+                   for circuit component identification and automating
+                   netlist generation.
+
+
+
+
+                   Yashwanth Karumanchi was born in Hyderabad,
+                   India. He received his Bachelor of Technology de-
+                   gree in Computer Science and Engineering with
+                   a minor in Cyber Security from CVR College of
+                   Engineering, Hyderabad, in 2024. He is currently
+                   pursuing his Master of Science in Computer Science
+                   at the University of Utah, Salt Lake City, UT,
+                   USA. His research and development interests span
+                   Artificial Intelligence (AI), Machine Learning (ML),
+                   and Data-Centric System Design.
+
+
+
+
+                   Kai-Chen Chiang is currently a Master’s student
+                   at the University of Michigan pursuing Electrical
+                   and Computer Engineering. He received his B.Sc.
+                   in Computer Science from the University of Utah in
+                   2025. His academic focus lies in machine learning
+                   and software engineering, with a particular interest
+                   in applying these technologies to real-world chal-                              Morteza Fayazi was born in Tehran, Iran, in 1994.
+                   lenges such as autonomous systems and networked                                 He received the B.Sc. major degree in Electrical
+                   devices.                                                                        Engineering from Sharif University of Technology
+                                                                                                   (SUT), Tehran, Iran, in 2017. He also received the
+                                                                                                   M.S. and Ph.D. degrees in Electrical Engineering
+                                                                                                   and Computer Science from University of Michigan,
+                                                                                                   Ann Arbor, in 2020 and 2024, respectively. He is
+                                                                                                   currently an Assistant Professor at the University of
+                                                                                                   Utah, Salt Lake City, UT, USA. His research inter-
+                                                                                                   ests include Electronic Design Automation (EDA)
+                   Mohammed Ayman Habib was born in Bengaluru,                                     and Artificial Intelligence (AI). He has designed and
+                   India. He received the B.E degree major in Electrical   developed multiple AI-based tools for analog, RF, and System-on-Chip circuit
+                   and Electronics Engineering from Ramaiah Institute      design automation.
+                   of Technology (RIT), Bengaluru, in 2021, and the
+                   M.S. degree in Electrical and Computer Engineering
+                   from the University of Utah, Salt Lake City, UT,
+                   USA, in 2025, where he is currently pursuing the
+                   Ph.D. degree. His research interests include circuit
+                   design automation and machine learning.
+
+
+
+
+                   Finn Murphy is an undergraduate student at the
+                   University of Colorado Boulder. He is currently
+                   studying electrical engineering and also has an in-
+                   terest in computer science and physics.
+

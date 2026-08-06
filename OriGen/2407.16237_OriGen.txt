@@ -1,0 +1,588 @@
+                                            OriGen: Enhancing RTL Code Generation with Code-to-Code
+                                                        Augmentation and Self-Reflection
+                                                                   Fan Cui                           Chenyang Yin                                   Kexing Zhou
+                                                       Peking University                            Peking University                             Peking University
+                                                     pku_cf@stu.pku.edu.cn                         ycy@stu.pku.edu.cn                          zhoukexing@pku.edu.cn
+
+                                                             Youwei Xiao                             Guangyu Sun                                      Qiang Xu
+                                                           Peking University                        Peking University                  The Chinese University of Hong Kong
+                                                          shallwe@pku.edu.cn                        gsun@pku.edu.cn                           qxu@cse.cuhk.edu.hk
+arXiv:2407.16237v2 [cs.AR] 2 Sep 2024
+
+
+
+
+                                                             Qipeng Guo                               Demin Song                                      Dahua Lin
+                                                     Shanghai AI Laboratory                      Shanghai AI Laboratory                        Shanghai AI Laboratory
+                                                     qpguo16@fudan.edu.cn                        songdemin@pjlab.org.cn                         lindahua@pjlab.org.cn
+
+                                                                                Xingcheng Zhang                           Yun (Eric) Liang∗
+                                                                                Shanghai AI Laboratory                     Peking University
+                                                                             zhangxingcheng@pjlab.org.cn                 ericlyun@pku.edu.cn
+
+                                        ABSTRACT                                                                  coding productivity. Moreover, LLMs have demonstrated impressive
+                                        Recent studies have demonstrated the significant potential of Large       capabilities in hardware code generation, particularly for Register
+                                        Language Models (LLMs) in generating Register Transfer Level              Transfer Level (RTL) code. The generation of RTL code from natural
+                                        (RTL) code, with notable advancements showcased by commercial             language instructions presents an innovative approach to enhance
+                                        models such as GPT-4 and Claude3-Opus. However, these propri-             hardware development productivity. This method has the potential
+                                        etary LLMs often raise concerns regarding privacy and security.           to revolutionize existing Hardware Description Language (HDL)
+                                        While open-source LLMs offer solutions to these concerns, they            coding workflows by alleviating the burdensome task of HDL cod-
+                                        typically underperform commercial models in RTL code generation           ing for designers. Similar to High-Level Synthesis (HLS), LLMs can
+                                        tasks, primarily due to the scarcity of high-quality open-source RTL      streamline the design process by enabling code generation from
+                                        datasets. To address this challenge, we introduce OriGen, a fully         high-level specifications, thus simplifying complex hardware design
+                                        open-source framework that incorporates self-reflection capabili-         tasks [5, 8].
+                                        ties and a novel dataset augmentation methodology for generating             While commercial LLMs have demonstrated proficiency in gen-
+                                        high-quality, large-scale RTL code. Our approach employs a code-to-       erating RTL code, they often raise concerns regarding privacy and
+                                        code augmentation technique to enhance the quality of open-source         security. These issues are particularly critical in the domain of
+                                        RTL code datasets. Furthermore, OriGen can rectify syntactic errors       hardware design, as RTL code frequently contains valuable intel-
+                                        through a self-reflection process that leverages compiler feedback.       lectual property. Furthermore, the closed-source nature of these
+                                           Experimental results demonstrate that OriGen significantly out-        LLMs restricts researchers from conducting in-depth analyses and
+                                        performs other open-source alternatives in RTL code generation.           customizations, impeding further fine-tuning of the models in spe-
+                                        It surpasses the previous best-performing open-source LLM by              cific domains, such as hardware design. In contrast, open-source
+                                        12.8% and even exceeds GPT-4 Turbo in the pass@1 metric on                models provide enhanced privacy and security while facilitating
+                                        the VerilogEval-Human benchmark. Moreover, OriGen exhibits                further improvement and customization. Open-source models, such
+                                        superior capabilities in self-reflection and error correction, out-       as StarCoder2 [22], DeepSeek-Coder [12], and CodeQwen-V1.5 [3],
+                                        performing GPT-4 by 19.9% on a benchmark designed to evaluate             have demonstrated promising results in code generation for preva-
+                                        self-reflection capabilities.                                             lent programming languages like Python and C/C++. However,
+                                           OriGen is open source at GitHub(https://github.com/pku-liang/OriGen)   their performance in RTL code generation still falls behind GPT-3.5.
+                                                                                                                  This performance gap underscores the pressing need to develop a
+                                        1    INTRODUCTION                                                         specialized open-source LLM tailored for RTL code generation.
+                                                                                                                     Nonetheless, there is a notable scarcity of high-quality, large-
+                                        Recent advancements in large language models (LLMs) have demon-
+                                                                                                                  scale RTL code datasets compared to those available for other pop-
+                                        strated exceptional capabilities in natural language comprehension
+                                                                                                                  ular programming languages. This shortage poses a significant
+                                        and generation [18]. Studies have shown that LLMs exhibit consid-
+                                                                                                                  challenge in achieving satisfactory results for RTL generation tasks.
+                                        erable proficiency in code generation tasks [28]. Commercial LLMs,
+                                                                                                                  To address this issue, several studies have focused on collecting
+                                        such as GPT-4 [1] and Claude3-Opus [2], have showcased their
+                                                                                                                  open-source code snippets [10, 26, 29, 30]. However, these open-
+                                        ability to generate high-quality software code for common pro-
+                                                                                                                  source datasets may include low-quality code that can impair model
+                                        gramming languages like C++ and Python, significantly enhancing
+                                                                                                                  performance [20]. Alternative approaches have been developed to
+                                        ∗ Corresponding   author
+synthesize RTL code using LLMs [6, 20, 21]. VerilogEval [20] gener-            commercial LLMs, enabling more reliable and accurate RTL code
+ates datasets by adding descriptions to open-source Verilog code but           generation.
+suffers from overall low quality. RTLCoder [21] selects hardware-                 Our contributions are summarized as follows:
+related keywords as seeds to generate natural language instructions,                • We introduce OriGen, which significantly outperforms other
+which are then converted into corresponding RTL code using GPT-                        alternatives designed for RTL code generation and achieves
+3.5. While this dataset meets quality standards, its scale is limited                  performance comparable to the latest version of GPT-4 Turbo.
+due to the restriction of generated data to selected keywords.                         OriGen is open source at https://github.com/pku-liang/OriGen.
+   Self-reflection is another critical factor in RTL code generation.               • We propose a novel code-to-code augmentation methodology
+In this context, self-reflection refers to the model’s ability to assess               for generating high-quality, large-scale RTL code datasets,
+its generated code based on feedback from hardware compilers                           enhancing the model’s training data.
+and simulators. This process involves identifying error causes and                  • We introduce a self-reflection mechanism that enables OriGen
+refining results accordingly, mirroring the hardware design process                    to autonomously fix syntactic errors by leveraging compiler
+where RTL code undergoes rigorous evaluation to ensure correct-                        feedback, improving its code generation accuracy. Further-
+ness and adherence to design specifications.                                           more, we construct a dataset to improve the model’s self-
+   Existing open-source LLMs primarily focus on code generation,                       reflection capability based on compiler error messages and
+often neglecting the interactive process of compilation and sim-                       develop a benchmark to evaluate this capability.
+ulation integral to hardware design methodologies. To address                     Experimental results demonstrate that OriGen significantly out-
+these limitations, several studies have integrated self-reflection             performs other open-source alternatives in RTL code generation [19–
+methodologies into their frameworks [31, 32, 34]. However, both                21, 24, 26]. It surpasses the previous best-performing open-source
+RTLFixer [32] and AutoChip [31] rely on commercial LLMs for                    LLM by 12.8% and even exceeds GPT-4 Turbo in the pass@1 met-
+self-reflection, raising potential privacy and security concerns as            ric on the VerilogEval-Human benchmark. Furthermore, OriGen
+previously discussed. Open-source LLMs generally exhibit weaker                exhibits superior capabilities in self-reflection and error correc-
+self-reflection capabilities compared to their commercial counter-             tion, outperforming GPT-4 by 19.9% on the benchmark designed to
+parts, primarily due to limited training data. Consequently, there is          evaluate self-reflection capabilities.
+a pressing need to develop methodologies for constructing datasets
+specifically designed to enhance the self-reflection abilities of open-        2 BACKGROUND AND RELATED WORK
+source LLMs in the context of RTL code generation.
+   In this paper, we introduce OriGen, a fully open-source frame-              2.1 LLMs for Verilog Generation
+work for RTL generation featuring self-reflection capabilities and a           Large Language Models (LLMs) have emerged as powerful tools for
+dataset augmentation methodology. We propose a novel code-to-                  code generation across various programming languages. Trained on
+code augmentation technique to improve the quality of open-source              vast amounts of code and natural language data, these models can
+RTL code datasets, which are typically large-scale but of limited              learn the statistical patterns and relationships within the training
+quality due to the lack of rigorous review and validation processes.           data, enabling them to generate code that adheres to the syntax and
+   Our approach involves extracting high-level code descriptions               style of the target programming language. Recently, researchers in
+from open-source RTL code and refining the code based on these                 the field of hardware design have shown a growing interest in lever-
+descriptions using the Claude3-Haiku model as a teacher. Commer-               aging LLMs for generating RTL code. RTL is a crucial abstraction
+cial LLMs, trained on vast amounts of high-quality data, possess               level in hardware design, describing the flow of data and control
+strong programming language understanding and generation capa-                 signals between registers and combinational logic. By fine-tuning
+bilities. By leveraging these models as teachers, we can distill their         LLMs on RTL code datasets, models are capable of generating RTL
+knowledge to refine open-source RTL code, potentially achieving                code, potentially accelerating the hardware design process.
+performance superior to the teacher model through rigorous review                 Among the pioneering endeavors, DAVE [25] represents an ini-
+and validation.                                                                tial exploration into the generation of Verilog code from natural
+   TTo evaluate the LLM’s self-reflection capability in RTL code,              language instructions through the fine-tuning of the GPT-2 model.
+we construct a benchmark named VerilogFixEval, comprising 221                  Subsequently, recognizing the notable scarcity of large-scale Verilog
+cases of failed compilation from VerilogEval [20]. OriGen can cor-             datasets relative to more common programming languages, Veri-
+rect syntactic errors by leveraging a self-reflection process based            gen [30] collects a comprehensive Verilog dataset from GitHub’s
+on compiler feedback. When generated code fails to pass compiler               open-source repositories and various textbooks. However, the per-
+verification, the model initiates the self-reflection process, accept-         formance of its optimally fine-tuned model based on the collected
+ing erroneous code and compiler error messages to fix the RTL                  dataset remains inferior to that of GPT-3.5 [23]. This can be attrib-
+code, thereby enhancing its correctness and reliability. The model’s           uted to the varying quality of the collected open-source code, which
+self-reflection ability is facilitated by a carefully constructed error-       was not filtered and processed.
+correction dataset, which includes natural language instructions,                 Both VerilogEval [20] and RTLCoder [21] acknowledge the im-
+erroneous code, compiler error messages, and corrected code gen-               portance of dataset quality and adopt data synthesis methods using
+erated by Claude3-Haiku. This dataset serves as a valuable resource            commercial LLMs to improve the quality of their datasets. Ver-
+to bridge the gap in self-reflection capabilities between open-source          ilogEval proposes a synthesis approach that utilizes GPT-3.5 to
+and commercial closed-source LLMs. By training on this dataset,                add descriptions to each code snippet in the filtered VeriGen [30]
+OriGen can acquire self-reflection abilities comparable to those of            dataset. This approach allows the LLM trained on the dataset to
+                                                                           2
+learn not only the syntax of Verilog but also to understand the cor-        2.3    Hardware Programming
+respondence between Verilog code and natural language. However,             Hardware description languages such as Verilog or VHDL are
+due to the average low quality of code in the dataset, VerilogEval          widely adopted for hardware design. As an alternative, High-Level
+still falls short of GPT-3.5. RTLCoder [21] adopts a synthesis ap-          Synthesis (HLS) is a crucial methodology for hardware design [5, 8].
+proach to generate RTL code from natural language specifications.           Similar to using LLMs to write RTL code, HLS enables designers
+It selects one or two keywords from a prepared list of hundreds of          to specify hardware functionality using high-level programming
+digital design keywords and utilizes GPT-3.5 to generate RTL de-            languages like C, C++, or SystemC. These specifications are then
+sign instructions based on these keywords. Subsequently, GPT-3.5            automatically converted into hardware description languages such
+is employed again to generate corresponding RTL code from these             as VHDL or Verilog [9, 13, 17, 35]. By automating this translation
+instructions. However, the reliance on a limited set of keywords            process, HLS simplifies the design of complex hardware systems,
+poses challenges for further expansion of this dataset, as it may           reducing the time and effort required to manage intricate low-level
+restrict the scale and complexity of the generated RTL code. In con-        coding, allowing designers to optimize and manipulate designs
+trast, the dataset synthesized through the code-to-code approach            more efficiently [15, 16].
+is not only of high quality, as demonstrated by the experimental
+results, but also extensive in scale, encompassing a diverse range          3     METHODOLOGY
+of RTL code samples. This approach overcomes the limitations of
+                                                                            In this section, we provide comprehensive details of OriGen, a
+above synthesis and enables the generation of a comprehensive
+                                                                            powerful framework designed to enhance Verilog code generation.
+and high-quality dataset that can effectively support the training
+of LLMs for RTL code generation.
+                                                                            3.1    Overview
+    Apart from fine-tuning open-source models, several studies [4, 7,
+11] investigate the direct application of commercial LLMs for gener-        The overview of the code-to-code augmentation methodology and
+ating RTL code. Chip-Chat [4] employs a conversational interface            OriGen’s generation and self-reflection framework are illustrated
+to design and verify an 8-bit accumulator-based microprocessor              in Figure 1 and Figure 2, respectively.
+using GPT-4. ChipGPT [7] introduces a four-stage, zero-code logic               As shown in Figure 1, our code-to-code augmentation process
+design framework that leverages GPT model.                                  generates two datasets: an enhanced code dataset and an error-
+                                                                            correction dataset. The enhanced code dataset pairs Verilog code
+                                                                            with natural language descriptions, enabling the LLM to learn the
+                                                                            mapping between RTL code structures and high-level semantics.
+2.2    Reflection for Verilog Generation                                    The error-correction dataset contains instructions erroneous, code
+Existing open-source LLMs designed for RTL code generation have             samples and their corrections, enhancing the LLM’s self-reflection
+mainly focused on the generative aspects, neglecting the crucial            and error correction capabilities. This dataset is constructed by
+stages of verification and reflection that are integral to hardware         collecting cases where generated code fails evaluation, documenting
+design methodologies. The effectiveness of self-reflection and recep-       the specific errors and compiler feedback, and providing corrected
+tivity to feedback in addressing real-world issues has been demon-          versions of the code that pass evaluation.
+strated by SWE-agent [36], which successfully resolved problems                 As shown in Figure 2, in the code generation and error correction
+in GitHub’s repositories. This highlights the potential benefits of         stage, OriGen comprises a base LLM and two trained LoRA (Low-
+incorporating self-reflection mechanisms into LLMs for RTL code             Rank Adaptation) models: Gen LoRA and Fix LoRA. Gen LoRA is
+generation, as it could enable the models to learn from feedback and        fine-tuned on the enhanced code dataset. It specializes in interpret-
+iteratively improve the generated code, aligning with the rigorous          ing natural language instructions and generating initial RTL code
+verification processes inherent to hardware design methodologies.           that aligns with the given specifications. Fix LoRA is fine-tuned
+   Recognizing the limitations of previous research on LLMs for             on the error-correction dataset and built upon Gen LoRA. This
+RTL generation, AutoChip [31] and RTLFixer [32] decide to intro-            component is responsible for analyzing compiler error messages,
+duce self-reflection into the their framework. Specifically, RTLFixer       identifying code issues, and proposing and implementing fixes to
+employs GPT to generate and reflect on code. It includes approxi-           erroneous code. OriGen receives natural language instructions as
+mately 80 erroneous code snippets that fail compilation, each paired        input, and Gen LoRA generates initial RTL code based on these
+with guidance. During the RTL code generation process, if the gen-          instructions. The generated code then undergoes compilation evalu-
+erated code fails to compile, RTLFixer [32] queries the database            ation. If the code fails to pass evaluation, it enters the self-reflection
+for the guidance most closely related to the error. However, the            loop. In this loop, Fix LoRA analyzes the error messages and the
+generalization of this approach is limited due to the constraint of         erroneous code, proposes and implements fixes to address the iden-
+the guidance database. In contrast, AutoChip [31] directly provides         tified issues, and the corrected code is re-evaluated. This process
+the compiler error messages to the LLM rather than querying a               iterates until the code passes verification or reaches a predefined
+database for guidance.                                                      maximum number of iterations.
+   The error-correction dataset we construct is diverse and not
+limited to a specific set of errors, enabling the models to handle a        3.2    Code-to-Code Augmentation
+broader range of issues encountered during RTL code generation.             The code-to-code augmentation process aims to transfer advanced
+By leveraging this dataset, the models can improve their capabilities       RTL code generation and correction capabilities from commercial
+of self-reflection.                                                         LLMs to our model. To achieve this, a carefully filtered collection
+                                                                        3
+                                                   Figure 1: Code-to-Code Augmentation
+                                                                     .
+
+                                                                               Description Prompt
+                                                                               Explain the high-level functionality of the Verilog module.
+                                                                               Task:
+                                                                               Please analyze it and provide a detailed description of its signals and
+                                                                               functionality. Use as many high-level concepts that are directly applica-
+                                                                               ble to describe the code, but do not include extraneous details that aren’t
+                                                                               immediately applicable. Speak concisely as if this was a specification for
+                                                                               a circuit designer to implement. You should only reply with descriptive
+                                                                               natural language and not use any code.
+                                                                               Code:
+                                                                               {code}
+           Figure 2: Generation and Self-Reflection                            Response:
+                              .                                                     Figure 3: Prompt for Generating Code Descriptions
+of comprehensive open-source RTL code samples is utilized as a
+foundation.                                                                   as foundational elements for the error-correction dataset, as de-
+   To extract a valuable dataset from open-source RTL code sam-               tailed in Section 3.3. This iterative process is repeated until the code
+ples [22, 30], a rigorous filtration process is applied. Initially, due       successfully compiles or until the maximum number of iterations
+to the constraints imposed by the model’s context window and the              is reached, further enhancing the dataset’s quality. This method
+challenges associated with incomplete descriptions for longer code            facilitates the transfer of knowledge from the commercial LLM to
+snippets, samples exceeding 300 lines or 1536 tokens are excluded.            our model, thereby improving its capability to generate and correct
+   Additionally, samples with an average of more than 30 tokens (ap-          RTL code efficiently.
+proximately 90 characters) per line are considered non-standard and              A full example of dataset augmentation is shown in Figure 4.
+are consequently eliminated, ensuring that only concise and stan-             The process begins with the original Verilog code, which defines
+dard code samples are retained. Subsequently, to ensure the mean-             a flip-flop with synchronous reset and enable signals. The LLM
+ingfulness and substantive content of the code snippets, a keyword-           generates a description of this code, explaining its functionality,
+based filtration approach is employed. Each sample must contain               specifically, how the output q is updated based on the input d on
+both the module and endmodule keywords, alongside at least one                the rising edge of the clock clk. Using this description, the LLM
+occurrence of keywords related to procedural blocks, always (in-              produces an augmented version of the code. The enhanced code
+clusive of variants like always_comb, always_ff, always_latch,                presents a more concise and organized structure while maintaining
+etc.) or assign. This criterion guarantees that the selected snip-            the same functionality, demonstrating the effectiveness of LLMs in
+pets are representative of functional and logical hardware designs.           improving RTL code readability and quality.
+Lastly, all comments within the code samples are removed. This
+step is crucial to prevent extraneous information from influencing            3.3    Error-Correction Dataset
+the generation of accurate and relevant specifications.
+                                                                              Although OriGen, after being trained on the enhanced code dataset,
+   Following the implementation of the aforementioned filtering
+                                                                              demonstrates performance comparable to that of advanced closed-
+procedures, the closed-source LLM Claude3-Haiku is utilized to
+                                                                              source LLMs in RTL code generation, it exhibits weaker self-reflection
+generate detailed descriptions corresponding to the filtered code
+                                                                              capabilities compared to commercial LLMs like other open-source
+samples as shown in Figure 1. The prompt we use is illustrated
+                                                                              LLMs.
+in Figure 3. These descriptions are then used to regenerate RTL
+                                                                                 Given the observed performance gap, we decide to adopt the
+code, which replaces the original code in the dataset. During the
+                                                                              similar method to acquire stronger error understanding and self-
+regeneration process, the generated code undergoes verification
+                                                                              reflection capabilities from the closed-source LLM. During the code-
+using the open-source compiler Icarus Verilog (Iverilog) [33]. If
+                                                                              to-code augmentation process discussed in Section 3.2, the closed-
+the code fails to compile, the compiler’s error messages and the
+                                                                              source LLM generates a diverse set of RTL code samples that fail to
+erroneous code are fed back into the LLM for regeneration to fix er-
+                                                                              compile, which are then corrected in the subsequent self-reflection
+ror. Simultaneously, code samples that fail compilation are utilized
+                                                                              process. We select the code samples generated in the code-to-code
+                                                                          4
+                                                                             for maintaining compatibility with other modules in the design.
+                                                                             Meanwhile, by restricting modifications to the module’s body, we
+                                                                             encourage the model to focus on identifying and correcting errors
+                                                                             within the actual implementation logic. Through the above methods,
+                                                                             we have successfully constructed a high-quality error-correction
+                                                                             dataset. This dataset comprises a large number of effectively re-
+                                                                             paired code samples generated by the Claude3-Haiku model, along
+                                                                             with the corresponding erroneous code, compiler error messages,
+                                                                             and natural language instructions.
+                                                                                To verify the effectiveness of the error-correction dataset, we
+                                                                             introduce a benchmark named VerilogFixEval detailed in Section
+                                                                             3.5.
+
+                                                                             3.4    Code Generation and Fix
+                                                                             As shown in Figure 2, in the code generation and error correction
+                                                                             stage, OriGen comprises a base LLM and two trained LoRA mod-
+                                                                             els: Gen LoRA and Fix LoRA. Following training on the enhanced
+                                                                             code dataset, Gen LoRA has developed robust RTL code generation
+                                                                             capabilities but exhibits limitations in self-reflection. To further
+                                                                             enhance its capabilities of self-reflection, Gen LoRA is trained on
+                                                                             the error-correction dataset, resulting in Fix LoRA.
+                                                                                 The reason for employing two LoRA models, Gen LoRA and
+                                                                             Fix LoRA, instead of a single LoRA is based on experimental re-
+                                                                             sults, which indicate that Fix LoRA, trained on the error-correction
+                                                                             dataset, exhibits inferior performance compared to Gen LoRA in the
+                                                                             RTL code generation task. This performance degradation may be
+                                                                             attributed to the fact that training on a dataset containing syntactic
+                                                                             errors could potentially weaken the model’s overall performance.
+                                                                             Therefore, OriGen adopts a two-LoRA approach, where Gen LoRA
+                                                                             is responsible for generating the initial code, and Fix LoRA is tasked
+                                                                             with rectifying syntactic errors, utilizing its specialized training on
+                                                                             the error-correction dataset.
+                                                                                 Figure 5 illustrates an example of self-reflection in the correction
+                                                                             of Verilog code for a module that implements the functionality of
+                                                                             the 7458 chip, which includes four AND gates and two OR gates.
+                                                                                 The generated code initially contains a syntactic error: wires
+                                                                             ‘ply_temp‘ and ‘p2y_temp‘ are incorrectly assigned values within
+         Figure 4: Example of Dataset Augmentation                           always blocks. In Verilog, wires cannot be assigned values on the
+                                                                             left-hand side of procedural assignments. This error is corrected by
+augmentation process that pass compilation after correction, along           using the Fix LoRA model during the self-reflection process, follow-
+with the corresponding samples that failed to compile. The natural           ing the instruction template shown in Figure 6. The regenerated
+language instruction descriptions and compiler error messages as-            code resolves these issues by employing continuous assignments for
+sociated with these samples serve as data sources for constructing           ‘p1y‘ and ‘p2y‘, rather than assigning values within always blocks,
+the error-correction dataset. This approach enables the model to be          ensuring that the logic accurately reflects the intended operations.
+exposed to a broad spectrum of error types and their respective cor-
+rections, facilitating the development of robust error understanding         3.5    VerilogFixEval Benchmark
+and self-reflection capabilities.                                            To assess the ability of various models to reflect and improve from
+   Subsequently, these data samples are further filtered to ensure           Verilog compiler error messages, we developed the VerilogFixEval
+that the model learns to make modifications within the module’s              benchmark. This benchmark consists of code samples that failed
+body rather than altering the module’s declaration. Specifically,            compilation verification, along with corresponding natural lan-
+during the self-reflection and rectification process, the model may          guage instructions and compiler error messages. The faulty RTL
+attempt to correct syntactic errors by modifying declarations to             code samples were selected from those generated by LLMs that
+pass the compilation check though it is explicitly prohibited in the         performed similarly to GPT-3.5 on the VerilogEval benchmark. This
+prompt. To prevent this, we remove samples with such modifica-               selection method was adopted because OriGen achieves a relatively
+tions from the collected code. This approach is crucial for preserving       high compilation pass rate. By including code samples from poorly
+the overall structure and interface of the module, which is essential        performing LLMs, the benchmark ensures a diversity of errors while
+                                                                         5
+                                                                            Debug Instruction
+                                                                            As a professional Verilog designer, you are tasked with debugging
+                                                                            a Verilog module that has some errors. Below are the details of the
+                                                                            assignment, the original Verilog code with some syntax and functional
+                                                                            errors, and the error messages produced by the compiler. Please review
+                                                                            this information and provide a corrected version of the code.
+                                                                            Task:
+                                                                            {task}
+                                                                            Original Code:
+                                                                            {original_code}
+                                                                            Compiler Error Message:
+                                                                            {error}
+
+                                                                                       Figure 6: Debug Instruction Template
+
+                                                                           4 EVALUATION
+                                                                           4.1 Experimental Setting
+                                                                           For our pre-trained model, we selected the DeepSeek-Coder-7B-
+                                                                           Instruct model, as it exhibits the best performance in Verilog code
+                                                                           generation among all 7B models, to the best of our knowledge. It is
+                                                                           to ensure that our pre-trained model possesses strong capabilities in
+                                                                           the domain of Verilog code generation, providing a solid foundation
+                                                                           for further fine-tuning and evaluation.
+                                                                              To evaluate the performance of Verilog code generation, we se-
+                                                                           lected two representative benchmarks: VerilogEval [20] and RTLLM [23].
+                                                                           The former, VerilogEval, originated from approximately 150 Verilog
+                                                                           tasks on the HDLBits website, which were manually converted to
+                                                                           create VerilogEval-Human and generated by GPT-3.5 to produce
+                                                                           VerilogEval-Machine. The latter benchmark, RTLLM, consists of 29
+                                                                           Verilog tasks with more diverse levels of difficulty, closely aligned
+                                                                           with real-world design tasks. Both benchmarks employ the widely
+                                                                           adopted pass@k evaluation metric to assess the correctness of the
+                                                                           generated code’s functionality. In this metric, if any one of the k
+                                                                           samples passes the unit test, the problem is considered solved.
+
+                                                                                                                    "        𝑛−𝑐 
+                                                                                                                                     #
+                                                                                                                              𝑘
+                                                                                            𝑝𝑎𝑠𝑠@𝑘 :=        E          1−    𝑛                 (1)
+                                                                                                         𝑃𝑟𝑜𝑏𝑙𝑒𝑚𝑠             𝑘
+
+
+                                                                           where we generate 𝑛 ≥ 𝑘 samples for each instruction in which
+                                                                           𝑐 ≤ 𝑛 samples pass testing. We choose 𝑛 = 10 in experiments.
+                                                                              To assess the models’ capability for self-reflection, we utilized
+                                                                           the VerilogFixEval benchmark, as discussed in Section 3.5. This
+                                                                           benchmark employs the pass@1 metric to evaluate the syntactic
+                                                                           and functional accuracy of the rectified RTL code.
+             Figure 5: Example of Self-Reflection
+                                                                           4.2    Model Training
+minimizing potential bias in test results that could favor OriGen
+                                                                           We employ the LoRA (Low-Rank Adaptation) [14] method to train
+due to errors produced by OriGen itself.
+                                                                           the model’s capability in generating RTL code. This approach allows
+   During the evaluation process, the model will receive natural
+                                                                           for enhancing the model’s specific abilities in RTL code generation
+language instructions, faulty RTL code, and compiler error messages
+                                                                           while minimizing the impact on its other capabilities. For all the
+to correct the RTL code. The final evaluation metrics consist of two
+                                                                           training processes, we employ the float16 mixed precision method,
+components: syntactic correctness and functional correctness.
+                                                                           although the model is trained in bfloat16 precision. We use the
+                                                                           AdamW optimizer with parameters 𝛽 1 = 0.9 and 𝛽 2 = 0.999, along
+                                                                           with cosine learning rate decay for scheduling. The warm-up ratio
+                                                                           is set to 0.03, and the batch size is 8.
+                                                                       6
+                       Table 1: Comparison of functional correctness on VerilogEval [20] and RTLLM [23]
+                                                              VerilogEval-human(%)  VerilogEval-machine(%) RTLLM(%)
+         Source                            Name
+                                                             pass@1 pass@5 pass@10 pass@1 pass@5 pass@10 pass@5
+                         GPT-3.5 [1]                           35.6   48.8    52.6   49.4    72.7    77.6    44.8
+                         GPT-4 2023-06-13 [1]                  43.5   55.8    58.9   60.0    70.6    73.5    65.5
+                         GPT-4 Turbo 2024-04-09 [1]            54.2   68.5    72.4   58.6    71.9    76.2    65.5
+    Commercial LLM
+                         Claude3-Haiku [2]                     47.5   57.7    60.9   61.5    75.6    79.7    62.1
+                         Claude3-Sonnet [2]                    46.1   56.0    60.3   58.4    71.8    74.8    58.6
+                         Claude3-Opus [2]                     54.7    63.9    67.3   60.2    75.5    79.7    69.0
+                         CodeLlama-7B-Instruct [27]            18.2   22.7    24.3   43.1    47.1    47.7    34.5
+  Open Source Models CodeQwen1.5-7B-Chat [3]                   22.4   41.1    46.2   45.1    70.2    77.6    37.9
+                         DeepSeek-Coder-7B-Instruct-v1.5 [12] 31.7    42.8    46.8   55.7    73.9    77.6    37.9
+                         ChipNeMo [19]                         22.4    -       -     43.4     -       -       -
+                         VerilogEval [20]                      28.8   45.9    52.3   46.2    67.3    73.7     -
+ Verilog-Specific Models RTLCoder-DeepSeek [21]                41.6   50.1    53.4   61.2    76.5    81.8    48.3
+                         CodeGen-6B MEV-LLM [24]               42.9   48.0    54.4   57.3    61.5    66.4     -
+                         BetterV-CodeQwen [26]                 46.1   53.7    58.2   68.1    79.4    84.5     -
+                        OriGen (ours)                          54.4   60.1    64.2   74.1    82.4    85.7    65.5
+
+4.3    Functional Correctness
+Table 1 presents the results on the VerilogEval benchmark. To
+ensure fairness, we did not utilize the self-reflection feature for
+this comparison and generated code in a single attempt, like other
+models. The models compared include closed-source commercial
+LLMs such as GPT-3.5/GPT-4, Claude3-Haiku/Sonnet/Opus, general
+open-source code models [3, 12], and models customized for RTL
+code generation [19–21, 24, 26].
+    In the VerilogEval benchmark [20], OriGen achieves pass@1
+scores of 54.4% in the Human category and 74.1% in the Machine cat-
+egory, outperforming remarkably all other alternatives designed for
+RTL code generation. For instance, compared to the best-performing
+fully open-source RTLCoder [21], OriGen surpasses it by 12.8%
+on the Human benchmark. Additionally, compared to commer-                           Figure 7: Pass@1 Variation with Dataset Size
+cial closed-source models, OriGen demonstrates exceptional per-
+formance. It significantly outperforms GPT-4 (2023), which was              (representing the base model without fine-tuning) to approximately
+previously considered a key benchmark. Furthermore, it exceeds              180,000 samples (utilizing the entire fine-tuning dataset).
+the teacher model Claude3-Haiku, underscoring the effectiveness                The results demonstrate a clear positive correlation between
+of filtering and self-reflection in code augmentation.                      dataset size and model performance. Starting from a pass@1 score
+    Among the state-of-the-art models, OriGen outperforms Claude3-          of 31.7 for the base model, we observe a sharp initial increase to
+Haiku/Sonnet across all metrics and surpasses GPT-4 Turbo in the            43.2 with just 10k samples. This is followed by a more gradual but
+pass@1 metric while being only slightly inferior to Claude3-Opus            consistent improvement as the dataset size increases, eventually
+by less than 1% on the Human benchmark pass@1 metric. Moreover,             reaching a peak performance of 54.4 with the full dataset of 180k
+as shown in Table 1, it achieves the best performance on the Ma-            samples. Notably, the performance gains are not linear. The most
+chine benchmark, notably outperforming other models including               substantial improvements occur in the early stages of data addition,
+Claude3-Opus and GPT-4 Turbo. The performance gap between                   with diminishing returns as the dataset size approaches its maxi-
+Human and Machine categories primarily stems from descriptions              mum. This pattern underscores the critical role of data quantity and
+generated by GPT-3.5 for the Machine category. In contrast, OriGen          diversity in model performance for further improvements beyond
+is trained on a vast amount of synthesized data, enabling it to excel       a certain scale.
+with problems generated by LLMs.                                               To prevent our model from over-fitting on the VerilogEval bench-
+    We also conduct experiments to investigate the relationship             mark, another benchmark RTLLM [23] is also used to evaluate.
+between dataset size and model performance, as depicted in Fig-             Similar results are observed on RTLLM as shown in Table 1, where
+ure7. The performance is evaluated using the pass@1 metric on               OriGen significantly outperforms other models, achieving perfor-
+VerilogEval Human. We examined dataset sizes ranging from 0                 mance comparable to GPT-4 Turbo and Claude3-Opus.
+
+
+                                                                        7
+      Table 2: Comparison of Models on VerilogFixEval                      Table 4: Ablation Study of Error-Correction Dataset on Ver-
+                               Syntactic           Functional              ilogFixEval
+Model
+                             correctness(%)       correctness(%)                                      Syntactic                        Functional
+CodeQwen1.5-7B-Chat [3]           27.6                 10.4                Model
+                                                                                                    Correctness(%)                    Correctness(%)
+RTLCoder [21]                     46.6                 15.3
+                                                                           baseline                      53.8                              23.4
+DeepSeek-Coder-7B [12]            50.7                 19.0
+                                                                           baseline + error message      63.5                              25.6
+GPT-3.5 [1]                       40.7                 13.1
+GPT-4 Turbo 2024-04-09 [1]        69.2                 37.1                finetune                      82.7                              31.9
+Claude3-Haiku [2]                 48.9                 23.5                finetune + error message      89.1                              33.5
+Claude3-Opus [2]                  71.9                 39.8
+OriGen (Ours)                     89.1                 33.5                   For the ablation study of the error-correction dataset, the results
+                                                                           are presented in Table 4. We evaluate four scenarios, considering
+  Table 3: Ablation Study of Code-to-Code Augmentation                     the model’s performance before and after training on the error-
+ Benchmark                   Metric Baseline(%) Augment(%)                 correction dataset, as well as with and without the use of error
+                                                                           messages from the compiler. The former is denoted as "baseline"
+ VerilogEval-Human [20]      Pass@1    41.6        54.4
+                                                                           and "finetune," indicating whether the model is trained on the error-
+ VerilogEval-Machine [20]    Pass@1    62.5        74.1                    correction dataset, while the latter is represented by "error message."
+ RTLLM [23]                  Pass@5    41.4        65.5                       The results demonstrate that after training on the error-correction
+                                                                           dataset, the model significantly outperforms its pre-training per-
+   In summary, OriGen significantly outperforms all non-commercial         formance in both syntactic correctness and functional correctness.
+models across all metrics on both benchmarks and achieves com-             Additionally, the trained model exhibits a reduced reliance on error
+parable performance to the current state-of-the-art commercial             messages from the compiler.
+closed-source models.
+                                                                           5    CONCLUSION
+4.4     Capability of Self-Reflection                                      This paper introduces OriGen, an open-source framework for RTL
+                                                                           code generation. It proposes a novel code-to-code augmentation
+The evaluation metrics of VerilogFixEval consist of two components:
+                                                                           methodology to generate high-quality, large-scale RTL code datasets,
+syntactic correctness and functional correctness. Syntactic correct-
+                                                                           which enhances the model’s training data. The framework also
+ness assesses whether the generated rectified RTL code successfully
+                                                                           introduces a self-reflection mechanism that allows OriGen to au-
+compiles. Functional correctness further evaluates whether the
+                                                                           tonomously fix syntactic errors by leveraging compiler feedback,
+generated rectified RTL code passes simulation tests.
+                                                                           thereby improving its code generation accuracy. Furthermore, we
+   As illustrated in Table 2, experimental results on VerilogFixEval
+                                                                           construct a dataset to improve the model’s capability of self-reflection
+demonstrate that OriGen achieves the best performance in syntac-
+                                                                           based on compiler error messages and erroneous code and develop a
+tic error correction, surpassing GPT-4 Turbo by 19.9%. This indi-
+                                                                           benchmark to evaluate this capability. Experimental results demon-
+cates that after training on the code-correction dataset, the model
+                                                                           strate that OriGen remarkably outperforms other open-source al-
+acquires powerful self-reflection and code rectification capabili-
+                                                                           ternatives in RTL code generation, surpassing the previous best-
+ties. For functional correctness, OriGen significantly outperforms
+                                                                           performing LLM by 12.8% on the VerilogEval-Human benchmark
+RTLCoder by 18.2% and falls short of the best-performing model,
+                                                                           and is comparable with GPT-4 Turbo. Moreover, OriGen exhibits su-
+Claude3-Opus, by only 6.3%. This showcases OriGen’s ability to
+                                                                           perior capabilities in self-reflection and error rectification, surpass-
+consider the functional correctness of the generated code while
+                                                                           ing GPT-4 by 19.9% in syntactic correctness on the VerilogFixEval
+rectifying syntactic errors.
+                                                                           benchmark.
+
+4.5     Ablation Studies                                                   REFERENCES
+                                                                            [1] Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Floren-
+We perform two ablation experiments to investigate the efficacy of              cia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal
+the code-to-code augmentation method and to examine the model’s                 Anadkat, et al. 2023. Gpt-4 technical report. arXiv preprint arXiv:2303.08774
+self-reflection capability before and after training on the error-              (2023).
+                                                                            [2] Anthropic. 2024. Introducing the next generation of Claude. https://www.
+correction dataset. For the ablation study of the code-to-code data             anthropic.com/news/claude-3-family
+augmentation method, we compared the performance of models                  [3] Jinze Bai, Shuai Bai, Yunfei Chu, Zeyu Cui, Kai Dang, Xiaodong Deng, Yang Fan,
+trained on RTL code dataset before and after code-to-code aug-                  Wenbin Ge, Yu Han, Fei Huang, Binyuan Hui, Luo Ji, Mei Li, Junyang Lin, Runji
+                                                                                Lin, Dayiheng Liu, Gao Liu, Chengqiang Lu, Keming Lu, Jianxin Ma, Rui Men,
+mentation method. Table 3 demonstrates that across multiple                     Xingzhang Ren, Xuancheng Ren, Chuanqi Tan, Sinan Tan, Jianhong Tu, Peng
+evaluation metrics, the model trained on the dataset enhanced by                Wang, Shijie Wang, Wei Wang, Shengguang Wu, Benfeng Xu, Jin Xu, An Yang,
+                                                                                Hao Yang, Jian Yang, Shusheng Yang, Yang Yao, Bowen Yu, Hongyi Yuan, Zheng
+code-to-code augmentation significantly outperforms the model                   Yuan, Jianwei Zhang, Xingxuan Zhang, Yichang Zhang, Zhenru Zhang, Chang
+trained on the unaugmented dataset. This indicates that our model’s             Zhou, Jingren Zhou, Xiaohuan Zhou, and Tianhang Zhu. 2023. Qwen Technical
+outstanding performance is primarily attributed to the code-to-                 Report. arXiv preprint arXiv:2309.16609 (2023).
+                                                                            [4] Jason Blocklove, Siddharth Garg, Ramesh Karri, and Hammond Pearce. 2023.
+code augmentation methodology, as training on the unaugmented                   Chip-chat: Challenges and opportunities in conversational hardware design. In
+dataset does not yield substantial improvements.                                2023 ACM/IEEE 5th Workshop on Machine Learning for CAD (MLCAD). IEEE, 1–6.
+                                                                       8
+ [5] Andrew Canis, Jongsok Choi, Mark Aldham, Victor Zhang, Ahmed Kammoona,                         Qiu, Pengcheng Yin, Xiaoli Li, Fei Yuan, Lingpeng Kong, Xiang Li, and Zhiyong
+     Jason H Anderson, Stephen Brown, and Tomasz Czajkowski. 2011. LegUp: high-                     Wu. 2024. A Survey of Neural Code Intelligence: Paradigms, Advances and
+     level synthesis for FPGA-based processor/accelerator systems. In Proceedings of                Beyond. arXiv:2403.14734
+     the 19th ACM/SIGDA international symposium on Field programmable gate arrays.           [29]   Shailja Thakur, Baleegh Ahmad, Zhenxing Fan, Hammond Pearce, Benjamin Tan,
+     33–36.                                                                                         Ramesh Karri, Brendan Dolan-Gavitt, and Siddharth Garg. 2023. Benchmarking
+ [6] Kaiyan Chang, Kun Wang, Nan Yang, Ying Wang, Dantong Jin, Wenlong Zhu,                         large language models for automated verilog rtl code generation. In 2023 Design,
+     Zhirong Chen, Cangyuan Li, Hao Yan, Yunhao Zhou, et al. 2024. Data is all                      Automation & Test in Europe Conference & Exhibition (DATE). IEEE, 1–6.
+     you need: Finetuning LLMs for Chip Design via an Automated design-data                  [30]   Shailja Thakur, Baleegh Ahmad, Hammond Pearce, Benjamin Tan, Brendan Dolan-
+     augmentation framework. arXiv preprint arXiv:2403.11202 (2024).                                Gavitt, Ramesh Karri, and Siddharth Garg. 2023. Verigen: A large language model
+ [7] Kaiyan Chang, Ying Wang, Haimeng Ren, Mengdi Wang, Shengwen Liang, Yinhe                       for verilog code generation. ACM Transactions on Design Automation of Electronic
+     Han, Huawei Li, and Xiaowei Li. 2023. Chipgpt: How far are we from natural                     Systems (2023).
+     language hardware design. arXiv preprint arXiv:2305.14019 (2023).                       [31]   Shailja Thakur, Jason Blocklove, Hammond Pearce, Benjamin Tan, Siddharth
+ [8] Philippe Coussy, Daniel D Gajski, Michael Meredith, and Andres Takach. 2009.                   Garg, and Ramesh Karri. 2023. Autochip: Automating hdl generation using llm
+     An introduction to high-level synthesis. IEEE Design & Test of Computers 26, 4                 feedback. arXiv preprint arXiv:2311.04887 (2023).
+     (2009), 8–17.                                                                           [32]   YunDa Tsai, Mingjie Liu, and Haoxing Ren. 2023. Rtlfixer: Automatically fixing
+ [9] Steve Dai and Zhiru Zhang. 2019. Improving scalability of exact modulo schedul-                rtl syntax errors with large language models. arXiv preprint arXiv:2311.16543
+     ing with specialized conflict-driven learning. In Proceedings of the 56th Annual               (2023).
+     Design Automation Conference 2019. 1–6.                                                 [33]   Stephen Williams and Michael Baxter. 2002. Icarus verilog: open-source verilog
+[10] Enrique Dehaerne, Bappaditya Dey, Sandip Halder, and Stefan De Gendt. 2023.                    more than a year later. Linux Journal 2002, 99 (2002), 3.
+     A deep learning framework for verilog autocompletion towards design and                 [34]   Haoyuan Wu, Zhuolun He, Xinyun Zhang, Xufeng Yao, Su Zheng, Haisheng
+     verification automation. arXiv preprint arXiv:2304.13840 (2023).                               Zheng, and Bei Yu. 2024. Chateda: A large language model powered autonomous
+[11] Yonggan Fu, Yongan Zhang, Zhongzhi Yu, Sixu Li, Zhifan Ye, Chaojian Li, Cheng                  agent for eda. IEEE Transactions on Computer-Aided Design of Integrated Circuits
+     Wan, and Yingyan Celine Lin. 2023. Gpt4aigchip: Towards next-generation ai                     and Systems (2024).
+     accelerator design automation via large language models. In 2023 IEEE/ACM               [35]   Ruifan Xu, Youwei Xiao, Jin Luo, and Yun Liang. 2022. HECTOR: A multi-level
+     International Conference on Computer Aided Design (ICCAD). IEEE, 1–9.                          intermediate representation for hardware synthesis methodologies. In Proceedings
+[12] Daya Guo, Qihao Zhu, Dejian Yang, Zhenda Xie, Kai Dong, Wentao Zhang,                          of the 41st IEEE/ACM International Conference on Computer-Aided Design. 1–9.
+     Guanting Chen, Xiao Bi, Y Wu, YK Li, et al. 2024. DeepSeek-Coder: When the              [36]   John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao,
+     Large Language Model Meets Programming–The Rise of Code Intelligence. arXiv                    Karthik Narasimhan, and Ofir Press. 2024. SWE-agent: Agent Computer In-
+     preprint arXiv:2401.14196 (2024).                                                              terfaces Enable Software Engineering Language Models.
+[13] Hsuan Hsiao and Jason Anderson. 2019. Thread weaving: Static resource sched-
+     uling for multithreaded high-level synthesis. In Proceedings of the 56th Annual
+     Design Automation Conference 2019. 1–6.
+[14] Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean
+     Wang, Lu Wang, and Weizhu Chen. 2021. Lora: Low-rank adaptation of large
+     language models. arXiv preprint arXiv:2106.09685 (2021).
+[15] Liancheng Jia, Zizhang Luo, Liqiang Lu, and Yun Liang. 2021. Tensorlib: A spatial
+     accelerator generation framework for tensor algebra. In 2021 58th ACM/IEEE
+     Design Automation Conference (DAC). IEEE, 865–870.
+[16] Liancheng Jia, Yuyue Wang, Jingwen Leng, and Yun Liang. 2022. EMS: efficient
+     memory subsystem synthesis for spatial accelerators. In Proceedings of the 59th
+     ACM/IEEE Design Automation Conference. 67–72.
+[17] Lana Josipović, Radhika Ghosal, and Paolo Ienne. 2018. Dynamically sched-
+     uled high-level synthesis. In Proceedings of the 2018 ACM/SIGDA International
+     Symposium on Field-Programmable Gate Arrays. 127–136.
+[18] Katikapalli Subramanyam Kalyan, Ajit Rajasekharan, and Sivanesan Sangeetha.
+     2021. Ammus: A survey of transformer-based pretrained models in natural
+     language processing. arXiv preprint arXiv:2108.05542 (2021).
+[19] Mingjie Liu, Teodor-Dumitru Ene, Robert Kirby, Chris Cheng, Nathaniel Pinckney,
+     Rongjian Liang, Jonah Alben, Himyanshu Anand, Sanmitra Banerjee, Ismet
+     Bayraktaroglu, et al. 2023. Chipnemo: Domain-adapted llms for chip design.
+     arXiv preprint arXiv:2311.00176 (2023).
+[20] Mingjie Liu, Nathaniel Pinckney, Brucek Khailany, and Haoxing Ren. 2023. Ver-
+     ilogeval: Evaluating large language models for verilog code generation. In 2023
+     IEEE/ACM International Conference on Computer Aided Design (ICCAD). IEEE,
+     1–8.
+[21] Shang Liu, Wenji Fang, Yao Lu, Qijun Zhang, Hongce Zhang, and Zhiyao Xie. 2023.
+     Rtlcoder: Outperforming gpt-3.5 in design rtl generation with our open-source
+     dataset and lightweight solution. arXiv preprint arXiv:2312.08617 (2023).
+[22] Anton Lozhkov, Raymond Li, Loubna Ben Allal, Federico Cassano, Joel Lamy-
+     Poirier, Nouamane Tazi, Ao Tang, Dmytro Pykhtar, Jiawei Liu, Yuxiang Wei,
+     et al. 2024. StarCoder 2 and The Stack v2: The Next Generation. arXiv preprint
+     arXiv:2402.19173 (2024).
+[23] Yao Lu, Shang Liu, Qijun Zhang, and Zhiyao Xie. 2024. RTLLM: An open-source
+     benchmark for design rtl generation with large language model. In 2024 29th
+     Asia and South Pacific Design Automation Conference (ASP-DAC). IEEE, 722–727.
+[24] Bardia Nadimi and Hao Zheng. 2024. A Multi-Expert Large Language Model
+     Architecture for Verilog Code Generation. arXiv preprint arXiv:2404.08029 (2024).
+[25] Hammond Pearce, Benjamin Tan, and Ramesh Karri. 2020. Dave: Deriving
+     automatically verilog from english. In Proceedings of the 2020 ACM/IEEE Workshop
+     on Machine Learning for CAD. 27–32.
+[26] Zehua Pei, Hui-Ling Zhen, Mingxuan Yuan, Yu Huang, and Bei Yu. 2024. BetterV:
+     Controlled Verilog Generation with Discriminative Guidance. arXiv preprint
+     arXiv:2402.03375 (2024).
+[27] Baptiste Roziere, Jonas Gehring, Fabian Gloeckle, Sten Sootla, Itai Gat, Xiao-
+     qing Ellen Tan, Yossi Adi, Jingyu Liu, Tal Remez, Jérémy Rapin, et al. 2023. Code
+     llama: Open foundation models for code. arXiv preprint arXiv:2308.12950 (2023).
+[28] Qiushi Sun, Zhirui Chen, Fangzhi Xu, Kanzhi Cheng, Chang Ma, Zhangyue Yin,
+     Jianing Wang, Chengcheng Han, Renyu Zhu, Shuai Yuan, Qipeng Guo, Xipeng
+                                                                                         9
+

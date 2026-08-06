@@ -1,0 +1,914 @@
+     1448                            IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS, VOL. 44, NO. 4, APRIL 2025
+
+
+
+
+             RTLCoder: Fully Open-Source and Efficient
+            LLM-Assisted RTL Code Generation Technique
+                         Shang Liu , Wenji Fang, Graduate Student Member, IEEE, Yao Lu , Jing Wang ,
+                         Qijun Zhang , Hongce Zhang , Member, IEEE, and Zhiyao Xie , Member, IEEE
+
+
+
+        Abstract—The automatic generation of RTL code (e.g., Verilog)                                           TABLE I
+     using natural language instructions and large language models                      LLM-BASED W ORKS ON AUTOMATIC D ESIGN RTL ( E . G ., V ERILOG )
+     (LLMs) has attracted significant research interest recently.                         G ENERATION BASED ON NATURAL L ANGUAGE I NSTRUCTIONS
+     However, most existing approaches heavily rely on commercial
+     LLMs, such as ChatGPT, while open-source LLMs tailored
+     for this specific design generation task exhibit notably inferior
+     performance. The absence of high-quality open-source solutions
+     restricts the flexibility and data privacy of this emerging tech-
+     nique. In this study, we present a new customized LLM solution
+     with a modest parameter count of only 7B, achieving better
+     performance than GPT-3.5 on all representative benchmarks
+     for RTL code generation. Especially, it outperforms GPT-4
+     in VerilogEval Machine benchmark. This remarkable balance
+     between accuracy and efficiency is made possible by leveraging
+     our new RTL code dataset and a customized LLM algorithm,
+     both of which have been made fully open-source. Furthermore,
+     we have successfully quantized our LLM to 4-bit with a total
+     size of 4 GB, enabling it to function on a single laptop with only
+     slight performance degradation. This efficiency allows the RTL
+     generator to serve as a local assistant for engineers, ensuring all
+     design privacy concerns are addressed.
+                                                                                      scripts to control EDA tools [3], [4], design AI accelerator
+       Index Terms—Dataset generation, hardware code generation,                      architectures [5], [6], design quantum architectures [7], hard-
+     Verilog, large language model, preference finetuning.                            ware security assertion generation [8], fix security bugs [9],
+                                                                                      and even directly generate the target design RTL [4], [10],
+                                I. I NTRODUCTION                                      [11], [12], [13], [14], [15], [16], [17], [18], [19], [20].
+        N RECENT years, large language models (LLMs), such                               Among the above explorations, a promising direction that
+     I  as GPT [1], have demonstrated remarkable performance in
+     natural language processing (NLP). Inspired by this progress,
+                                                                                      perhaps attracts the most attention is automatically generating
+                                                                                      design RTL based on natural language instructions [4], [10],
+     researchers have also started exploring the adoption of LLMs                     [11], [12], [13], [14], [15], [16], [17], [18]. Specifically, given
+     in agile hardware design [2]. Many new LLM-based tech-                           design functionality descriptions in natural language, LLM can
+     niques emerge and attract wide attention in 2023. For example,                   directly generate corresponding hardware description language
+     LLM-based solutions are proposed to generate design flow                         (HDL) code,1 such as Verilog, VHDL, and Chisel from
+                                                                                      scratch. Compared with well-explored predictive machine
+       Received 17 May 2024; revised 16 August 2024; accepted 28 September            learning (ML)-based solutions in EDA [23], such generative
+     2024. Date of publication 17 October 2024; date of current version               methods benefit the hardware design and optimization process
+     21 March 2025. This work was supported in part by the Hong Kong Research
+     Grants Council (RGC) ECS under Grant 26208723; in part by the National           more directly. This LLM-based design generation technique
+     Natural Science Foundation of China under Grant 62304192 and Grant               can potentially revolutionize the existing HDL-based VLSI
+     92364102; and in part by the ACCESS—AI Chip Center for Emerging Smart            design process, relieving designers from the tedious HDL
+     Systems, sponsored by InnoHK funding, Hong Kong, SAR. This article
+     was recommended by Associate Editor M. Poncino. (Corresponding author:           coding tasks.
+     Zhiyao Xie.)                                                                        Table I summarizes existing works in LLM-based design
+       Shang Liu, Wenji Fang, Yao Lu, Jing Wang, Qijun Zhang, and Zhiyao              RTL generation. Some works [10], [11], [12], [15], [16]
+     Xie are with the Department of Electronic and Computer Engineering,
+     The Hong Kong University of Science and Technology, Hong Kong,                   focus on prompt engineering methods based on commercial
+     SAR, China (e-mail: sliudx@connect.ust.hk; wfang838@connect.ust.hk;              LLMs like GPT, without proposing new datasets or models
+     yludf@connect.ust.hk; jwangjw@connect.ust.hk; qzhangcs@connect.ust.hk;           for RTL code generation. As we will discuss later, reliance
+     eezhiyao@ust.hk).
+       Hongce Zhang is with the Department of Electronic and Computer                 on commercial LLM tools limits in-depth research exploration
+     Engineering, The Hong Kong University of Science and Technology, Hong
+     Kong, SAR, China, and also with the Department of Microelectronics                  1 Most existing works focus on generating design RTL in Verilog code. In
+     Thrust, The Hong Kong University of Science and Technology (Guangzhou),          this work, we also choose Verilog, while the method should be general and
+     Guangzhou 511455, China (e-mail: hongcezh@ust.hk).                               applicable to other HDL types like VHDL. We will use terms RTL code and
+       Digital Object Identifier 10.1109/TCAD.2024.3483089                            Verilog code interchangeably.
+                            1937-4151 
+                                      c 2024 IEEE. Personal use is permitted, but republication/redistribution requires IEEE permission.
+                                          See https://www.ieee.org/publications/rights/index.html for more information.
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+     LIU et al.: RTLCoder: FULLY OPEN-SOURCE AND EFFICIENT LLM-ASSISTED RTL CODE GENERATION TECHNIQUE                                                             1449
+
+
+
+     and incurs serious privacy concerns in industrial IC design                            In this work, we finally fill this gap with our new open-
+     scenarios. Thakur et al. [14] generated a large unsupervised                        source LLM solution named RTLCoder.3 To the best of our
+     training2 dataset by collecting Verilog-based projects from                         knowledge, it is the first noncommercial and open-source
+     online resources like GitHub, then fine-tuning its own model.                       LLM method that clearly outperforms GPT-3.5 in design
+     However, this unsupervised dataset is quite unorganized with                        RTL code generation. We validate this on two representative
+     a mixture of code and text. Evaluations on a third-party                            benchmarks [12], [13] and observe consistent trends. To build
+     benchmark [12] show that the performance of its fine-tuned                          this RTLCoder, we first propose an automated data generation
+     model is still inferior to commercial tools like GPT-3.5. The                       flow and have generated a dataset with over 27 000 instruction-
+     VerilogEval [13] from the NVIDIA research team proposes                             code samples for the RTL generation task.
+     its own labeled training dataset and benchmark, then fine-                             RTLCoder obviously achieves state-of-the-art tradeoffs
+     tunes its own new model. This may be the first noncommercial                        between performance and efficiency. Besides demonstrating
+     model that claims comparable performance with GPT-3.5, but                          unprecedented RTL generation correctness in noncommercial
+     according to their authors, neither the training dataset nor                        solutions, it only has 7 billion (B) parameters and can be
+     fine-tuned LLM model will be released to the public in the                          trained with only four consumer-level GPU cards. After
+     near future [13]. Goh et al. [18] proposed an open-source                           further quantizing the parameters to 4 bits, the RTLCoder-
+     dataset with Verilog instruction-code samples. However, their                       4bit takes only 4 GB of memory and can work on a laptop
+     instructions have only module name information, without                             with limited accuracy loss. As a result, our open-source
+     code functionality descriptions. A recently released dataset                        lightweight RTLCoder solution is accessible to almost every
+     MG-Verilog [17] proposed a multigrained dataset consist-                            research group and it is friendly to be implemented and
+     ing of descriptions of various level details with code to                           improved by researchers. The contributions of RTLCoder can
+     enhance the model’s instruction-following ability. But the                          be summarized below.
+     model performance of [17] and [18] also cannot outperform                              1) Targeting Verilog code generation, we propose an auto-
+     GPT3.5. Besides these customized RTL-generation solutions,                                 mated flow to generate a large dataset with over 27
+     according to our study, all other software code (e.g., Python)                             thousand diverse Verilog design problems and answers.
+     generation models like CodeGen2 [24], StarCoder [25], and                                  It addresses the serious data availability challenge in IC
+     Mistral [26] are significantly inferior to GPT-3.5 in this RTL                             design-related tasks, and its potential applications are
+     generation task.                                                                           not limited to LLMs. The LLM directly trained on it can
+        Compared with solutions based on closed-source commer-                                  already achieve comparable accuracy with GPT-3.5.
+     cial LLM tools like GPT, the open-source LLM solution                                  2) We introduce a new LLM training scheme based on
+     is vitally important from both research and application per-                               code quality feedback. It further boosts the ultimate
+     spectives: 1) for research purposes, obviously, closed-source                              model performance to outperform GPT-3.5, being com-
+     commercial tools prevent most in-depth studies and cus-                                    parable with GPT-4. We further revised the training
+     tomizations of this emerging technique and 2) for realistic                                process from an algorithm perspective to reduce its
+     applications, users of commercial LLM tools unavoidably                                    GPU memory consumption. The training process only
+     have data privacy concerns, since all instructions have to                                 requires 4 commercial-level GPU cards.
+     be uploaded to LLM providers like OpenAI. The privacy                                  3) We designed RTLCoder to be a lightweight solution with
+     concern is especially critical in the VLSI design industry,                                only 7B parameters. After quantizating its parameters
+     where information leakage of intellectual property (IP) or                                 into 4 bits, it takes only 4 GB of memory, allowing it to
+     key technical innovations can seriously hurt the competitive                               serve as a local assistant for engineers without privacy
+     advantage of users’ companies. In comparison, each user’s                                  concerns.
+     own local LLM developed based on an open-source solution                               4) RTLCoder has been fully open-sourced, including
+     can eliminate all privacy concerns and also ensure a reliable                              our data generation flow, complete generated dataset,
+     service.                                                                                   LLM training algorithm, and the fine-tuned model.
+        However, as mentioned, high-performance open-source RTL                                 Considering RTLCoder’s lightweight property and low-
+     generation models are currently unavailable. According to                                  hardware barrier, it allows anyone to easily replicate and
+     our study, a major challenge is the unavailability of high-                                further improve based on our existing solution.
+     quality circuit design data for training: 1) organized design
+     data is mostly owned by semiconductor companies, who are
+                                                                                                     II. AUTOMATIC DATASET G ENERATION
+     almost always unwilling to share design data and 2) design
+     data directly collected online is messy and unorganized, either                       In this work, we first propose a new automated training
+     leading to inferior model performance or requiring prohibitive                      dataset generation flow. Based on this flow, we have generated
+     human efforts to clean the dataset.                                                 over 27 thousand training samples, with each sample being
+                                                                                         a pair of design description instruction (i.e., model input)
+                                                                                         and the corresponding reference RTL code (i.e., expected
+
+                                                                                           3 Our RTLCoder has been fully open-source at https://github.com/hkust-
+        2 Most customized LLM solutions (including RTLCoder) are developed by            zhiyao/RTL-Coder. It includes the data generation flow, the complete
+     fine-tuning pretrained LLMs based on a training dataset about the specific          generated training data set, the model training flow, and the final fine-tuned
+     task. In this article, we use the terms training and fine-tuning interchangeably.   models (based on both Mistral and DeepSeek).
+
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+     1450                            IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS, VOL. 44, NO. 4, APRIL 2025
+
+
+
+
+     Fig. 1.   Our proposed automated training dataset generation flow.
+
+
+
+
+     Fig. 2.   Example of Prompt Pkey in ❶.4
+
+
+
+     model output). The instruction can be viewed as the input
+     question for LLMs, describing the desired circuit functionality
+     in natural language. The reference code is the expected answer
+     from LLMs, implementing the circuit functionality in Verilog
+     code. We observe that these generated training samples exhibit                   Fig. 3.   GPT response example to Prompt Pkey in ❶.
+     high diversity and complexity in the RTL-generation domain,
+     encompassing a diverse spectrum of difficulty levels.
+        We build this automated generation flow by taking full                        to ask GPT about more types of the block “multiplier,” it will
+     advantage of the powerful general text generation ability of                     return more specific design names, such as “Booth multiplier,
+     the commercial tool GPT. Please notice that GPT is only                          Wallace tree multiplier, etc.” After this process, we obtain
+     used for dataset generation in this work, and we adopt                           hundreds of keywords related to RTL design in the Keywords
+     GPT-3.5 in this data generation task. The automated dataset                      pool Lkey .
+     generation flow is illustrated in Fig. 1, which includes three                      Besides using our introduced keywords generation flow, we
+     stages: 1) RTL domain keywords preparation; 2) instruction                       believe manually collecting initial Verilog instructions from
+     generation; and 3) reference code generation. We designed                        existing IP families is also feasible and can help to produce a
+     several general prompt templates to control GPT generating                       comprehensive keyword pool, as long as users devote manual
+     the desired outputs in each stage.                                               efforts to collecting the IP document resources and checking
+                                                                                      their coverage and diversity.
+     A. Stage 1: Keywords Preparation                                                    This obtained keyword pool with about 350 instances will
+        The first stage of our data generation flow targets preparing                 be extended into around 5K instruction samples in process ❷
+     RTL domain keywords for subsequent stages. At process ❶                          and these instructions will be further mutated and combined
+     shown in Fig. 1, we request GPT to generate keywords related                     with each other and those obtained from source code in stage
+     to digital IC design (i.e., commonly used logic components)                      2 to generate more new descriptions.
+     based on a set of prompts Pkey . We obtain a keyword pool
+     Lkey with hundreds of digital design keywords.                                   B. Stage 2: Instruction Generation
+        Specifically, in this process ❶, to collect a comprehensive                     The second stage targets generating sufficient instructions
+     range of RTL design task topics, we utilize a tree-like structure                based on the initial keywords and Verilog source code. At
+     with multiple branches to issue queries to GPT. We first                         process ❷, we extend existing keywords from Lkey to complete
+     prompt GPT at the root node to provide categories and                            design instructions. Specifically, we randomly sample one or
+     examples of frequently used block keywords in RTL design                         two keywords from Lkey each time, combined with prompts
+     as Fig. 2 illustrated. The response from GPT has a tree                          Pext , and feed them into GPT. The output is a complete RTL
+     structure that consists of some subfields as Fig. 3 shows.                       design instruction.
+     With the response, we could use the categories and examples                        In addition to keyword-based instruction generation in
+     as branches to continue prompting GPT for more design                            process ❷, we also propose to generate instructions based on
+     keywords within each topic. For example, we can use scripts                      existing source code collected by us, as shown in process ❸.
+                                                                                      This is partially inspired by the work of [27]. By providing
+       4 We use red text boundary to denote GPT input examples, and green text
+                                                                                      GPT with either part or a complete Verilog code Lcode
+     boundary to denote GPT output examples in this work. Please notice that
+     some green GPT output in this data generation flow are instructions, which       collected by [14], we can inspire it to create a related Verilog
+     will be the input of LLMs.                                                       design problem. By adopting this new ❸ together with ❷, we
+
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+     LIU et al.: RTLCoder: FULLY OPEN-SOURCE AND EFFICIENT LLM-ASSISTED RTL CODE GENERATION TECHNIQUE                                                         1451
+
+
+
+
+                                    key
+     Fig. 4.   Example of Prompt Pext in ❷.
+
+
+
+     further enhance the diversity of our dataset by utilizing a vast
+     and varied collection of source code.
+        Processes ❷ and ❸ help generate the initial design instruc-
+     tion pool Lins based on our customized prompt Pext . Two types
+     of prompt Pext are proposed for processing Lkey and Lcode ,
+                   key
+     denoted as Pext and Pcode
+                             ext , respectively. As shown in Fig. 4,
+                   key
+     our prompt Pext in process ❷ adopts the few-shot prompting
+     technique, which means we provide an example of the question
+     (i.e., keyword) and answer (i.e., instruction) in the input
+     prompt. Fig. 5 shows an example of GPT’s corresponding
+     response. As for the prompt Pcode  ext used in process ❸, an                                                                           key
+                                                                                      Fig. 5. GPT response example (green) to Prompt Pext when given topic:
+     example of prompt and the response of GPT are provided                           Pulse width modulators (PWM) (red) in ❷.
+     in Figs. 6 and 7. The prompt Pcodeext asks GPT to convert the
+     given Verilog code snippet to the corresponding description
+     instruction.
+        For process ❸, instructions obtained through code snip-
+     pets from Lcode focus more on describing detailed circuit
+     behavior (such as the specific behavior in different cycles
+     of a signal). On the other hand, the instructions obtained
+     from the keyword pool Lkey in process ❷ tend to provide an
+     overall summary of the circuit’s functionality in a high-level
+     manner. For example, based on the keyword “traffic light” in
+     the keyword pool, a series of traffic light circuit instructions
+     can be generated. These overall descriptions can hardly be
+     obtained solely through code snippets if the signal name is
+     not related to something like “red_light” or “yellow_light.”
+     The instructions generated through keywords not only describe
+     circuit behavior but also link to commonly used digital design
+     terminologies and higher-level abstracts. Hence, both initial
+     instruction generation methods are crucial and complementary.
+                                                                                      Fig. 6.   Example of Prompt Pcode
+                                                                                                                   ext in ❸.
+     They describe circuit behavior from different levels of descrip-
+     tion (highly abstract and detailed to the behavior of each
+     signal).
+        In the extension process of ❷ and ❸, the prompt for gener-                    What is more, the design complexity should be limited so
+     ating the instruction responses should be carefully designed.                    that the corresponding Verilog code can be implemented in
+     We provide Fig. 6 for the reader’s reference. The instructions                   hundreds of code lines.
+     returned by GPT should contain detailed and unambiguous                             After generating the initial instruction pool Lins with hun-
+     requirements to ensure that LLM can generate only one                            dreds of initial instructions, we will iteratively use mutation
+     functionally unique Verilog code based on this instruction.                      methods to significantly augment the scale and complexity
+
+
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+     1452                            IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS, VOL. 44, NO. 4, APRIL 2025
+
+
+
+
+                                                                                      Fig. 9.   Example of Prompt Pcmut in ❹.
+
+
+     Fig. 7.   GPT response example to Prompt Pcode
+                                               ext in ❸.                                      parallel combination) or feeding one output into the
+                                                                                              other’s input (i.e., serial combination). Fig. 9 gives a
+         The rewritten task should achieve different circuit functionality but                sample of prompt Pcmut .
+         require similar methods or components in the given instruction. Here            It is important to note that we need to carefully design the
+         is one example for you.
+                                                                                      instruction generation prompt considering the following two
+         [Given Instruction]                                                          aspects in the mutation process.
+         Please act as a professional Verilog coder. Create a module that
+         implements a finite state machine (FSM), used for 5-bit sequence                1) Basic instruction validity.6 For example, GPT may
+         detection.                                                                           provide an instruction of implementing a physical tem-
+         [New Instruction]                                                                    perature regulator or a speedometer, which are not
+         Please act as a professional Verilog designer. Create a module that                  directly related to Verilog coding.
+         implements a finite state machine (FSM), used for 5-bit sequence                2) Level of circuit behavior detail for LLM to generate
+         detection, but with a twist. The module should detect two different 5-
+                                                                                              correct code. Other studies [14], [17] have also indicated
+         bit sequences, "01010" and "10101", and output a signal indicating
+         which sequence was detected. The output signal should be '0' for                     that the level of circuit description has a significant
+         "01010" and '1' for "10101". The FSM should transition to the initial                impact on the code generation quality. When descrip-
+         state whenever a reset signal is asserted. Implement the FSM using a                 tions are overly vague, LLMs trained on this dataset
+         Mealy machine, where the output is a function of both the current
+                                                                                              struggle to align the functionality of the code with
+         state and the input.
+                                                                                              the general instruction. Conversely, if descriptions are
+                                                                                              too detailed, focusing on intricate RTL circuit specifics,
+     Fig. 8.   Example of Prompt Psmut in ❹.
+                                                                                              the RTL generation effectively becomes a form of
+                                                                                              “code translation,” which can also not boost the general
+     of this pool.5 At ❹, we use Pmut to apply two types of                                   generative abilities of trained LLMs.
+     mutation operations on instructions sampled from the design                      Moreover, we request GPT to generate its reasoning steps (i.e.,
+     instruction library Lins . The process ❹ would check every new                   how it analyzes the code generation task step-by-step). These
+     design instruction using a set of rules and only passed valid                    reasoning steps further enhance the detailed information of our
+     instructions are added to Lins . We cover more details of this                   instruction pool. In addition to incorporating these principles in
+     iterative process below.                                                         the query prompt, we also use the one-shot technique (provide
+        For the mutation operation in ❹, we propose two types of                      a query-response sample for GPT’s reference) to demonstrate
+     prompts Psmut and Pcmut , performing single circuit variation and                our requirements. As long as following these principles and
+     circuits combination, respectively.                                              adopt basic prompt engineering techniques, we believe other
+        1) The Psmut focuses on changing the single circuit module                    alternative prompts may achieve similar response quality.
+            by requiring different functionalities while keeping the                     For the instruction checking in ❺, we automatically check
+            same hardware type, or implementing the same function-                    the correctness and diversity of each new instruction gen-
+            ality but using different hardware. Fig. 8 is an example                  erated in the mutation process, based on a series of rules.
+            of Psmut .                                                                The rules include 1) invalid-word checking and 2) similarity
+        2) The Pcmut focuses on combining two circuit designs                         measurement with existing Lins . For example, in invalid-word
+            together. They are combined by either adding control                      checking, if words, such as “image” and “text,” are detected,
+            logic to select using one of the two functionalities (i.e.,               it indicates that GPT has likely provided a problem that
+                                                                                      cannot be implemented solely with RTL code. As for similarity
+        5 The scale and complexity in this context describe the target circuit.       rate checking, we calculate the similarity between the new
+     Circuit scale can be reflected by the total number of logic gates in the         instruction and existing Lins . The new instruction is discarded
+     circuit after implementation. Circuit complexity can be reflected in its
+     functionality complexity, which may be reflected by the number of lines in its
+                                                                                      if the similarity is above a certain threshold since it cannot add
+     implementation. Such metrics are also used in prior benchmarking works [12].     enough new information to Lins . Such checking of instructions
+     As an example, in Fig. 9, we illustrate how combining a binary counter and
+     a comparator can result in a circuit with a larger area and more complex           6 “Validity” here refers that the instruction can be implemented solely by
+     functionality.                                                                   Verilog code, requiring no other tools or languages.
+
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+     LIU et al.: RTLCoder: FULLY OPEN-SOURCE AND EFFICIENT LLM-ASSISTED RTL CODE GENERATION TECHNIQUE                                                         1453
+
+
+                                                                                                                    TABLE II
+     in ❺ is imperfect, but it is fully automated and accurate enough                 D IVERSITY S CORES OF F OUR R EPRESENTATIVE F INE -T UNING I NSTRUCT
+     to generate an ultimate instruction pool Lins , including over                       DATASETS . T HERE A RE T HREE V ERILOG DATASETS , I NCLUDING
+     50 000 instructions.                                                                O UR RTLC ODER -27K, G OH ET AL . [18], AND MG-V ERILOG [17].
+                                                                                       W E A LSO E VALUATE A W IDELY U SED S OFTWARE (M AINLY P YTHON )
+                                                                                       DATASET, M AGICODER -OSS-I NSTRUCT-75K [27]. T HE L OWER VALUE
+                                                                                             OF CR AND CR: POS, THE H IGHER -DATASET D IVERSITY.
+     C. Stage 3: Reference Code Generation
+                                                                                         RTLC ODER -27K E XHIBITS A S ATISFACTORY L EVEL OF D IVERSITY
+        The third stage targets generating the reference code. In                                C OMPARED W ITH THE OTHER T HREE DATASETS
+     the third stage, as shown in ❻, we feed each instruction
+     from Lins into GPT, generating the corresponding reference
+     design code as the solution. Specifically, we will ask GPT
+     to provide at least five answers. After that, in ❼, we will
+     evaluate these answers using a code checker. In this work, we
+     adopt an automated syntax checker to verify the correctness                      these models, indicating the overall quality of our open
+     of RTL code syntax. Only syntax-correct design code can                          dataset.
+     be kept. If all five answers fail the syntax checking, this                         Evaluation of Design Type Distribution: We also utilized
+     instruction will be discarded. Finally, only valid instruction-                  GPT for annotating the categories of the generated 27K-
+     code pairs are saved as our dataset. Ideally, process ❼ should                   dataset. The circuit type distribution statistics is depicted in
+     also check whether the functionality of the generated RTL                        Fig. 10(b). The distribution statistics for the two benchmarks,
+     code is consistent with the instruction, but currently generating                RTLLM-1.1 [12] and VerilogEval [13] are also plotted in
+     testbenches for functionality verification cannot be automated.                  Fig. 10(c) and (d), respectively. The generated dataset consists
+     Similar to the checker in stage 2, this imperfect automated                      of a wide range of circuit designs, including arithmetic units,
+     checking can already filter out the most serious mistakes in                     signal processing units, encryption units, etc. It is important to
+     the dataset.                                                                     note that a single data sample may implement functionalities
+                                                                                      of multiple circuit types, and we only adopt one circuit type to
+                                                                                      represent each instruction. As the majority of circuits contain
+     D. Dataset Generation Flow Discussion
+                                                                                      submodules like multiplexers, decoders, and selectors, this
+        After going through all three proposed stages, we generate                    may result in a relatively higher proportion of the data path
+     the ultimate training dataset named RTLCoder-27K with more                       type.
+     than 27 000 instruction-code data samples. In this section, we                      Evaluation of Dataset Diversity: To further check the
+     will discuss some important topics about our proposed data                       diversity of our proposed training dataset, RTLCoder-27K, we
+     generation flow and the output dataset. Multiple experiments                     utilized two diversity measures: 1) compression ratios (CRs)
+     are conducted to provide more insights about our RTLCoder                        and 2) part-of-speech CR (CR: POS) which are suggested
+     dataset.                                                                         the best-lexical diversity metrics by [28] among homog-
+        Statistics of Keyword Pool: In the keyword generation                         enization score (BERTScore), self-BLEU, homogenization
+     process, we adopt the hierarchical prompting structure to query                  score (ROUGE-L), N-gram diversity score, hypergeometric
+     GPT, resulting in around 350 keywords. Experienced engineers                     distribution, etc. CR is calculated utilizing text compression
+     have recognized the keyword pool as covering a vast majority                     algorithms which can identify redundancy in the whole con-
+     of commonly used circuit design problems. We also adopted                        tents. We constructed a file D containing all the text data in
+     GPT to analyze the keyword types and illustrate the categories                   RTLCoder-27K following [28]. Subsequently, we compressed
+     and distribution of this keyword pool in Fig. 10(a).                             the entire dataset using gzip. The CR is as follows:
+        Comparison With Other RTL Dataset: We compare
+                                                                                                                        size of D⊕
+     RTLCoder with other recent RTL code datasets [13], [14],                                        CR(D) =                             .
+     [17], [18] in the following. In Thakur et al. [14], the training                                              compressed size of D⊕
+     dataset only consists of code without instructions. Such code-                      The CR-POS can capture the repeated syntactic redundancy
+     only datasets do not align well with the RTL generation                          by compressing the part-of-speech (POS) tag sequences of
+     tasks based on natural language instructions. After removing                     the original text. We also followed [28] and used NLTK POS
+     exactly the same duplicated code in the dataset, there are                       tagger and the Penn Treebank set of 36 tags to extract the tag
+     approximately 25K data entries. In VerilogEval [13], each data                   sequences [28].
+     entry comprises an instruction-code pair, totaling 8.5K entries                     The results are shown in Table II. Additionally, we also
+     in their dataset. However, their dataset is not open-sourced.                    provide the CR and CR:POS values for three representative
+     In the MG-Verilog dataset [17], there are 11K instances                          fine-tuning datasets: 1) Goh et al. [18]; 2) MG-Verilog [17];
+     with each one consisting of descriptions at various levels                       and 3) Magicoder-OSS-Instruct-75K [27] for comparison. A
+     of detail and corresponding code. In the Goh et al. [18],                        smaller CR and CR-POS value indicates a higher level of
+     there are a total of 60K samples. However, their instruction                     diversity in the dataset. We observe that RTLCoder-27K
+     only provides the module name information without any                            exhibits similar diversity to the widely used Python benchmark
+     functionality descriptions. The performance of LLMs [13],                        and higher diversity compared to the Verilog code datasets.
+     [14], [17], [18] trained on these four datasets will be                             Imperfection in Data Functionality Correctness: Our
+     presented in Table III in Section IV and all cannot clearly                      dataset generation flow ensures the syntax correctness of all
+     outperform GPT3.5. RTLCoder significantly outperforms all                        instruction-code data samples, but cannot guarantee that every
+
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+     1454                            IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS, VOL. 44, NO. 4, APRIL 2025
+
+
+
+
+     Fig. 10. Circuit type distribution of keyword pool, the obtained dataset RTLCoder-27K, RTLLM-1.1 [12], and VerilogEval [13]. (a) Keyword pool. (b) Our
+     27K. (c) RTLLM-1.1. (d) VerilogEval(Machine + Human).
+                                                                                                                                  
+     data sample is functionally correct (i.e., code implements                       this article, we use xi = xit and yi = yti for t = 1, 2, . . . , T
+     the same functionality as described in instruction). This is                     to represent the tokenized sequence.
+     because automatically checking the functionality correctness                         LLMs generate a sequence by continuously predicting the
+     of training samples is inherently a very challenging task.                       next token based on the already generated previous ones.
+     Functionality checking for the Verilog code is practically                       For a decoder-only language model, which is the mainstream
+     hardware verification, which has been studied for decades,                       LLM architecture, the probability of producing the next token
+     relies on human engineers, and is difficult to get guaranteed                    depends only on the previous output tokens and the input
+     results. Although the code in our proposed dataset has only                      instruction. We denote the probability of generating the tth
+     undergone syntax checks, finetuning the model using this                         token rt (rt can be any single token in the vocabulary)
+     dataset can still lead to improved model performance on the                      as Pπ rt | xi , y<t  i   where π represents the model parame-
+     benchmarks as Table III shows in Section IV. This indirectly                     ters    and    y<t denotes the already generated previous tokens
+                                                                                                     i
+     demonstrates the contribution of the proposed dataset.                             y1i , .., yt−1  . Then the log probability of generating the whole
+                                                                                                   i
+        Relation Between RTLCoder and GPT-3.5: An interesting                                                                                   
+                                                                                      sequence can be written as: Tt=1 log Pπ yti | xi, , y<t  i .
+     observation is that, although we generate our training dataset
+                                                                                          In the existing training method, maximum likelihood esti-
+     based on GPT-3.5, RTLCoder turns out to outperform the
+                                                                                      mation (MLE) is commonly used to find the best parameters π
+     GPT-3.5 baseline on representative benchmarks [12], [13].
+                                                                                      that maximize the log probability. The training flow is shown
+     One important reason is that, for each instruction, we have
+                                                                                      in Fig. 11(a). The loss is usually defined as below
+     employed a syntax checker to evaluate the reference code
+     generated based on GPT-3.5. Therefore, among all correct                                                        T
+                                                                                                                                                
+     and incorrect code from GPT-3.5, we filter out the obviously                                    lossmle = −          log Pπ yti | xi, , y<t
+                                                                                                                                              i .
+     incorrect ones and retain the largely correct ones for training                                                t=1
+     RTLCoder. This process can be viewed as a refinement of                          However, there exists a phenomenon named exposure
+     GPT-3.5’s Verilog generation capabilities.                                       bias [29], [30]. Since the above sequence generation is autore-
+                                                                                      gressive, which means the model always predicts the next
+         III. N EW T RAINING S CHEME I NCORPORATING C ODE                             token based on its own generated previous ones ri<t rather than
+                         Q UALITY F EEDBACK                                           the reference tokens y<ti . Therefore, even though the probabil-
+                                                                                      ity of producing yti is high when given y<t i in the training, it
+        Besides the new training dataset, we propose a new LLM                        can still result in a huge deviation from the reference code in
+     training scheme that incorporates code quality scoring. It sig-                  the generation process.
+     nificantly improves the RTLCoder’s performance on the RTL                           We have also observed this phenomenon in our experiments.
+     generation task. Also, we revised the training process from the                  After the supervised training, the qualities of multiple gen-
+     algorithm perspective to reduce the GPU memory consumption                       erated code candidates for the same instruction may diverse
+     of this new training method, allowing implementation with                        greatly in the performance aspect. They can include correct
+     limited hardware resources.                                                      code while at the same time, including many low-quality
+                                                                                      answers. Some candidates exhibit serious nonsense duplica-
+     A. Existing Supervised Training on LLMs                                          tion.7
+        This part will first introduce the existing supervised training                  To alleviate the exposure bias phenomenon, we suggest that
+     method for LLMs. Then we will further discuss its limitations                    in addition to the reference code yi , the model’s generation
+     in RTL generation tasks. Suppose we have a training data                         should also be considered in the training process. Since the
+     dataset {xi , yi } for i = 1, . . . , N, where xi represents an design
+                                                                                        7 We notice that this duplication could not be simply dealt with by adding
+     instruction, yi represents the corresponding correct reference
+                                                                                      repetition penalty to the decoding process like other works in natural text
+     code. Each sample of data will be split into a sequence of                       generation. Because some correct RTL design code also contain similarly
+     tokens by certain rules during the preprocessing process. In                     repetitive expressions.
+
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+     LIU et al.: RTLCoder: FULLY OPEN-SOURCE AND EFFICIENT LLM-ASSISTED RTL CODE GENERATION TECHNIQUE                                                         1455
+
+
+                                                                         TABLE III
+           P ERFORMANCE C OMPARISON OF RTL C ODE G ENERATORS ON V ERILOG E VAL B ENCHMARK [13] AND RTLLM B ENCHMARK [12]. T HE T OP
+         S CORES R ANKED F IRST, S ECOND , AND T HIRD IN E ACH C OLUMN A RE M ARKED IN G REEN , B LUE , AND R ED , R ESPECTIVELY. RTLC ODER
+          O UTPERFORMS GPT-4 ON E VAL M ACHINE OF [13]. I T I S O NLY S ECOND TO GPT-4 ON THE OTHER B ENCHMARKS (E VAL H UMAN OF [13] AND
+                                               RTLLM [12]), O UTPERFORMING GPT-3.5, AND A LL OTHERS
+
+
+
+
+     Fig. 11.   Comparison between (a) existing MLE-based LLM training flow and (b) our proposed LLM training flow.
+
+
+                                                                                       
+     generation may be different from the reference code, it is                        zi,k , k = 1, 2, .., K, denoting the quality for the code sample
+     necessary to introduce a scoring mechanism to judge the                          {yi,k }. In the training process, we aim to make the model learn
+     quality of generated candidates. We will give our detailed                       to assign relatively higher-generation probabilities to answers
+     solution in Section III-B.                                                       with higher scores. In this way, the model not only learns
+                                                                                      from the reference code, but also from the new information
+     B. Our Proposed Training Method                                                  introduced by the quality score feedback.
+        Our proposed training scheme is illustrated in Fig. 11(b).                       The conditional log probability (length-normalized) of gen-
+     For each instruction, we will now collect multiple code                          erating the entire code yi,k is commonly written as
+     candidates generated by the initial pretrained model. Then,                                                
+     we pack these candidates                                                                                          log Pπ yti,k | xi , y<t
+                           and the original reference code yi                                        pi,k =
+                                                                                                                   t                        i,k
+                                                                                                                                                  .
+     together as yi = yi,k , k = 1, 2, .., K, where K represents                                                              yi,k 
+     the number of generated code for one instruction. Next, all                                                                            
+     these candidates will be scored by the scoring mechanism                            We calculate pi,k for all code candidates yi = yi,k , k =
+     R(xi , yi,k ) which could be a syntax checker or unit test for                   1, 2, .., K, then we normalize these pi,k values using a softmax
+     functionality check. We will then obtain a set of score zi =                     function, defining the probability of each code being selected
+
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+     1456                            IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS, VOL. 44, NO. 4, APRIL 2025
+
+
+     Algorithm 1 Training Scheme Using Gradients Splitting                              We propose a gradient-splitting approach for model training
+                                                       
+     Input: The single data sample xi , yi , zi . Model forward                       based on quality score from an algorithm perspective. It can
+     function si,k = fπ (xi , yi,k , zi,k ). Loss calculation function                achieve a O(1) space complexity as illustrated in Algorithm 1.
+     Lπ (si , zi ). GPU affordable batch size J. Model parameters w.                  The gradients of loss with respect to w can be computed as
+     Output: The derivative of the loss with respect to model                         below
+     parameters: gi .                                                                                  ∂ loss        ∂ loss ∂si,k
+                                                                                                            =                   .
+       1: Group the sample xi , yi,k for k = 1, 2, ..., K into Q                                         ∂w           ∂si,k ∂w
+                                                                                                                         k
+          parts based on batch size J.
+                                                                                      The property of the chain rule indicates that we can decompose
+       2: initialize empty vector list temp. Initialize the gradients
+                                                                                      the gradient updates into several parts. Assume J is the
+          gi = 0.
+                                                                                      maximum allowable batch size for GPU consumption. We
+       3: for q ∈ Q do
+                                                                                      divide the K candidates into Q groups based on the batch size
+       4:      Calculate si,k = fπ (xi , yi,k , zi,k ), for k ∈ q.
+                                                                                      J. First, we pass these groups through the forward function
+       5:      Empty the computation graph
+                                                                                    separately and collect the obtained si values as lines 1–5
+       6: Calculate loss = Lπ (si , zi ) //si = si,k for k = 1, .., K                 illustrate. In the second step, we calculate the loss function
+       7: Backward process: tempk = ∂ loss/∂si,k , for k = 1, ..., K                  and compute the derivative of the loss with respect to si
+       8: for q ∈ Q do                                                                in lines 6 and 7, storing the temporary results in vector
+       9:      Calculate si,k = fπ (xi , yi,k , zi,k), for k ∈ q                     temp. In the third step, we perform the forward operation on
+      10:      Backward process: gi = gi + k∈q tempk ∂si,k /∂w                        the original Q groups again and for each forward operation,
+      11:      Empty the computation graph                                            the obtained si,k is multiplied by tempk in a dot product,
+      12: Return gi                                                                   followed by a backward pass to accumulate the gradient in
+                                                                                      lines 9–12.
+
+     as                                                                                                  IV. E XPERIMENTAL R ESULTS
+                                              epi,k                                   A. Evaluation Benchmark and Metric
+                               si,k = K                  .
+                                                   pi,τ
+                                             τ =1 e                                      To evaluate the performance of Verilog code generation,
+     This si,k reflects the model’s tendency to output the kth                        there are two representative benchmarks VerilogEval [13] and
+     code candidate, with higher probabilities indicating a greater                   RTLLM [12].
+     likelihood that the model will generate it.                                         The VerilogEval [13] benchmark consists of two parts,
+        To encourage the model to assign higher-probability scores                    EvalMachine and EvalHuman, each including more than 100
+     to high-quality code, we can define a new loss function term                     RTL design tasks. We follow the original paper [13] and use
+                                                                                    the widely adopted pass@k metric in code generation tasks
+              losscompare =      max si,k − si,τ + λ, 0                                                                             k
+                                                                                                                                   Cn−c
+                                zi,k <zi,τ                                                                pass@k = Ei 1 −               i
+                                                                                                                                    Cnk
+     where λ is a threshold value.
+        To provide an intuitive explanation of this loss function                     where n is the total number of trials for each instruction and
+     term, we provide a simple example. Suppose we have the ith                       ci is the number of correct code generations for task i. We set
+     instruction and only two code candidates with initial selection                  n = 20 in this experiment. If any code in the k trials could
+     probability si,1 and si,2 with si,1 + si,2 = 1 and si,1 > si,2 .                 pass the test, then this task is considered to be addressed and
+     But the first candidate has a lower-quality score, i.e., zi,1 <                  the pass@k metric reflects the estimated proportion of design
+     zi,2 . Then the positive loss would drive model parameters to                    tasks that could be solved.
+     update until the model assigns a new set of s∗i,1 and s∗i,2 so                      The RTLLM V1.1 [12] benchmark contains 29 RTL design
+     that s∗i,2 − s∗i,1 ≥ λ is satisfied.                                             tasks at a larger design scale. We mostly follow the testing
+        It is worth noting that this loss only depends on the relative                method in the original paper [12], but further proposes two
+     scores among multiple code candidates, so it can still be used                   slightly different metrics for evaluating syntax correctness,
+     when answer quality cannot be precisely quantified. Finally,                     using either Synopsys VCS [31] or design compiler [32]. They
+     We define the total loss as                                                      are denoted as Syn-VCS and Syn-DC, respectively.
+                                                                                         1) For the Syn-VCS metric, VCS not only requires the
+                         loss = losscompare + lossmle .                                      design to comply with the Verilog syntax rules, but also
+                                                                                             requires that the interface of the design correspond to
+     C. Reduced Memory by Splitting Gradients                                                the testbench, so that the circuit can be simulated.
+        Directly calculating our new loss function even with 1                           2) For the Syn-DC metric, DC requires the design to
+     batch size would still require forwarding all code candidates                           be physically synthesizable. The functionality result is
+     in a sample at once to maintain all the activation values.                              obtained by VCS simulation.
+     This will lead to the O(K) space complexity and make the                         We calculate the scores of the design syntax part and design
+     GPU memory consumption prohibitively high in many LLM                            functionality part separately. In both parts, following the
+     training scenarios.                                                              original benchmark [12], each task is counted as success as
+
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+     LIU et al.: RTLCoder: FULLY OPEN-SOURCE AND EFFICIENT LLM-ASSISTED RTL CODE GENERATION TECHNIQUE                                                         1457
+
+
+
+
+     Fig. 12.     Training dataset analysis. (a) Tokens number distribution of
+                                                                                      Fig. 13.      Visualization of key accuracy comparisons from Table III,
+     instruction and code part. (b) Similarity measurement between training dataset
+                                                                                      selecting pass@1 metric on EvalMachine and EvalHuman of [13]. RTLCoder
+     and two benchmarks based on Rouge-L metric.
+                                                                                      includes both RTLCoder-Mistral and RTLCoder-DeepSeek. The baseline
+                                                                                      models include Thakur et al. [14], ChipNeMo [4], and VerilogEval [13].
+
+     long as any of five trials passes the test. This can be interpreted
+     as pass@5 metric.
+                                                                                      4090 GPUs (24 GB each), each of which could only afford
+       In the generation process, we set topp = 0.95 and
+                                                                                      2 × 2048 context length using DeepSpeed stage-2 [34]. Under
+     temperature = {0.2, 0.5, 0.8}. For all tested models (i.e.,
+                                                                                      the hardware constraint, the training is impossible without the
+     baselines, RTLCoder, and ablation studies), we evaluate all 3
+                                                                                      proposed gradient-splitting method.
+     temperature conditions and report the best performance for
+                                                                                         To implement our proposed training scheme, we first
+     each model.
+                                                                                      generated 3 code candidates for each instruction using the
+                                                                                      pretrained model with the Beam search method. Then we
+     B. Examine Training Set for Fair Evaluation                                      use Pyverilog [35] as the syntax checker to score the code
+        To ensure a fair evaluation of our proposed RTLCoder,                         candidates. Specifically, we assigned a full score (i.e., 1) for
+     before training, we explicitly examined the similarity between                   the reference code from the dataset and those candidates who
+     samples in our proposed training dataset and those test cases in                 can pass the syntax check. For those who failed syntax checks,
+     benchmarks [12], [13], then we get rid of our training samples                   we used the Rouge-L metric to assign the code similarity
+     that are similar to test cases during the training process.                      between the candidate and reference code as its score.
+        To measure the similarity between two text sequences,                            In addition, considering GPU memory consumption is a
+     we employed the Rouge-L metric, which is a widely used                           crucial factor that limits the applicability of LLMs, based
+     similarity calculation scheme in the LLM domain, such as by                      on quantization methodologies [36], we further quantize the
+     OpenAI [1]. The Rouge-L score ∈ [0, 1], with values closer                       parameters of the obtained RTLCoder into 4 bits, gener-
+     to 1 indicating higher similarity between the two sequences.                     ating RTLCoder-DeepSeek-4bit and RTLCoder-Mistral-4bit,
+     For each instruction-code concatenated sample in the training                    consuming only 4-GB memory.
+     dataset, we computed its Rouge-L value with all test cases in
+     the benchmarks. In addition, we also separately analyzed the
+     distribution of token counts for instructions and code in the                    D. Experiment Results Overview
+     dataset. The resulting statistic is in Fig. 12.
+                                                                                         Table III summarizes the comparison of all relevant
+        From Fig. 12(a), we can see that a sample that consists of
+                                                                                      RTL generation solutions, including commercial models
+     one instruction and one code candidate is generally within
+                                                                                      GPT3.5/GPT4, models customized for Verilog genera-
+     2048 token length. So we can set 2048 as the max length in
+                                                                                      tion [13], [14], [22], software code generators [24], [25],
+     our finetuning. In Fig. 12(b), we observed that the majority of
+                                                                                      [26], [33], our proposed RTLCoder and quantized version
+     training samples in the dataset have a low overlap compared
+                                                                                      RTLCoder-4bit, and ablation studies of RTLCoder. In addition,
+     with the benchmark, with Rouge-L scores < 0.3. However,
+                                                                                      we further visualize key results on VerilogEval benchmark in
+     there are still a small number of samples with higher similarity.
+                                                                                      Fig. 13.
+     To ensure fair evaluation of the RTLCoder, we get rid of all
+                                                                                         In the VerilogEval benchmark [13], for both EvalHuman
+     training samples with Rouge-L values > 0.5 which counts
+                                                                                      and EvalMachine categories, RTLCoder-DeepSeek scores 61.2
+     about 100 samples.
+                                                                                      and 41.6, respectively. It clearly outperforms GPT-3.5 and is
+                                                                                      only inferior to GPT-4 among all the models in EvalHuman.
+     C. Model Training                                                                Specifically, in the EvalMachine part, RTLCoder-DeepSeek
+        Based on our generated dataset with 27K instruction-                          and RTLCoder-Mistral even outperforms GPT4 by an absolute
+     code pairs, we choose the latest Mistral-7B-v0.1 [26] and                        value of 1.2% and 2.5%. A similar trend can be observed in
+     DeepSeek-Coder-6.7b [33] as the basic pretrained model for                       the RTLLM benchmark V1.1 [12]. RTLCoder is also second
+     finetuning. In all experiments, we opted for the Adam opti-                      only to GPT-4. In summary, RTLCoder outperforms GPT-3.5
+     mizer with β1 = 0.9, β2 = 0.999, and learning rate γ = 1e-5,                     and all noncommercial baseline models in all metrics on both
+     while abstaining from the use of weight decay. Concurrently,                     benchmarks. It is surprising that the lightweight RTLCoder
+     we established a context length of 2048 and a global batch size                  with only 7 billion parameters could achieve such impressive
+     of 256. We trained the model on only four consumer-level RTX                     accuracy despite its smaller size.
+
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+     1458                            IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS, VOL. 44, NO. 4, APRIL 2025
+
+
+                                                                    TABLE IV
+                D ETAILED S YNTAX AND F UNCTIONALITY E VALUATION R ESULTS U SING S AMPLING G ENERATION M ETHOD IN RTLLM V1.1 [12]
+
+
+
+
+        Furthermore, we validate the effectiveness of our proposed                    on most benchmarks. This trend is consistent with the base
+     dataset and algorithm through an ablation study. The                             model’s relative accuracy (i.e., DeepSeek outperforms Mistral
+     RTLCoder-Mistral-Direct and RTLCoder-DeepSeek-Direct are                         in most benchmarks). On the other hand, the inference speed
+     directly trained with the existing method mentioned in                           of RTLCoder-Mistral is considerably faster than RTLCoder-
+     Fig. 11(a). Using our training dataset, they can already signifi-                DeepSeek, largely because of the grouped query attention and
+     cantly outperform the base model and even GPT-3.5 on part of                     rolling buffer KV cache techniques used in Mistral.
+     these indexes. Then the RTLCoders trained with our proposed
+     training scheme further outperform those using Direct training
+     method on all benchmarks, indicating that our training method                    E. Experiment Results in Detail
+     greatly further improves the model performance.                                     To further examine the performance in detail, for both
+        In addition, although the quantized model RTLCoder-                           benchmarks [12], [13], we report RTLCoder’s performance on
+     DeepSeek-4bit shows a slight performance degradation                             each individual design case in both syntax and functionality
+     compared to the original model, it is still superior to GPT-                     correctness.
+     3.5 on the VerilogEval benchmark and comparable to it on                            We list the test results of RTLCoder-Mistral and available
+     RTLLM V1.1 with only 4-GB size. Such RTLCoder-4bit can                           baseline models on the RTLLM V1.1 benchmark for each
+     work on a simple laptop, allowing it to serve as a local assistant               design task in Table IV. Given five trials of generation, here
+     for engineers, addressing privacy concerns.                                      we counted the number of passed cases in terms of Syn-VCS,
+        We also randomly selected 10K samples from the 27K                            Syn-DC, and Functionality. As introduced, for both syntax and
+     training dataset to finetune the base models and obtained                        functionality, we count one success if any of the five trials pass
+     RTLCoder-Mistral-10k and RTLCoder-DeepSeek-10k, respec-                          the test. Generally, Syn-VCS is easier to pass than Syn-DC.
+     tively. Compared with the two models, RTLCoders trained on                          We further inspect the wrong answers in Table IV. We
+     a 27K dataset are clearly superior on all metrics. Increasing the                observed that the overall code structures of wrong answers
+     size of the training dataset and enhancing its diversity clearly                 from GPT-3.5, GPT-4, and RTLCoder-Mistral exhibit no
+     further improves the model performance.                                          obvious mistakes, despite the functionality incorrectness. In
+        As for the pretrained model selection, we can see that                        comparison, the code generated by other open-source baselines
+     different base model also has a significant impact on the                        occasionally contains obviously redundant content or deviates
+     performance of the fine-tuned model. On one hand, RTLCoder-                      considerably from the given description. In terms of syntax,
+     DeepSeek slightly outperforms RTLCoder-Mistral in accuracy                       we observed that both GPT and RTLCoder-Mistral frequently
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+     LIU et al.: RTLCoder: FULLY OPEN-SOURCE AND EFFICIENT LLM-ASSISTED RTL CODE GENERATION TECHNIQUE                                                         1459
+
+
+
+                                                                                        is still superior to all the open-source baselines with beam
+                                                                                        search.
+                                                                                           We also investigate the performance of the RTLCoder fine-
+                                                                                        tuned on the Verilog task compared to its pretrain models on
+                                                                                        other code-generation tasks. Table VI shows pass@1 results on
+                                                                                        Veilog tasks from VerilogEval-Human [13], python tasks from
+                                                                                        HumanEval+ [37], Cpp, and Sh programming tasks from [38].
+                                                                                        RTLCoder-DeepSeek shows a significant improvement over
+                                                                                        its base model in the Verilog task and performs similarly
+                                                                                        to the base model in the other three programming tasks.
+                                                                                        RTLCoder-Mistral, compared to its base model, also shows
+                                                                                        better performance in the Verilog task but experiences more
+                                                                                        performance degradation in the Cpp and Sh benchmarks. This
+                                                                                        observation indicates that different pretrain models when fine-
+                                                                                        tuned on the same specific task, exhibit varying degrees of
+                                                                                        forgetting when applied to other benchmarks. Overall, such a
+                                                                                        degradation in other programming tasks does not affect our
+                                                                                        target application (i.e., circuit RTL generation).
+
+
+
+     Fig. 14.     Detailed syntax and functionality results of RTLCoder-Mistral
+     on VerilogEval Benchmark [13], reporting EvalMachine and EvalHuman
+     separately. Each subfigure has eight columns, and thus cell at (i, j) represents               V. L IMITATION AND F UTURE W ORK
+     the ((j − 1) × 8 + i)th task. The color of each cell indicates the count of           The results of GPT4 on VerilogEval-Human and RTLLM
+     correct cases among 20 trials. EvalMachine contains 143 tasks, so the last
+     one cell is empty. EvalHuman contains 156 tasks, so the last four cells are        1.1 are very impressive in Table III which indicates the sig-
+     empty. (a) EvalMachine syntax. (b) EvalMachine functionality. (c) EvalHuman        nificant superiority of GPT4 to all the other reported models.
+     syntax. (d) EvalHuman functionality.                                               In our opinion, GPT-4, the most powerful large-scale model
+                                                                                        by OpenAI to date, outperforms existing open-source models
+                                                                                        for mainly three main reasons.
+     assign 0 directly to 2-D arrays, resulting in syntax errors.                          1) The size of the pretraining dataset used by GPT-4 is
+     Regarding functionality, we noticed that for more complex                                 orders of magnitude larger than our adopted pretrained
+     combinational logic circuits, such as multi_pipe_4bit and                                 models. The generation of a huge dataset that enables
+     multi_pipe_8bit, and sequential logic circuits like pulse_detect                          high-performance LLM consumes a significant amount
+     and FSM, some of the logical behaviors described in the                                   of manpower and resources;
+     instructions are not adequately captured by all LLM solutions,                        2) The GPT-4 model is much larger in scale than any
+     leading to functional errors.                                                             existing open-source model. The scaling law [39] sug-
+        The RTLCoder-Mistral’s results on VerilogEval Benchmark                                gests that as the model parameters increase, the model’s
+     are reported in Fig. 14. Each cell in the image represents one                            generalization and learning capabilities also improve;
+     design case, with color indicating the number of successful                               and
+     ones among all 20 trails. There are eight columns in each                             3) The alignment technique, such as RLHF [40], employed
+     image. The location of cell (i, j) represents the ((j−1)×8+i)th                           by GPT-4 can enhance the quality of the model’s
+     design case in the provided description file. So we used white                            outputs, reducing incorrect answers, which is also one
+     cells to fill the cells in the last row (18th row for EvalMachine                         of the motivations for us proposing the scoring-based
+     and 20th row in the EvalHuman) that do not correspond to a                                training approach in this article.
+     design task.                                                                          Given limited resources, we believe there are several key
+        During the process of generating text sequences, the model                      strategies for the open-source model to outperform GPT4 in
+     continuously repeats the behavior of predicting the next token.                    specific tasks.
+     For all models in our experiment, we adopt the sampling                               1) The diversity and coverage of the dataset can be further
+     method, which randomly selects the next token from the                                    improved. Due to limited manual efforts during dataset
+     vocabulary dictionary based on the probability distribution.                              generation, the training set primarily relies on guiding
+     Here, we further add an ablation study based on the beam                                  GPT to create instructions. To further enhance the
+     search method. A beam of the top “beam size” subsequences                                 coverage of the dataset for Verilog design problems,
+     with the highest-generation probabilities is maintained and                               manual inspection and creation for high-quality data
+     updated during the generation process. We conduct exper-                                  sample generation can be conducted.
+     iments using beam search method with a beam size 5 on                                 2) The checking of functional correctness of the Verilog
+     RTLLM V1.1 for RTLCoder-Mistral and open source base-                                     code should be further explored if possible, using either
+     lines. The results are shown in Table V. The accuracies of all                            manpower or a reliable automated verification pro-
+     methods drop after adopting beam search. RTLCoder-Mistral                                 cess. Although our fine-tuned models have a significant
+
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+     1460                            IEEE TRANSACTIONS ON COMPUTER-AIDED DESIGN OF INTEGRATED CIRCUITS AND SYSTEMS, VOL. 44, NO. 4, APRIL 2025
+
+
+                                  TABLE V
+     A BLATION S TUDY OF D IFFERENT D ECODING M ETHODS IN RTLLM V1.1                   [2] L. Chen et al., “The dawn of AI-native EDA: Promises and challenges
+          B ENCHMARK [12]. T HE R ESULT OF THE S AMPLING D ECODING                         of large circuit models,” 2024, arXiv:2403.07257.
+               M ETHOD I S A DOPTED AND R EPORTED IN TABLE III                         [3] Z. He et al., “ChatEDA: A large language model powered autonomous
+                                                                                           agent for EDA,” in Proc. MLCAD Workshop, 2023, pp. 1–14.
+                                                                                       [4] M. Liu et al., “ChipNeMo: Domain-adapted LLMs for chip design,”
+                                                                                           2023, arXiv:2311.00176.
+                                                                                       [5] Y. Fu et al., “GPT4AIGChip: Towards next-generation AI accelerator
+                                                                                           design automation via large language models,” 2023, arXiv:2309.10730.
+                                                                                       [6] Z. Yan, Y. Qin, X. S. Hu, and Y. Shi, “On the viability of using LLMs for
+                                                                                           SW/HW co-design: An example in designing CiM DNN accelerators,”
+                                                                                           2023, arXiv:2306.06923.
+                                                                                       [7] Z. Liang et al., “Unleashing the potential of LLMs for quantum comput-
+                                                                                           ing: A study in quantum architecture design,” 2023, arXiv:2307.08191.
+                                                                                       [8] R. Kande et al., “LLM-assisted generation of hardware assertions,” 2023,
+                                                                                           arXiv:2306.14027.
+                                    TABLE VI
+                                                                                       [9] B. Ahmad, S. Thakur, B. Tan, R. Karri, and H. Pearce, “Fixing hardware
+            PASS @1 R ESULTS OF THE T RAINED RTLC ODER AND T WO BASE
+                                                                                           security bugs with large language models,” 2023, arXiv:2302.01215.
+                   M ODELS ON D IFFERENT P ROGRAMMING TASKS
+                                                                                      [10] K. Chang et al., “ChipGPT: How far are we from natural language
+                                                                                           hardware design,” 2023, arXiv:2305.14019.
+                                                                                      [11] J. Blocklove, S. Garg, R. Karri, and H. Pearce, “Chip-chat:
+                                                                                           Challenges and opportunities in conversational hardware design,” 2023,
+                                                                                           arXiv:2305.13243.
+                                                                                      [12] Y. Lu, S. Liu, Q. Zhang, and Z. Xie, “RTLLM: An open-source
+                                                                                           benchmark for design RTL generation with large language model,” 2023,
+                                                                                           arXiv:2308.05345.
+                                                                                      [13] M. Liu, N. Pinckney, B. Khailany, and H. Ren, “VerilogEval:
+                                                                                           Evaluating large language models for Verilog code generation,” 2023,
+                                                                                           arXiv:2309.07544.
+           performance improvement and even outperform GPT-                           [14] S. Thakur et al., “Benchmarking large language models for automated
+                                                                                           Verilog RTL code generation,” in Proc. DATE, 2023, pp. 1–7.
+           3.5, reliable filtering based on functionality checking can                [15] S. Thakur, J. Blocklove, H. Pearce, B. Tan, S. Garg, and R. Karri,
+           certainly further boost the model’s generation ability.                         “AutoChip: Automating HDL generation using LLM feedback,” 2023,
+        3) The automated functionality checking for hardware is                            arXiv:2311.04887.
+                                                                                      [16] M. Nair, R. Sadhukhan, and D. Mukhopadhyay, “Generating secure
+           challenging. A possible solution is to apply LLMs, such                         hardware using ChatgPT resistant to CWEs,” Cryptol. ePrint Arch.,
+           as GPT, to also help generate verification assertions                           IACR, Bellevue, WA, USA, Rep. 2023/212, 2023.
+           based on instructions [41]. Then the code combined                         [17] Y. Zhang, Z. Yu, Y. Fu, C. Wan, and Y. C. Lin, “MG-Verilog: Multi-
+                                                                                           grained dataset towards enhanced LLM-assisted Verilog generation,”
+           with assertions can be verified by verification platforms,                      2024, arXiv:2407.01910.
+           such as Cadence Jasper. However, the correctness of                        [18] E. Goh, M. Xiang, I. Wey, and T. H. Teo, “From English to
+           assertions, since they are also automatically generated                         ASIC: Hardware implementation with large language model,” 2024,
+                                                                                           arXiv:2403.07039.
+           by LLMs, is not guaranteed either. This may result in                      [19] S. Liu, Y. Lu, W. Fang, M. Li, and Z. Xie, “OpenLLM-RTL: Open
+           wrongly filtering out many correct samples.                                     dataset and benchmark for LLM-aided design RTL generation,” in Proc.
+        4) The scoring-based training scheme can be improved                               IEEE/ACM Int. Conf. Comput. Aided Design (ICCAD), 2024, pp. 1–9.
+                                                                                      [20] M. Li, W. Fang, Q. Zhang, and Z. Xie, “SpecLLM: Exploring generation
+           by applying automated functionality checking. This                              and review of VLSI design specification with large language model,”
+           technique can hopefully enhance the model’s instruction                         2024, arXiv:2401.13266.
+           alignment capability.                                                      [21] K. Chang et al., “Data is all you need: Finetuning LLMs for chip
+                                                                                           design via an automated design-data augmentation framework,” 2024,
+                                                                                           arXiv:2403.11202.
+                                VI. C ONCLUSION                                       [22] Z. Pei, H.-L. Zhen, M. Yuan, Y. Huang, and B. Yu, “BetterV:
+                                                                                           Controlled Verilog generation with discriminative guidance,” 2024,
+        This work proposes a new LLM solution named                                        arXiv:2402.03375.
+     RTLCoder for RTL code generation, achieving state-of-the-art                     [23] M. Rapp et al., “MLCAD: A survey of research in machine learning
+                                                                                           for CAD keynote paper,” IEEE Trans. Comput.-Aided Design Integr.
+     performance in noncommercial solutions and outperforming                              Circuits Syst., vol. 41, no. 10, pp. 3162–3181, Oct. 2022.
+     GPT-3.5. We contribute a new data generation flow and a                          [24] E. Nijkamp, H. Hayashi, C. Xiong, S. Savarese, and Y. Zhou,
+     complete dataset with over 27 thousand instruction-answer                             “CodeGen2: Lessons for training LLMs on programming and natural
+                                                                                           languages,” 2023, arXiv:2305.02309.
+     samples, addressing the serious data availability problem in                     [25] R. Li et al., “StarCoder: May the source be with you!” 2023,
+     hardware-design-related tasks. Also, we contribute a new                              arXiv:2305.06161.
+     training scheme based on design quality scoring. It greatly                      [26] A. Q. Jiang et al., “Mistral 7B,” 2023, arXiv:2310.06825.
+                                                                                      [27] Y. Wei, Z. Wang, J. Liu, Y. Ding, and L. Zhang, “Magicoder: Source
+     boosts the model’s performance. Importantly, RTLCoder has                             code is all you need,” 2023, arXiv:2312.02120.
+     been fully open-sourced. RTLCoder’s lightweight property and                     [28] C. Shaib, J. Barrow, J. Sun, A. F. Siu, B. C. Wallace, and A. Nenkova,
+     low-hardware barrier allow anyone to easily replicate and                             “Standardizing the measurement of text diversity: A tool and a compar-
+                                                                                           ative analysis of scores,” 2024, arXiv:2403.00553.
+     further improve based on our existing solution. We expect                        [29] Y. Liu, P. Liu, D. Radev, and G. Neubig, “BRIO: Bringing order to
+     more brilliant LLM-based solutions in this agile hardware                             abstractive summarization,” 2022, arXiv:2203.16804.
+     design direction.                                                                [30] S. Bengio, O. Vinyals, N. Jaitly, and N. Shazeer, “Scheduled sampling
+                                                                                           for sequence prediction with recurrent neural networks,” in Proc.
+                                                                                           NeurIPs, 2015, pp. 1–9.
+                                   R EFERENCES                                        [31] (Synopsys, Inc., Sunnyvale, CA, USA). VCS                 R    Functional
+                                                                                           Verification       Solution.      (2021).       [Online].        Available:
+      [1] J. Achiam et al., “GPT-4 technical report,” 2023, arXiv:2303.08774.              https://www.synopsys.com/verification/simulation/vcs.html
+
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+     LIU et al.: RTLCoder: FULLY OPEN-SOURCE AND EFFICIENT LLM-ASSISTED RTL CODE GENERATION TECHNIQUE                                                         1461
+
+
+
+     [32] (Synopsys,        Inc.,     Sunnyvale,       CA,       USA).      Design                             Yao Lu received the B.E. degree from the School
+          Compiler  R     RTL      Synthesis.   (2021).     [Online].   Available:                            of Electronic Science and Engineering, Southeast
+          https://www.synopsys.com/implementation-and-signoff/rtl-synthesis-                                   University, Nanjing, China, in 2020, and the
+          test/design-compiler-nxt.html                                                                        master’s degree from the School of Microelectronics,
+     [33] D. Guo et al., “DeepSeek-coder: When the large language model meets                                  Fudan University, Shanghai, China, in 2023. She
+          programming—The rise of code intelligence,” 2024, arXiv:2401.14196.                                  is currently pursuing the Ph.D. degree with
+     [34] J. Rasley, S. Rajbhandari, O. Ruwase, and Y. He, “DeepSpeed: System                                  the Department of Electronic and Computer
+          optimizations enable training deep learning models with over 100 billion                             Engineering, The Hong Kong University of Science
+          parameters,” in Proc. 26th ACM SIGKDD Int. Conf. Knowl. Discov. Data                                 and Technology, Hong Kong.
+          Min., 2020, pp. 3505–3506.                                                                              Her current research interests focus on machine
+     [35] S. Takamaeda-Yamazaki, “Pyverilog: A python-based hardware design                                    learning applications in EDA.
+          processing toolkit for Verilog HDL,” in Proc. 11th Int. Symp. Appl.
+          Reconfig. Comput., 2015, pp. 451–460.
+     [36] E. Frantar, S. Ashkboos, T. Hoefler, and D. Alistarh, “GPTQ: Accurate                                Jing Wang received the B.S. degree in electrical
+          post-training compression for generative pretrained transformers,” 2022,                             information engineering from Peking University,
+          arXiv:2210.17323.                                                                                    Beijing, China, in 2022, and the master’s degree
+     [37] J. Liu, C. S. Xia, Y. Wang, and L. Zhang, “Is your code generated by                                 in artificial intelligence from the Department of
+          ChatGPT really correct? Rigorous evaluation of large language models                                 Statistics and Actuarial Science, The University of
+          for code generation,” in Proc. 37th Adv. Neural Inf. Process. Syst.,                                 Hong Kong, Hong Kong, in 2023. He is currently
+          vol. 36, 2024, pp. 21558–21572.                                                                      pursuing the Ph.D. degree with the Department of
+     [38] L. Ben Allal, N. Muennighoff, L. Kumar Umapathi, B. Lipkin, and                                      Electronic and Computer Engineering, The Hong
+          L. von Werra, “A framework for the evaluation of code generation                                     Kong University of Science and Technology, Hong
+          models.” 2022. [Online]. Available: https://github.com/bigcode-project/                              Kong.
+          bigcode-evaluation-harness                                                                              His research interests include agile VLSI design
+     [39] J. Kaplan et al., “Scaling laws for neural language models,” 2020,          methodologies and artificial intelligence.
+          arXiv:2001.08361.
+     [40] Y. Bai et al., “Training a helpful and harmless assistant with reinforce-
+          ment learning from human feedback,” 2022, arXiv:2204.05862.
+     [41] W. Fang et al., “AssertLLM: Generating and evaluating hardware
+          verification assertions from design specifications via multi-LLMs,” 2024,                            Qijun Zhang received the B.Eng. degree from
+          arXiv:2402.00386.                                                                                    Tongji University, Shanghai, China, in 2022. He
+                                                                                                               is currently pursuing the Ph.D. degree with
+                                                                                                               the Department of Electronic and Computer
+                                                                                                               Engineering, The Hong Kong University of Science
+                                                                                                               and Technology, Hong Kong.
+                                                                                                                  His research interests include computer architec-
+                                                                                                               ture and electronics design automation.
+                              Shang Liu received the B.E. degree in automation
+                              science and electrical engineering from Beihang
+                              University, Beijing, China, in 2023. He is currently
+                              pursuing the Ph.D. degree with the Department of
+                              Electronic and Computer Engineering, The Hong
+                              Kong University of Science and Technology, Hong
+                                                                                                             Hongce Zhang (Member, IEEE) received the B.S.
+                              Kong.
+                                                                                                             degree in microelectronics from Shanghai Jiao Tong
+                                 His research interests include agile VLSI design
+                                                                                                             University, Shanghai, China, in 2015, and the
+                              methodologies and artificial intelligence.
+                                                                                                             Ph.D. degree from the Electrical and Computer
+                                                                                                             Engineering Department, Princeton University, NJ,
+                                                                                                             USA, in 2021.
+                                                                                                                He is currently an Assistant Professor with the
+                                                                                                             Department of Microelectronics Thrust, Function
+                                                                                                             Hub of Hong Kong University of Science and
+                                                                                                             Technology (Guangzhou), Guangzhou, China, and
+                                                                                                             is also affiliated with the Electronic and Computer
+                                                                                      Engineering Department, The Hong Kong University of Science and
+                                                                                      Technology, Hong Kong. His research interests include formal verification and
+                                                                                      hardware model checking.
+
+
+
+
+                                                                                                             Zhiyao Xie (Member, IEEE) received the B.Eng.
+                                                                                                             degree from The City University of Hong Kong,
+                                                                                                             Hong Kong, in 2017, and the Ph.D. degree from
+                           Wenji Fang (Graduate Student Member, IEEE)                                        Duke University, Durham, NC, USA, in 2022.
+                           received the B.Eng. degree from the Nanjing                                          He is an Assistant Professor with the Department
+                           University of Aeronautics and Astronautics,                                       of Electronic and Computer Engineering, The Hong
+                           Nanjing, China, in 2021, and the M.Phil. degree in                                Kong University of Science and Technology, Hong
+                           microelectronics from The Hong Kong University of                                 Kong. His research interests include machine learn-
+                           Science and Technology (Guangzhou), Guangzhou,                                    ing algorithms for EDA and VLSI design.
+                           China, in 2024. He is currently pursuing the Ph.D.                                   Dr. Xie has received multiple prestigious awards,
+                           degree with the Department of Electronic and                                      including the IEEE/ACM MICRO 2021 Best Paper
+                           Computer Engineering, The Hong Kong University             Award, the ACM SIGDA SRF Best Research Poster Award 2022, the ASP-
+                           of Science and Technology, Hong Kong.                      DAC 2023 Best Paper Award, the ACM Outstanding Dissertation Award in
+                              His research interests include electronic design        EDA 2023, the EDAA Outstanding Dissertation Award 2023, and the 2023
+     automation and VLSI design verification.                                         Early Career Award from Hong Kong Research Grants Council.
+
+
+Authorized licensed use limited to: Hong Kong University of Science and Technology. Downloaded on December 16,2025 at 09:17:20 UTC from IEEE Xplore. Restrictions apply.
+

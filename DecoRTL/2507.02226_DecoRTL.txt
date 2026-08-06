@@ -1,0 +1,786 @@
+                                            DecoRTL: A Run-time Decoding Framework for
+                                                 RTL Code Generation with LLMs
+                                                                                  Mohammad Akyash, Kimia Azar, Hadi Kamali
+                                           Department of Electrical and Computer Engineering (ECE), University of Central Florida, Orlando, FL 32816, USA
+                                                                             {mohammad.akyash, azar, kamali}@ucf.edu
+
+
+                                           Abstract—As one of their many applications, large language       models toward more accurate RTL generation through tailored
+                                        models (LLMs) have recently shown promise in automating             instructions, task-specific context, or exemplars [3], [4]. In
+                                        register transfer level (RTL) code generation. However, conven-     contrast, fine-tuning approaches focus on adapting LLMs
+                                        tional LLM decoding strategies, originally designed for natural
+                                        language, often fail to meet the structural and semantic demands    using curated RTL datasets, either collected from open-source
+                                                                                                            repositories [6], manually curated [7], or synthesized from
+arXiv:2507.02226v1 [cs.PL] 3 Jul 2025
+
+
+
+
+                                        of RTL, leading to hallucinated, repetitive, or invalid code
+                                        outputs. In this paper, we first investigate the root causes of     high-level specifications [8], to expose models to a broader
+                                        these decoding failures through an empirical analysis of token-     range of hardware design patterns. While both strategies are
+                                        level entropy during RTL generation. Our findings reveal that       beneficial, they face critical limitations. Prompt engineering
+                                        LLMs exhibit low confidence in regions of structural ambi-
+                                        guity or semantic complexity, showing that standard decoding        alone often lacks the robustness needed to consistently produce
+                                        strategies fail to differentiate between regions requiring deter-   the needed (correct) RTL. On the other hand, fine-tuning
+                                        minism (syntax-critical regions) and those that benefit from        demands large quantities of diverse, high-quality RTL data,
+                                        creative exploratory variability (design-critical regions). Then,   which is difficult to collect and verify at scale. Despite these
+                                        to overcome this, we introduce DecoRTL, a novel run-time            challenges, relatively little attention has been given to the
+                                        decoding strategy, that is both syntax-aware and contrastive
+                                        for RTL code generation. DecoRTL integrates two complemen-          decoding strategies used at inference time, which directly
+                                        tary components: (i) self-consistency sampling, which generates     influences the quality, correctness, and diversity of LLMs’
+                                        multiple candidates and re-ranks them based on token-level          outputs, i.e., the generated RTL code. All existing LLM-
+                                        agreement to promote correctness while maintaining diversity;       based RTL generation methods rely on conventional decoding
+                                        and (ii) syntax-aware temperature adaptation, which classifies      strategies, which is developed for natural language generation.
+                                        tokens by their syntactical and functional roles and adjusts the
+                                        sampling temperature accordingly, enforcing low temperature for        While standard decoding strategies have shown success in
+                                        syntax-critical tokens and higher temperature for exploratory
+                                        ones. Our approach operates entirely at inference time without
+                                                                                                            natural languages, they often fall short in code generation
+                                        requiring any additional model fine-tuning. Through evaluations     tasks [9], and RTL code is no exception. Unlike natural lan-
+                                        on multiple open-source LLMs using the VerilogEval benchmark,       guage, RTL code demands strict syntax/semantic correctness,
+                                        we demonstrate significant improvements in syntactic validity,      structural precision with cycle-accurate concurrency, and an
+                                        functional correctness, and output diversity, while the execution   appropriate level of design diversity/creativity [10]. These
+                                        overhead (performance overhead) is imperceptible1 .
+                                           Index Terms—LLMs, RTL Code Generation, Decoding Strat-
+                                                                                                            limitations stems from two key issues: (i) The LLM with
+                                        egy, Self-Consistency Sampling, Temperature Adaptation              standard decoding often produces tokens with low confidence
+                                                                                                            (i.e., high entropy), particularly in uncommon or complex
+                                                                     I. I NTRODUCTION                       regions of code, leading to unstable or incorrect outputs; (ii)
+                                                                                                             TABLE I: Comparison of RTL Code Generation Strategies with LLMs.
+                                           As hardware design becomes increasingly complex, ma-
+                                        chine learning (ML) offers a tempting path forward, enabling                                                    Prompt       Fine    Decoding
+                                                                                                            Feature
+                                                                                                                                                      Engineering   Tuning    (Ours)
+                                        faster register transfer level (RTL) code generation, reducing
+                                        manual design effort, and opening the field to a broader            Training Required                             No         Yes       No
+                                        community of designers [2]. With the rapid progress of              Dataset Requirement                          Low         High     None
+                                        large language models (LLMs), there is growing interest in          Compute Cost                                 Low         High      Low
+                                        leveraging them for hardware code synthesis from abstract           HW Engineer Knowledge Required             Medium        High      Low
+                                        design specifications [3], [4]. However, these models still         Adaptability to New Tasks                  Medium        Low      High
+                                        face significant challenges in producing syntactically sound
+                                                                                                            Effectiveness on Structural Constraints      Low        Medium    High
+                                        and semantically coherent RTL, particularly for structurally
+                                        constrained and functionally complicated design scenarios.          Semantic Consistency                         Low        Medium    High
+                                           Current approaches to RTL code generation with LLM               Output Diversity                             Low        Medium    High
+                                        fall into two main categories [5]: (i) prompt engineering           Risk of Hallucination                        High       Medium     Low
+                                        and (ii) fine-tuning. Prompt-based methods guide pre-trained        Implementation Complexity                    Low         High    Medium
+
+                                          1 Code                                                            Reusability Across Models                    High        Low      High
+                                                   is available at [1]
+In standard decoding with fixed temperature, the model fails        Instruction:
+to account for the varying needs of different token types in the     Write a Verilog module that computes the bitwise AND of two 8-bit inputs a and
+                                                                     b, and outputs the result as out.
+code (syntax-critical tokens such as delimiters and keywords
+require high determinism to ensure validity, while semantically      module and_gate(            module and_gate(            module and_gate(
+                                                                      input [7:0] a,             input [7:0] a,              input [7:0] a,
+rich or design-critical tokens benefit from higher variability to     input [7:0] b,             input [7:0] b,              input [7:0] b,
+support meaningful exploration of the design space).                  output [7:0] out           output [7:0] out            output [7:0] out
+                                                                     );                          );                          );
+   To address these limitations, the proposed framework,                                         wire [7:0] temp = ~a
+                                                                     assign out = a & a &        && b;                       assign out = a & b;
+DecoRTL, takes a first-of-its-kind step in shifting the focus        a & a & a & a;              assign out = a + b +
+of LLM-based RTL code generation from prompt engineering                                         temp;                       endmodule
+                                                                     endmodule                   endmodule
+and fine-tuning to the unexplored space of decoding strategies,
+                                                                              Greedy                      Top-K               Self-consistency +
+operating entirely at inference time. As summarized in Table I,                                                             Temperature Adaptation
+and as shown in Fig. 1 in an illustrative example, decoding         Fig. 1: RTL codes generated using different decoding strategies. Greedy and
+                                                                    sampling-based methods often produce repetitive/invalid code, while our ap-
+can offer a unique set of advantages, such as zero training         proach (Contrastive + TA decoding) generates more diverse and syntactically
+cost, high adaptability, and improved control over structural       correct RTL (Examples are abstracted due to space constrained)2 .
+and semantic correctness, yet has received little attention
+in prior LLM-based RTL generation work. DecoRTL lever-              generation with existing models.
+ages contrastive plus temperature-adaptive (C&TA) decoding,
+                                                                                              II. R ELATED W ORKS
+providing a lightweight and model-agnostic alternative that
+enhances output quality without modifying the underlying            A. LLM for Code Generation
+LLM. Specifically, our contributions are as follows:                   LLMs have achieved remarkable success in code generation
+(1) Empirical Analysis of Uncertainty and Context: We ana-          tasks across a wide range of high-level (software) program-
+lyze the softmax distributions over logits during RTL decoding      ming languages. Models, such as Codex [12], CodeGen [13],
+and observe that tokens appearing in ambiguous contexts             and AlphaCode [14], leverage massive pretraining on diverse
+often exhibit higher entropy, indicating model uncertainty and      code corpora and have demonstrated the ability to translate
+aligning with regions prone to structural or semantic errors. To    natural language instructions into syntactically correct and
+further investigate, we categorize RTL tokens into high-impact      functionally coherent source code.
+and structural classes and analyze their context across open-          Building on these capabilities, LLMs have recently been
+source Verilog code. Our analysis shows that the class of a         to a variety of hardware design and verification related tasks,
+token is often predictable from its preceding token, revealing      including hardware debugging [17] design optimization [18]
+consistent local syntactic patterns in RTL.                         (e.g., pipelining or parallelization), and detection of hardware-
+(2) Self-Consistency via Contrastive Top-K Re-ranking: We           oriented security vulnerabilities [19], [20]. In parallel, several
+propose an inference-time decoding method that improves             efforts have explored the use of LLMs for RTL code genera-
+self-consistency by selecting the top-K candidate tokens at         tion [3], [4], [21]–[23]. Early approaches, such as ChatEDA [3]
+each decoding step and re-ranking them via a contrastive            and ChipGPT [4], employed prompt engineering techniques
+mechanism, penalizing those overly similar to the mean em-          to guide general-purpose models (such as GPT-3.5 or GPT-4)
+bedding to improve diversity while preserving confidence and        by embedding design specifications, toolchain feedback, and
+distinctiveness in token selection.                                 format constraints directly into the prompts. These prompt-
+(3) Syntax-Aware Temperature Adaptation: Building on our            based strategies aim to elicit accurate Verilog outputs and
+entropy analysis, we introduce a dynamic temperature adapta-        capture design intent or tool responses, but often require
+tion mechanism that predicts the class of the next token based      manual intervention, prompt iteration, or post-processing to
+on the most recently generated token. Using this prediction, we     ensure valid and synthesizable outputs.
+adjust the sampling temperature, applying lower temperatures           Beyond prompt engineering, more recent efforts have turned
+for syntax-critical structural tokens to ensure determinism, and    to fine-tuning open-source language models on RTL-specific
+higher temperatures for high-impact tokens for diversity.           datasets. VeriGen [24], which utilized Verilog data from public
+   Through extensive experiments, we demonstrate the effec-         repositories for supervised training, and RTLCoder [8], which
+tiveness of our domain-specific C&TA decoding strategies. We        addressed dataset limitations by synthesizing instruction-code
+evaluated our approach on multiple open-source LLMs using           pairs uaing GPT3.5 to enhance diversity. Advancing this line
+the VerilogEval benchmark [11] and show that it consistently        of research, OriGen [7] introduced mechanisms like code
+improves both the synthesizability and functional correctness       augmentation and self-reflection to iteratively refine model
+of generated RTL code across all models. In particular, these       outputs, while BetterV [25] focused on design optimization
+improvements come with minimal computational overhead, as           by aligning generation objectives with Power, Performance,
+DecoRTL operates purely at the decoding level. Our approach
+achieves these gains without any fine-tuning, additional data          2 Greedy decoding is deterministic but often yields short, repetitive, and
+
+gathering, or expensive retraining which denotes the prac-          structurally flawed RTL code. Beam search [15] improves coverage but tends
+                                                                    to generate generic and redundant designs. Sampling methods like top-k [16]
+ticality and generalizability of our method and make it a           add diversity through randomness, but in RTL generation, they can introduce
+lightweight yet powerful solution for enhancing RTL code            syntax errors, semantic inconsistencies, and hallucinated hardware logic.
+and Area (PPA) metrics. Additionally, CraftRTL [22] enriched                        Greedy                  Top-3            Nucleus (P=0.95)               Contrastive Re-Ranking
+
+model understanding by integrating auxiliary design artifacts,                                                                                                                b
+                                                                      a              0.38                    0.38                   0.38             𝑒1      0.38                       0.32
+e.g., state diagrams and waveforms into the training process.
+   While these methods have significantly advanced LLM-
+                                                                      b              0.23                    0.23                   0.23              𝑒2     0.23                       0.28
+based RTL code generation, they share a common underlying
+limitation: they inherit natural language-oriented decoding
+                                                                    temp             0.20                    0.20                   0.20              𝑒3     0.20                       0.13
+strategies, which are not suited to the strict syntactic, struc-
+tural, and semantic constraints of RTL code. Specifically,
+                                                                      c              0.11                    0.11                   0.11              𝑒4     0.11                       0.11
+they may produce hallucinated logic, incomplete modules,
+or structurally invalid outputs, especially when the model
+                                                                     1'b0            0.04                    0.04                   0.04              𝑒5     0.04                       0.09
+encounters complex or uncommon design scenarios. Moreover,
+even in fine-tuned models, decoding is typically performed                Selects Token With Select Top-3 and     Select tokens above a               selects top tokens,
+                                                                          Highest Probability Chooses Randomly cumulative probability 0.95          penalizes those similar       𝑒2
+using greedy search, beam search, or top-k sampling, which                                                       then chooses randomly                to the context, and
+                                                                                                                                                                                           𝑒3       𝑒4
+
+                                                                                             Code to be completed:                                   picks the one with the
+is not optimized for the unique demands of RTL. To date, no                                                                                         highest adjusted score.        𝑒1
+                                                                                                                                                                                                Mean
+
+                                                                                        assign sum = a +
+prior study has explored decoding-time adaptations as a means                                                                                                   Embedding Space                𝑒5
+
+of improving RTL generation with LLMs. This is a critical           Fig. 2: The Overall Comparison of Greedy, Top-k, Nucleus, and Our
+gap in the field: while prompt engineering and fine-tuning          Contrastive Decoding Strategies for RTL Token Generation.
+rely on extensive human effort or large-scale dataset curation,
+decoding-time strategies offer a lightweight, generalizable, and    tokens endorsed by the expert but disfavored by the amateur,
+model-agnostic alternative capable of significantly enhancing       enhancing reasoning and reducing hallucination [33].
+code quality without additional data collection or training.           As shown in Figure 2, decoding strategies, whether deter-
+                                                                    ministic, stochastic, or contrastive, vary in their implemen-
+B. Decoding Strategies in LLMs                                      tation, provide trade-offs between diversity, confidence, and
+   LLMs generate text through an autoregressive decoding            syntactic control. While contrastive approaches have recently
+process, producing one token at a time based on the prob-           gained attention for their ability to improve generation diver-
+ability distribution conditioned on the previously generated        sity and consistency, they often rely on access to full hidden
+context [26]. While the model computes probabilities over the       states, intermediate activations, or additional external models.
+vocabulary, the actual output depends on the decoding strategy,     These requirements limit their practicality and compatibility
+which governs how tokens are selected. These strategies are         with structured, syntax-sensitive domains like RTL. In con-
+broadly divided into the following categories:                      trast, our approach introduces a lightweight, decoding-time
+(1) Deterministic Decoding: Deterministic methods prioritize        contrastive mechanism that is fully model-agnostic and easily
+coherence and confidence by always selecting the most proba-        deployable across pre-trained LLMs. By applying token-level
+ble tokens. For instance, greedy decoding chooses the highest-      re-ranking within the top-k candidates and penalizing options
+probability token at each step, making it simple and fast but of-   that are overly similar to the mean embedding, our method
+ten resulting in repetitive or generic outputs [27]. Beam search    promotes output diversity without compromising syntactic
+[15] improves upon this by maintaining multiple candidate           fidelity or introducing architectural complexity.
+sequences to optimize the overall sequence-level likelihood.
+However, it still tends to favor low-diversity completions due      III. U NCERTAINTY IN RTL C ODE G ENERATION W / LLM S
+to its emphasis on probability maximization.
+                                                                      This section presents a set of key empirical observations that
+(2) Stochastic/Probabilistic Decoding: Stochastic methods
+                                                                    motivate our decoding strategy for RTL code generation with
+introduces controlled randomness to increase diversity and re-
+                                                                    LLMs. Through comparative analysis with natural language
+duce repetition. Temperature sampling [28] adjusts the sharp-
+                                                                    (NL) generation and a corpus-level examination of RTL syntax
+ness of the probability distribution: lower temperatures make
+                                                                    patterns, we identify characteristic entropy dynamics and local
+the model more confident (favoring top tokens), while higher
+                                                                    context regularities that proves the need for a syntax-aware,
+values flatten the distribution to allow more exploration. Top-k
+                                                                    temperature-adaptive decoding approach.
+sampling [16] restricts sampling to the k most likely tokens,
+while top-p (nucleus) sampling [29] dynamically selects from        1.4
+                                                                                                                                                           module MUX_4to1(
+                                                                                                                                 Natural Language          input wire [3:0] data,
+the smallest set of tokens whose cumulative probability ex-         1.2                                                          RTL Code                  input wire [1:0] sel,
+ceeds a threshold p, enabling adaptive diversity.                   1.0
+                                                                                                                                                           Output out );
+                                                                          Entropy
+
+
+
+
+(2) Constrastive Decoding: Contrastive methods [30] aims to         0.8                                                                                    assign out =
+                                                                                                                                                           (sel == 2'b00) ? data[0] :
+improve generation quality by penalizing undesirable patterns       0.6
+                                                                                                                                                           (sel == 2'b01) ? data[1] :
+                                                                    0.4                                                                                    (sel == 2'b10) ? data[2] :
+rather than relying solely on probabilities. SimCTG [31]                                                                                                   data[3];
+                                                                    0.2
+implements this by discouraging tokens that are semantically          0                                                                                    endmodule
+similar to recent context embeddings, thereby reducing degen-               0               10           20          30         40
+                                                                                                 Token Index (sequence of appearance)
+                                                                                                                                           50        60
+
+
+eration in natural language generation. Another variant [32]        Fig. 3: Token-wise Entropy and their Comparison between Prompts for
+uses two models, an “expert” and an “amateur”, to prefer            Natural Language vs. that of RTL Generation.
+                                                                                TABLE II: Token classes used for syntax-aware temperature adaptation.
+A. Entropy Patterns in Natural Language vs. RTL Generation
+                                                                                        Token Class             Tokens
+   To quantify the model’s confidence (or the level of un-
+                                                                                        High-impact             +, -, *, /, &, |, ˆ, ˜, !, =, ==, !=, <, <=, >,
+certainty) during generation, we conducted a comparative                                                        >=, ?, :, <=, =>, &&, ||
+experiment between the RTL code and the NL outputs. We                                  Structural              module, endmodule, input, output,
+prompted a quantized Qwen2.5 model with two tasks: (1)                                                          inout, wire, reg, logic, parameter,
+                                                                                                                assign, always, begin, end, if, else,
+a free-form NL request, and (2) a prompt for generating a                                                       case, default, for, while, ;, ,, ., [, ],
+simple RTL (Verilog) code. At each task, and during the                                                         (, ), {, }, posedge, negedge
+decoding step, we recorded the softmax distribution over the
+vocabulary, computed its entropy, and plotted the token-wise
+                                                                                        1.8
+entropy curves, as demonstrated in Fig. 3.
+                                                                                        1.6                                         Top Preceding Tokens
+   The analysis mentioned above reveals key differences:                                                                            for High-impact Tokens
+(1) Higher Overall Uncertainty in NL: As shown in Fig.                                  1.4                             (what is the token generated before high-impact tokens?
+
+
+
+
+                                                                    Frequency ( ×106)
+3, the NL generation shows significantly higher mean entropy                            1.0
+and greater variance (vs. RTL code generation), which reflects
+                                                                                        0.8
+its inherently open-ended structure and the large number of
+plausible continuations at each step.                                                   0.6
+
+(2) Localized Entropy Spikes in RTL Generation: While the                               0.4
+RTL code shows overall lower entropy due to its rigid syntax,                           0.2
+sharp entropy peaks occur at specific points, especially around
+                                                                                         0
+control construsts (e.g., if, always, etc.) or block closures
+
+
+
+
+                                                                                                   begin
+
+
+
+
+                                                                                                     &&
+                                                                                                    end
+                                                                                                        ;
+                                                                                                        [
+
+
+
+
+                                                                                                       +
+                                                                                                        /
+
+
+                                                                                                        :
+                                                                                                        (
+
+
+                                                                                                        ]
+                                                                                                        )
+
+                                                                                                       =
+
+                                                                                                        -
+
+                                                                                              parameter
+                                                                                                        ,
+
+                                                                                                       &
+
+                                                                                                    else
+                                                                                                      <=
+
+
+
+
+                                                                                                      ==
+                                                                                                        }
+                                                                                                       ~
+
+                                                                                                        *
+                                                                                                       <
+                                                                                                       >
+                                                                                                        |
+
+                                                                                                        !
+                                                                                                 default
+
+
+
+
+                                                                                                       ||
+
+                                                                                                      >=
+                                                                                                  assign
+(e.g., endif, endmodule, etc.). These spikes reflect the
+                                                                                              Preceding Token
+potential ambiguity or uncommon contexts and correspond to
+regions with errors (e.g., missing or misplaced tokens).                                1.6
+(3) Entropy Decay Across the RTL Sequence: At the be-                                   1.4                                         Top Preceding Tokens
+                                                                                                                                    for Structural Tokens
+ginning of the RTL code generation, e.g., modules headers,                                                          (what is the token generated before structural tokens?
+                                                                                        1.2
+                                                                    Frequency ( ×106)
+
+
+
+
+port declarations, signaling names, etc., entorpy is relatively
+high as the model explores naming and configuration options.                            1.0
+
+As the code structure solidifies, entropy gradually decreases,                          0.8
+showing growing model confidence.                                                       0.6
+   Such observations show the fragility of RTL code gen-
+                                                                                        0.4
+eration, where small errors in high-entropy regions (e.g.,
+missing syntactical requirements) can make a module non-                                0.2
+
+synthesizable or functionally incorrect. As such, identifying                             0      begin
+                                                                                                    reg
+                                                                                                       ;
+                                                                                                       ,
+                                                                                                       :
+                                                                                                       ]
+
+
+
+
+                                                                                                  else
+                                                                                                       )
+                                                                                                      =
+                                                                                                       (
+
+
+
+
+                                                                                                       [
+
+                                                                                                output
+
+
+                                                                                               module
+                                                                                                       /
+
+
+                                                                                              posedge
+
+
+
+
+                                                                                                       -
+                                                                                                     <=
+                                                                                                 input
+                                                                                                   end
+
+
+
+
+                                                                                                       {
+                                                                                                      +
+                                                                                                       .
+                                                                                                       }
+                                                                                                     ==
+
+                                                                                                       *
+                                                                                                      &
+                                                                                                      ~
+                                                                                                  wire
+
+
+
+
+                                                                                                      if
+
+
+
+
+                                                                                               always
+and mitigating these uncertainty peaks is critical to improving
+generation quality for the RTL code.                                                          Preceding Token
+                                                                    Fig. 4: Distribution of Preceding Tokens for Structural and High-Impact
+                                                                    Categories (For code generation purposes, only syntactic tokens—such as
+B. Structural Regularities in Token Contexts                        keywords, operators, and punctuation—are considered; variable names
+                                                                    and identifiers are excluded from parsing.).
+   To further understand the structured nature of RTL code,
+we performed a corpus-level analysis on approximately 200K          • High-impact tokens more often follow expressions,
+open-source Verilog modules. Our goal was to evaluate                 operands, or operators, reflecting semantically rich regions
+whether the local context preceding a token can predict its           where exploration and diversity may yield better designs.
+functional class (serves as an insight that informs our syntax-
+aware temperature adaptation mechanism. We focused on two              These patterns confirm that the context of the most recently
+classes of tokens in the RTL code (see Table II):                   token provides a strong signal for adjusting decoding behavior.
+                                                                    Structural tokens benefit from low-temperature (deterministic)
+•   Structural Tokens: (e.g., endmodule, begin, punctua-            decoding to maintain validity, while high-impact tokens can
+    tions) that define code boundaries and syntax.                  tolerate or even benefit from increased sampling temperature
+•   High-impact Tokens: (e.g., operators, logic keywords) that      to support design variability. Together, these observations pro-
+    carry significant semantic weight in hardware behavior.         vide the foundation for our decoding-time framework, which
+  For each token in these categories (listed in Table II), we       dynamically adapts sampling temperature and contrastive se-
+computed the most frequent preceding tokens to assess context       lection based on local context and token uncertainty.
+predictability. As shown in Fig. 4:
+                                                                                                       IV. P ROPOSED M ETHOD : D ECO RTL
+•   Structural tokens are typically preceded by control keywords
+    or delimiters, indicating deterministic, syntax-sensitive re-      Fig. 5 depicts an overview of the DecoRTL framework,
+    gions where precise decoding is essential.                      illustrated through an example in which an LLM is tasked
+Instruction
+                                      Verilog Code
+                                          ...                             +, -, *, /, &, |, ˆ, ˜,
+                                          typedef enum logic [2:0] {      !, =, ==, !=, <, <=,          Higher
+                     Pre-trained
+                                                IDLE = 3'b000,
+                                                                          >,>=, ?, :, <=, =>, &&        Temperature
+Write a Verilog      or
+                                                INIT = 3'b001,
+                                                                                                                             Top–5 next token       Re-ranking
+                                                ABSORB_AD    = 3'b010,    module, endmodule, input,
+module               Fine-tuned                 PROC_MSG = 3'b011,                                                             0.38   IDLE          0.42   WAIT
+implementing an                                 FINAL_PROC = 3'b100
+                                                                          output, inout, wire, reg,     Lower
+                                                                          logic, parameter, assign,                            0.30   WAIT          0.28   IDLE
+FSM controller for                            } state_t;                  else, case, etc.              Temperature
+                                                                                                                               0.10   S0            0.20   READY
+the Acorn                                                                                                                      0.08   S1            0.05   S0
+                                          ...
+lightweight AEAD                          case (state)                                                                         0.08   READY         0.04   S1
+cipher ….                                     S1: state <=                                                                     ...                  ...
+                                                                                         Temperature Adjustment
+
+
+Fig. 5: Overview of DecoRTL Framework for RTL Generation. Given a design prompt (here the encryption controller FSM), the LLM generates RTL code
+(token by token) with two decoding-time enhancements: syntax-aware temperature adaptation adjusts sampling based on token type (the middle part), and
+contrastive re-ranking selects the next token by penalizing semantic redundancy among top candidates (the right part), improving RTL quality w/o retraining.
+
+
+
+with generating the controller logic of a lightweight authen-                     This mean serves as a semantic reference point for evaluat-
+ticated encryption with associated data (AEAD) module. Our                      ing diversity. Then we calculate the cosine similarity between
+proposed domain-specific decoding strategy to improve RTL                       each candidate embedding and the mean is given by:
+code generation consists of two parts: (i) self-consistency re-
+ranking, which promotes stability and output diversity by re-                                                 sim(ei , ē) = ei · ē,
+evaluating top-k token candidates based on embedding simi-                      where a higher similarity indicates a candidate is closer to the
+larity, and (ii) syntax-aware temperature adaptation, which                     average, and thus more redundant.
+dynamically modulates the sampling temperature according to                        To promote diversity, we penalize candidates that are too
+the predicted class of the next token. As illustrated in Fig. 5,                close to this mean. The adjusted score is defined as:
+these components operate entirely at inference time and are
+designed to enhance both the syntactic validity and functional                                        score(x(i) ) = Li − λ · sim(ei , ē),
+correctness of generated RTL code.
+                                                                                where λ is a tunable hyperparameter controlling the trade-
+A. Contrastive Self-Consistency Decoding                                        off between confidence and diversity. he next token is then
+   In standard autoregressive decoding, a language model                        selected as the candidate with the highest adjusted score:
+generates a sequence X = (x1 , x2 , . . . , xt ) one token at a
+                                                                                                      xt+1 = arg        max         score(x(i) ).
+time. At each time step t, the model outputs a vector of logits                                                       i∈{1,...,K}
+z(t) ∈ R|V | over the vocabulary V . After applying temperature
+                                                                                   This re-ranking strategy ensures that the selected token is
+scaling with parameter T , the probability of token x given the
+                                                                                both probabilistically sound and semantically distinct from
+generated context x1:t is computed using the softmax function:
+                                                                                the average of the high-probability set. From a probabilistic
+                                                      (t)
+                                              exp(zx /T )                       perspective, this modification can be viewed as adjusting the
+                     p(x | x1:t ) = P                        (t)
+                                                   exp(zy /T )                  original distribution with a diversity-aware term. The original
+                                             y∈V
+                                                                                probability for a top-K candidate is:
+   While this formula prioritizes high-likelihood tokens, it may
+lead to repetitive or semantically clustered outputs, which is                                                     exp(Li )
+                                                                                                          p(x(i) | x1:t ) = ,
+error-prone in structured domains like RTL code. To address                                                           Z
+this, we introduce a contrastive re-ranking mechanism that pro-                 where Z is the partition function. After applying the con-
+motes self-consistency and diversity among high-probability                     trastive penalty, the unnormalized modified probability is:
+candidates. Our method refines token selection by using
+embedding-level similarity among the top-K candidates. First,                     pmodified (x(i) | x1:t ) ∝ p(x(i) | x1:t ) · exp(−λ · sim(ei , ē)).
+we extract the top-K tokens from the probability distribution:                     This re-weighting flattens overconfident, high-density re-
+                           {x(1) , x(2) , . . . , x(K) },                       gions in the distribution, where semantically redundant can-
+                                                                                didates dominate, and redistributes probability mass toward
+with corresponding log-probabilities:
+                                                                                diverse, yet still plausible tokens. As a result, it reduces the
+               Li = log p(x(i) | x1:t ),              i = 1, . . . , K.         dominance of clustered tokens and produces outputs that are
+   Each candidate x(i) is mapped to its embedding ei via                        not only high-quality and coherent but also less prone to
+the model’s embedding matrix E as ei = E(x(i) ), and                            repetition and syntactic collapse.
+normalized so that ∥ei ∥ = 1. The mean embedding of the                            In LLMs, tokens with similar semantic and syntactic roles
+top-K candidates is computed as:                                                naturally cluster together in the embedding space. Thus, the
+                                             K
+                                                                                top-K candidates often represent minor variations on a com-
+                                          1 X                                   mon theme. By penalizing candidates with high cosine similar-
+                                   ē =         ei .
+                                          K i=1                                 ity to the mean embedding, our method discourages the model
+from repeatedly choosing near-duplicate tokens. This helps to     Algorithm 1 Token Generation via Contrastive Re-Ranking
+produce a sharper, more definitive distribution, lowering the     and Syntax-Aware Temperature Adaptation
+overall entropy, and promotes diversity by encouraging the         1: Input: Instruction I, decoder d, initial temperature τ0 , penalty λ;
+selection of tokens that are distinct yet still plausible. The     2: Initialize sequence T ← ∅, temperature τ ← τ0 ;
+                                                                   3: while not end-of-sequence do
+resulting output is both more stable and less susceptible to
+errors, which is critical in synthesizable RTL code where even             Step 1: Top-K Candidate Generation
+a small mistake may render a design non-functional.                4:        Get logits from decoder d;
+                                                                   5:        Apply temperature τ ;
+                                                                   6:        Extract top-K tokens {x(1) , . . . , x(K) };
+                                                                   7:        Extract log-probabilities {L1 , . . . , LK };
+B. Syntax-aware Temperature Adaptation
+                                                                           Step 2: Contrastive Re-Ranking
+                                                                                                             E(x )
+   In standard decoding, the temperature parameter T controls      8:        Normalize embeddings: ei ← ∥E(x(i) )∥ ;
+                                                                                                                 (i)
+                                                                                                 1 P
+the entropy of the output distribution. Lower temperatures         9:        Compute mean: ē ← K      ei ;
+                                                                  10:        Score: scorei ← Li − λ · (ei · ē);
+make the output more deterministic, while higher temperatures     11:        Select: x∗ ← arg maxi scorei ; Append x∗ to T ;
+introduce more randomness and diversity. However, a fixed
+temperature throughout decoding fails to reflect the varying              Step 3: Syntax-Aware Temperature Adaptation
+                                                                  12:    if next token likely structural (based on x∗ ) then
+demands of different token types in RTL code where certain        13:            τ ← τ0 − 0.1;
+tokens require precise syntax, while others benefit from ex-      14:    else if next token likely high-impact then
+ploratory flexibility. In DecoRTL, we introduce a syntax-aware    15:            τ ← τ0 + 0.1;
+                                                                  16:    else
+temperature adaptation strategy that dynamically adjusts the      17:            τ ← τ0 ;
+sampling temperature at each decoding step based on the           18:    end if
+syntactic role of the next token. Rather than predicting token    19: end while
+                                                                  20: Output: Generated token sequence T ;
+type directly, we infer it from the most recently generated
+token by leveraging structural patterns common in RTL. This
+                                                                     This dynamic temperature is then applied to the softmax
+approach is motivated by our earlier analysis (refer to Section
+                                                                  distribution when generating the token at time t + 1:
+III), which demonstrated that certain token categories are
+frequently preceded by consistent syntactic patterns.                                                        exp(zx /Tt+1 )
+                                                                              p(x | x1:t ; Tt+1 ) = P                          .
+   Based on the observation, we define two token classes:                                                   y∈V exp(zy /Tt+1 )
+(1) Structural Tokens: Tokens that define the syntactic frame-       Lower temperatures sharpen the distribution, yielding more
+work of Verilog code and must be generated with high deter-       deterministic outputs, while higher temperatures flatten it,
+minism to maintain correctness. These include keywords that       promoting diversity. As a result, the decoder becomes more
+establish module structure (module, endmodule, input,             conservative in syntax-critical contexts and more exploratory
+output, wire, etc.), control flow constructs (if, else,           in regions where semantic flexibility is beneficial.
+case, for, while), and delimiters or punctuation symbols             Algorithm 1 shows the detailed decoding procedure of the
+(;, ,, ., [, ], (, ), {, }).                                      DecoRTL framework, which integrates both contrastive re-
+(1) High-impact Tokens: These tokens contribute directly to       ranking and syntax-aware temperature adaptation to enhance
+the functional and logical semantics of a design and benefit      RTL code generation. Starting with initial temperature τ0 , and
+from moderate sampling diversity to allow expression of valid     a contrastive penalty parameter λ, the temperature variable
+alternatives. This category includes arithmetic and bitwise       τ is dynamically adjusted throughout the decoding process
+operators (+, -, *, /, &, |, ˆ, ˜), logical and comparison        based on the local context of the generated tokens. Each de-
+operators (==, !=, <, <=, >, >=, &&, ||), and conditional         coding iteration consists of three main steps: (1) The decoder
+tokens (?, :, =, <=, =>).                                         generates logits at the current temperature τ , and the top-
+   All remaining tokens do not require explicit control, in-      K candidate tokens {x(1) , . . . , x(K) } are selected along with
+cluding filler tokens in comments, identifiers in unambiguous     their corresponding log-probabilities {L1 , . . . , LK }; (2) Each
+contexts, or tokens in low-impact sections where variation does   token’s embedding is compared to the mean embedding of
+not significantly affect syntax or semantics.                     the top-K candidates using cosine similarity, sim(ei , ē), which
+                                                                  quantifies semantic redundancy. Tokens more similar to the
+   This adaptive decoding strategy dynamically modulates the
+                                                                  mean are penalized, and the token with the highest adjusted
+model’s sampling temperature based on the anticipated syntac-
+                                                                  score is selected; (3) The temperature τ is updated based on
+tic role of the next token. Given a token xt generated at time
+                                                                  the class of the most recently generated token. If the token
+step t, we estimate the likely category of the upcoming token
+                                                                  is structural, the temperature is decreased (τ ← τ0 − 0.1) to
+xt+1 as C(xt+1 ), and adjust the temperature accordingly:
+                                                                  enforce deterministic sampling. If the token is high-impact, the
+                                                                 temperature is increased (τ ← τ0 + 0.1) to encourage explo-
+             Tbase − 0.1, if C(xt+1 ) is structural,
+                                                                 ration. For all other token types (neither structural nor high-
+     Tt+1   = Tbase + 0.1, if C(xt+1 ) is high-impact,            impact), the temperature is reset to its base value (τ ← τ0 ).
+             
+             
+               Tbase ,     otherwise.                             This decoding procedure enables DecoRTL to dynamically
+TABLE III: Mean and Variance of Token-level Entropy during RTL Code   TABLE IV: Functionality Correctness Comparison of Fixed vs. Adaptive
+Generation across Decoding Strategies.                                Temperature Decoding (The Model is CodeLlama 7B).
+    Strategy             QwenCoder-2.5-14B     CodeLlama-7B             Decoding Strategy                                Functional Pass Rate (%)
+
+                         Mean     Variance    Mean    Variance          Fixed Temperature (Temperature set to T = 0.5)             18.5
+
+    Top-k (k=10)         0.106     0.065      0.219     0.139           Fixed Temperature (Temperature set to T = 0.7)             18.5
+                                                                        Fixed Temperature (Temperature set to T = 0.9)             19.2
+    Nucleus (p=0.9)      0.176     0.144      0.275     0.179
+                                                                        Adaptive Temperature (Ours)                                25.6
+    Contrastive (Ours)   0.071     0.061      0.134     0.097
+
+balance syntactic precision and semantic diversity, improving         model. Specifically, we test three static temperature settings:
+quality without requiring fine-tuning or more training.               T = 0.5, T = 0.7, and T = 0.9, representing conservative,
+                                                                      balanced, and exploratory decoding behaviors, respectively.
+                 V. E XPERIMENTAL R ESULTS                            For each temperature, we generate RTL code from a shared
+   To assess the effectiveness of our proposed decoding strate-       set of design instructions and evaluate the functionality of the
+gies for RTL generation, we conduct a series of quantitative          output based on a pass/fail criterion.
+experiments across multiple dimensions: generation stability             As shown in Table IV, in fixed-temperature decoding, the
+based on the decoding strategy, functional correctness (and           model applies a uniform degree of randomness throughout
+synthesizability) w.r.t. the decoding, and decoding efficiency.       generation, regardless of token context. Lower temperatures
+We leverage the VerilogEval benchmark (Human) [11] to                 (e.g., T = 0.5) bias the model toward high-confidence
+evaluate models on realistic RTL design prompts. A diverse set        predictions, yielding deterministic but often repetitive and
+of LLMs, either pre-trained or fine-tuned for RTL generation,         rigid code. In contrast, higher temperatures (e.g., T = 0.9)
+varying in parameter size and architectural design, is used           promote diversity and exploration, but increase the likelihood
+to ensure broad applicability. This includes QwenCoder-2.5-           of producing structurally invalid or semantically inconsistent
+14B [34], CodeLlama-7B [35], and CodeV [23], and the                  outputs. Note that from a modeling perspective, adaptive
+following demonstrates the consistent improvements enabled            temperature control better aligns with the internal behavior of
+by our decoding framework over these LLMs.                            transformer-based LLMs. During generation, different layers
+                                                                      and attention heads specialize in capturing hierarchical and
+A. Entropy-Based Evaluation of Decoding Methods
+                                                                      positional dependencies, especially important in structured
+   To evaluate our decoding method w.r.t. generation stability        domains like code. A fixed-temperature setting fails to leverage
+and model confidence, we conducted an experiment analyzing            this internal structure, applying uniform sampling across both
+how different decoding strategies affect token-level entropy          high-confidence and uncertain regions.
+during Verilog code generation. Entropy reflects the uncer-
+tainty of the model’s prediction, higher values show indecision,      C. Reduction of Hallucination and Repetition in RTL Code
+while lower entropy suggests confident and consistent output.
+   We began by sampling 40 instruction-to-code prompts from             To evaluate the impact of our full decoding framework on
+the VerilogEval [11] and used them to generate Verilog mod-           RTL code quality, we analyze the outputs of both LLMs,
+ules with two LLMs: QwenCoder-2.5 (14B) and CodeLlama                 CodeLlama 7B and QwenCoder-2.5 14B, before and after
+(7B). Each prompt was decoded using three strategies: (1) top-        applying our combined contrastive + temperature-adaptive
+k sampling with k = 10, (2) nucleus sampling with p = 0.9,            decoding method. As shown in Table V, the baseline top-
+and (3) our contrastive decoding method with k = 5 and a              k decoding strategy exhibits a considerable number of both
+penalty coefficient λ = 0.5. For each method, we computed             hallucinated3 and repetitive4 outputs. This is while applying
+the entropy of the softmax distribution at each generation step       our proposed decoding framework reduces these incidents.
+and aggregated the mean and variance across all prompts.              This highlights the complementary strengths of contrastive
+   As shown in Table III, contrastive decoding consistently           decoding and temperature adaptation: the former penalizes
+achieves a lower mean and variance in entropy compared                semantically redundant token choices, encouraging meaningful
+to both top-k and nucleus sampling. A lower mean entropy              variation, while the latter enforces deterministic behavior in
+indicates that the model is making more confident token                 3 Hallucination in RTL code refers to the generation of syntactically valid
+selections, while a reduced entropy variance suggests that the        but semantically incorrect or meaningless hardware constructs that do not
+model’s confidence remains stable throughout the sequence.            correspond to the design intent, including illogical control flows.
+                                                                        4 Repetition refers to the unintended duplication of RTL code segments, such
+By flattening entropy spikes and narrowing the distribution of
+                                                                      as repeated logic, redundant declarations, or loops of identical expressions.
+uncertainty, our decoding method improves the consistency
+and reliability of generated Verilog code, making it more             TABLE V: Number of Hallucinated and Repetitive RTL Code Outputs before
+                                                                      and after Applying Contrastive + TA Decoding.
+aligned with the deterministic nature of RTL codes.
+                                                                                                  Baseline (top-k)         Contrastive + TA
+B. Comparison with Fixed Temperature Decoding                          Model
+                                                                                              Hallucinated Repetitive Hallucinated Repetitive
+   To evaluate the effectiveness of our syntax-aware adap-             CodeLlama 7B                18             9           3           None
+tive temperature mechanism, we compare it against fixed-
+                                                                       QwenCoder-2.5 14B           11             5         None          None
+temperature decoding strategies using the CodeLlama 7B
+TABLE VI: RTL Generation Synthesizability Success Rate across Models.
+                                                                           to avoid recomputing the entire attention mechanism over
+Model     CodeLlama 7B         QwenCoder 14B           CodeV [23]          the full sequence at each step and instead perform attention
+           (Pre-trained)        (Pre-trained)       (RTL Fine-tuned)
+                                                                           only over the new token, thereby reducing inference time
+        Syn    Syn     Syn     Syn    Syn   Syn     Syn    Syn    Syn      from quadratic to linear complexity with respect to sequence
+        @1+    @5      @10     @1     @5    @10     @1     @5     @10
+                                                                           length. As shown in Table VIII, the average decoding time
+Base∗   35.2% 38.4% 41.6 % 64.1% 70.5% 76.2% 75.6% 82.6% 85.9%
+                                                                           per token increased marginally from 0.1383 to 0.1413 seconds
+TA∗     41.6% 44.2% 47.4% 75.0% 79.4% 83.9% 83.3% 87.1% 90.3%              when using contrastive re-ranking. Peak GPU memory usage
+C∗      42.3% 46.1% 49.3% 74.3% 78.8% 84.6% 82.6% 87.8% 89.1%              remained nearly unchanged, with only a 0.5% increase.
+C+TA∗   46.1% 49.3% 52.5% 80.4% 82.0% 85.9% 88.4% 91.6% 93.5%                 In our proposed contrastive decoding strategy, at each
+∗: Base: Baseline decoding using top-k, TA: Temperature Adaptive Only,     decoding step, we sample a small set of candidate tokens (e.g.,
+   C: Contrastive Only, and C+TA: Contrastive with Temperature Adaptive.   top-3) and compute their modified scores by combining the
++ : Syn@i means synthesizability in “i” runs.
+                                                                           model’s predicted log-probabilities with a contrastive penalty
+TABLE VII: RTL Generation Functional Correctness Rate across Models.       based on semantic similarity. This re-ranking is efficient for
+Model     CodeLlama 7B        QwenCoder 14B             CodeV [23]         two reasons, (i) it operates on a small subset of tokens, not
+           (Pre-trained)       (Pre-trained)       (Fine-tuned for RTL)    the full vocabulary, limiting the cost of additional computation,
+        Pass   Pass   Pass    Pass   Pass   Pass   Pass   Pass    Pass     (ii) the similarity computations are lightweight vector opera-
+        @1+    @5     @10     @1     @5     @10    @1     @5      @10      tions (i.e., cosine similarity) between the precomputed token
+Base∗   18.2% 22.7% 24.3% 37.1% 44.8% 50.6% 53.2% 65.1% 68.5%              embeddings and the current context representation, avoiding
+TA∗     25.6% 28.8% 31.4% 46.1% 48.7% 52.5% 64.7% 75.6% 79.4%              any need for extra forward passes through the model. Because
+                                                                           the token embeddings are already available at decoding time,
+C∗      27.5% 28.8% 33.3% 47.4% 51.9% 55.1% 66.3% 75.6% 80.1%
+                                                                           the re-ranking step integrates seamlessly without disrupting
+C+TA∗ 32.0% 35.2% 39.1% 54.4% 58.3% 62.1% 69.8% 79.4% 82.0%
+                                                                           the KV cache or triggering redundant computations.
+∗: Base: Baseline decoding using top-k, TA: Temperature Adaptive Only,
+   C: Contrastive Only, and C+TA: Contrastive with Temperature Adaptive.
++ : Pass@i means functional correctness in “i” runs.                        TABLE VIII: Decoding Efficiency Comparison on QwenCoder-2.5-14B.
+                                                                               Method        Avg. Time per Token (s)   Peak Memory (MB)
+structurally sensitive regions and allows controlled exploration
+                                                                               Baseline              0.1383                15012.32
+in semantically rich segments.
+                                                                               Contrastive           0.1413                15089.43
+D. Comparison with Base Decoding Techniques
+   To show the overall effectiveness of our decoding approach,
+we evaluate it on three LLMs: (i) CodeLlama 7B (pre-trained),                                     VI. C ONCLUSION
+QwenCoder-2.5 14B (pre-trained), and CodeV (fine-tuned
+using RTL codes based on CodeQwen-2.5 7B). Our analysis                       In this paper, we investigated a critical yet underexamined
+focuses on two main metrics for RTL generation quality:                    dimension of RTL code generation with LLMs: the role
+• Functional Correctness: If the generated RTL behaves ac-                 of decoding strategies. While prior efforts have primarily
+   cording to its specification, tested via logic simulation.              focused on prompt engineering and fine-tuning, we demon-
+• Synthesizability: If the RTL code can be successfully parsed,            strate that decoding-time adaptations offer a lightweight and
+   elaborated, and synthesized by a Verilog toolchain (Xilinx              effective alternative for improving generation quality, without
+   Vivado in our case), showing syntactic soundness.                       requiring additional data, model retraining, or architectural
+   In all experiments, we use a contrastive candidate set size             modifications. Through empirical analysis of entropy patterns
+of k = 5, a contrastive penalty coefficient of λ = 0.5, and a              and contextual token structures, we identify key challenges
+base decoding temperature of 0.7. As summarized in Table VII               in RTL generation, including localized uncertainty and rigid
+and Table VI , our method outperforms standard decoding                    syntactic dependencies. In response, we propose a domain-
+strategies, e.g., top-k sampling, showing that our proposed                specific decoding framework that operates entirely at infer-
+decoding framework significantly reduces functionality and                 ence time, combining two complementary techniques: (1) a
+synthesizability issues, consistently leading to higher success            contrastive self-consistency mechanism that re-ranks top-k
+rate in both perspectives.                                                 candidates based on embedding-level diversity, encouraging
+                                                                           confident yet diverse token selection; and (2) a syntax-aware
+E. Computational Efficiency of Contrastive Decoding                        temperature adaptation strategy that modulates sampling tem-
+   We evaluated the computational efficiency of our contrastive            perature based on the syntactic class of each token, effectively
+decoding strategy on the QwenCoder-2.5-14B model. To en-                   balancing determinism in structural regions with exploration
+sure a fair comparison of computational efficiency across de-              in semantically rich contexts. Extensive experiments across
+coding strategies, we enabled Key-Value (KV) caching during                three competitive LLMs, i.e., CodeLlama, QwenCoder, and
+inference. KV caching significantly accelerates autoregressive             CodeV, show that our method significantly improves both
+decoding by storing the intermediate key and value tensors                 functional correctness and synthesizability, while also reducing
+computed at each step of generation. This allows the model                 hallucinations and repetition in the generated RTL code.
+                               R EFERENCES                                         [17] H. Huang, Z. Lin, Z. Wang, X. Chen, K. Ding, and J. Zhao, “Towards
+                                                                                        llm-powered verilog rtl assistant: Self-verification and self-correction,”
+ [1] DecoRTL Repository - A Run-time Decoding Framework for RTL Code                    arXiv preprint arXiv:2406.00115, 2024.
+     Generation with LLMs, https://github.com/mhakyash/DecoRTL, 2025.              [18] X. Yao, Y. Wang, X. Li, Y. Lian, R. Chen, L. Chen, M. Yuan, H. Xu,
+ [2] G. Huang, J. Hu, Y. He, J. Liu, M. Ma, Z. Shen, J. Wu, Y. Xu, H. Zhang,            and B. Yu, “Rtlrewriter: Methodologies for large models aided rtl code
+     K. Zhong et al., “Machine learning for electronic design automation: A             optimization,” arXiv preprint arXiv:2409.11414, 2024.
+     survey,” ACM Transactions on Design Automation of Electronic Systems          [19] M. Akyash and H. M. Kamali, “Self-hwdebug: Automation of llm self-
+     (TODAES), vol. 26, no. 5, pp. 1–46, 2021.                                          instructing for hardware security verification,” in 2024 IEEE Computer
+ [3] H. Wu, Z. He, X. Zhang, X. Yao, S. Zheng, H. Zheng, and B. Yu,                     Society Annual Symposium on VLSI (ISVLSI), 2024, pp. 391–396.
+     “Chateda: A large language model powered autonomous agent for eda,”           [20] N. Mashnoor, M. Akyash, H. Kamali, and K. Azar, “Llm-ift: Llm-
+     IEEE Transactions on Computer-Aided Design of Integrated Circuits                  powered information flow tracking for secure hardware,” in 2025 IEEE
+     and Systems, 2024.                                                                 43rd VLSI Test Symposium (VTS), 2025, pp. 1–5.
+ [4] K. Chang, Y. Wang, H. Ren, M. Wang, S. Liang, Y. Han, H. Li,                  [21] Y. Zhang, Z. Yu, Y. Fu, C. Wan, and Y. C. Lin, “Mg-verilog: Multi-
+     and X. Li, “Chipgpt: How far are we from natural language hardware                 grained dataset towards enhanced llm-assisted verilog generation,” in
+     design,” arXiv preprint arXiv:2305.14019, 2023.                                    2024 IEEE LLM Aided Design Workshop (LAD). IEEE, 2024, pp. 1–5.
+ [5] M. Akyash and H. M Kamali, “Evolutionary large language models for            [22] M. Liu, Y.-D. Tsai, W. Zhou, and H. Ren, “Craftrtl: High-quality
+     hardware security: A comparative survey,” in Proceedings of the great              synthetic data generation for verilog code models with correct-by-
+     lakes symposium on VLSI 2024, 2024, pp. 496–501.                                   construction non-textual representations and targeted code repair,” arXiv
+ [6] M. Akyash, K. Azar, and H. Kamali, “Rtl++: Graph-enhanced llm for                  preprint arXiv:2409.12993, 2024.
+     rtl code generation,” arXiv preprint arXiv:2505.13479, 2025.                  [23] Y. Zhao, D. Huang, C. Li, P. Jin, Z. Nan, T. Ma, L. Qi, Y. Pan, Z. Zhang,
+ [7] F. Cui, C. Yin, K. Zhou, Y. Xiao, G. Sun, Q. Xu, Q. Guo, D. Song,                  R. Zhang et al., “Codev: Empowering llms for verilog generation
+     D. Lin, X. Zhang et al., “Origen: Enhancing rtl code generation                    through multi-level summarization,” arXiv preprint arXiv:2407.10424,
+     with code-to-code augmentation and self-reflection,” arXiv preprint                2024.
+     arXiv:2407.16237, 2024.                                                       [24] S. Thakur, B. Ahmad, H. Pearce, B. Tan, B. Dolan-Gavitt, R. Karri, and
+ [8] S. Liu, W. Fang, Y. Lu, J. Wang, Q. Zhang, H. Zhang, and Z. Xie, “Rtl-             S. Garg, “Verigen: A large language model for verilog code generation,”
+     coder: Fully open-source and efficient llm-assisted rtl code generation            ACM Transactions on Design Automation of Electronic Systems, vol. 29,
+     technique,” IEEE Transactions on Computer-Aided Design of Integrated               no. 3, pp. 1–31, 2024.
+     Circuits and Systems, 2024.                                                   [25] Z. Pei, H.-L. Zhen, M. Yuan, Y. Huang, and B. Yu, “Betterv: Con-
+ [9] Y. Zhu, J. Li, G. Li, Y. Zhao, Z. Jin, and H. Mei, “Hot or cold? adaptive          trolled verilog generation with discriminative guidance,” arXiv preprint
+     temperature sampling for code generation with large language models,”              arXiv:2402.03375, 2024.
+     in Proceedings of the AAAI Conference on Artificial Intelligence, vol. 38,    [26] T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal,
+     no. 1, 2024, pp. 437–445.                                                          A. Neelakantan, P. Shyam, G. Sastry, A. Askell et al., “Language mod-
+[10] M. Akyash and H. Mardani Kamali, “Simeval: Investigating the                       els are few-shot learners,” Advances in neural information processing
+     similarity obstacle in llm-based hardware code generation,” in                     systems, vol. 33, pp. 1877–1901, 2020.
+     Proceedings of the 30th Asia and South Pacific Design Automation              [27] Y. Song, G. Wang, S. Li, and B. Y. Lin, “The good, the bad, and the
+     Conference, ser. ASPDAC ’25. New York, NY, USA: Association                        greedy: Evaluation of llms should not ignore non-determinism,” arXiv
+     for Computing Machinery, 2025, p. 1002–1007. [Online]. Available:                  preprint arXiv:2407.10457, 2024.
+     https://doi.org/10.1145/3658617.3697624                                       [28] M. Renze, “The effect of sampling temperature on problem solving in
+[11] M. Liu, N. Pinckney, B. Khailany, and H. Ren, “Verilogeval: Evaluating             large language models,” in Findings of the Association for Computa-
+     large language models for verilog code generation,” in 2023 IEEE/ACM               tional Linguistics: EMNLP 2024, 2024, pp. 7346–7356.
+     International Conference on Computer Aided Design (ICCAD). IEEE,              [29] A. Holtzman, J. Buys, L. Du, M. Forbes, and Y. Choi, “The
+     2023, pp. 1–8.                                                                     curious case of neural text degeneration,” 2020. [Online]. Available:
+[12] M. Chen et al., “Evaluating large language models trained on code,”                https://arxiv.org/abs/1904.09751
+     2021. [Online]. Available: https://arxiv.org/abs/2107.03374                   [30] Y.-S. Chuang, Y. Xie, H. Luo, Y. Kim, J. Glass, and P. He, “Dola:
+[13] E. Nijkamp, B. Pang, H. Hayashi, L. Tu, H. Wang, Y. Zhou, S. Savarese,             Decoding by contrasting layers improves factuality in large language
+     and C. Xiong, “Codegen: An open large language model for code with                 models,” arXiv preprint arXiv:2309.03883, 2023.
+     multi-turn program synthesis,” arXiv preprint arXiv:2203.13474, 2022.         [31] Y. Su, T. Lan, Y. Wang, D. Yogatama, L. Kong, and N. Collier,
+[14] Y. Li et al., “Competition-level code generation with alphacode,”                  “A contrastive framework for neural text generation,” 2022. [Online].
+     Science, vol. 378, no. 6624, p. 1092–1097, Dec. 2022. [Online].                    Available: https://arxiv.org/abs/2202.06417
+     Available: http://dx.doi.org/10.1126/science.abq1158                          [32] X. L. Li, A. Holtzman, D. Fried, P. Liang, J. Eisner, T. Hashimoto,
+[15] A. Vijayakumar, M. Cogswell, R. Selvaraju, Q. Sun, S. Lee,                         L. Zettlemoyer, and M. Lewis, “Contrastive decoding: Open-
+     D. Crandall, and D. Batra, “Diverse beam search for improved                       ended text generation as optimization,” 2023. [Online]. Available:
+     description of complex scenes,” Proceedings of the AAAI Conference                 https://arxiv.org/abs/2210.15097
+     on Artificial Intelligence, vol. 32, no. 1, Apr. 2018. [Online]. Available:   [33] S. O’Brien and M. Lewis, “Contrastive decoding improves reasoning in
+     https://ojs.aaai.org/index.php/AAAI/article/view/12340                             large language models,” arXiv preprint arXiv:2309.09117, 2023.
+[16] A. Fan, M. Lewis, and Y. Dauphin, “Hierarchical neural story                  [34] B. Hui, J. Yang, Z. Cui, J. Yang, D. Liu, L. Zhang, T. Liu, J. Zhang,
+     generation,” in Proceedings of the 56th Annual Meeting of the                      B. Yu, K. Lu et al., “Qwen2. 5-coder technical report,” arXiv preprint
+     Association for Computational Linguistics (Volume 1: Long Papers),                 arXiv:2409.12186, 2024.
+     I. Gurevych and Y. Miyao, Eds. Melbourne, Australia: Association for          [35] B. Roziere, J. Gehring, F. Gloeckle, S. Sootla, I. Gat, X. E. Tan, Y. Adi,
+     Computational Linguistics, Jul. 2018, pp. 889–898. [Online]. Available:            J. Liu, R. Sauvestre, T. Remez et al., “Code llama: Open foundation
+     https://aclanthology.org/P18-1082/                                                 models for code,” arXiv preprint arXiv:2308.12950, 2023.
+

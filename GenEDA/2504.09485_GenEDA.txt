@@ -1,0 +1,763 @@
+                                           GenEDA: Towards Generative Netlist Functional Reasoning
+                                             via Cross-Modal Circuit Encoder-Decoder Alignment
+                                                                                    Wenji Fang, Wang Jing, Yao Lu, Shang Liu, Zhiyao Xie*
+                                                                                            Hong Kong University of Science and Technology
+                                                                                                      *
+                                                                                                        Corresponding Author
+
+                                           Abstract—The success of foundation AI has motivated the research of                                                                                                             Generation
+                                                                                                                                     Graph               Enc. Prediction                                            Dec.
+                                                                                                                                                                                                 Text                      • RTL Code
+                                        circuit foundation models, which are customized to assist the integrated                              Circuit            • Func.                                   LLM
+                                                                                                                           Circuit                                                     Circuit                             • Assertion
+                                        circuit (IC) design process. However, existing pre-trained circuit                                   Encoder             • PPA                                   Decoder           • …
+                                        foundation models are typically limited to standalone encoders for                                              Embed.                                                     Embed. (Forward)
+                                        predictive tasks or decoders for generative tasks. These two model types             (a) Circuit encoder for prediction                            (b) Circuit decoder for generation
+                                        are developed independently, operate on different circuit modalities, and                                                GenEDA Alignment                       Aligned      Generation
+                                        reside in separate latent spaces. This restricts their ability to complement                         Graph
+
+
+
+
+                                                                                                                                                                           Connector
+                                                                                                                                                          Circuit                           LLM                   • Description
+                                        each other for more advanced capabilities. In this work, we present                    Circuit
+arXiv:2504.09485v2 [cs.LG] 6 Aug 2025
+
+
+
+
+                                                                                                                                                         Encoder                          Decoder                 • Implementation
+                                        GenEDA, the first framework that cross-modally aligns circuit encoders                                                                                                    • RTL Recovery
+                                        with decoders within a shared latent space. GenEDA bridges the gap                                                                                              Embed.       (Reverse)
+                                                                                                                                      Text
+                                        between graph-based circuit representation learning and text-based large
+                                        language models (LLMs), enabling communication between their respec-
+                                                                                                                                             (c) Our proposed circuit encoder-decoder framework
+                                        tive latent spaces. To achieve the alignment, we propose two paradigms to
+                                        support both open-source trainable LLMs and commercial frozen LLMs.                Fig. 1: (a) & (b) Two main types of existing circuit foundation
+                                        We leverage this aligned architecture to develop the first generative              models: encoders for prediction and decoders for generation. (c)
+                                        foundation model for netlists, unleashing LLMs’ generative reasoning               GenEDA proposes a general framework that aligns circuit encoders
+                                        capability on the low-level and bit-blasted netlists. GenEDA enables
+                                        three unprecedented generative netlist functional reasoning tasks, where
+                                                                                                                           with decoders, leveraging encoder-captured information to enhance
+                                        it reversely generates high-level functionalities such as specifications and       decoder generation.
+                                        RTL code from low-level netlists. These tasks move beyond traditional
+                                        gate function classification to direct generation of full-circuit functionality.   fully utilize the underlying structural information of circuits. As a
+                                        Experiments demonstrate that GenEDA significantly boosts advanced                  result, these two important types are not aligned due to an inherent
+                                        LLMs’ (e.g., GPT and DeepSeek series) performance in all tasks.                    gap in their latent space, preventing more advanced capabilities.
+                                                                                                                              GenEDA: an encoder-decoder alignment framework. To
+                                                                    I. I NTRODUCTION
+                                                                                                                           address this, we present GenEDA1 , the first framework that aligns pre-
+                                           The ever-increasing IC complexity and skyrocketing IC design                    trained circuit encoders with LLM decoders. GenEDA bridges these
+                                        costs are challenging traditional electronic design automation (EDA)               two major types by communicating circuit graph latent space and text
+                                        techniques. This trend has motivated the community’s active ex-                    latent space, enabling effective information exchange. This alignment
+                                        ploration of new IC design methods, such as AI-assisted EDA                        allows structural and functional insights captured by circuit encoders
+                                        techniques. Most recently, emerging foundation AI models have been                 to directly enhance the generative capabilities of LLM decoders.
+                                        customized and applied to IC design, named circuit foundation                         GenEDA achieves the alignment by proposing two paradigms for
+                                        models [1], [2]. These pre-trained circuit foundation models target                both open-source trainable LLMs and commercial frozen LLMs: (1)
+                                        more generalized AI solutions for IC design.                                       Embedding-based alignment, which fine-tunes trainable LLMs using
+                                           Circuit foundation model: two main types. As Fig. 1 shows,                      graph-based circuit embeddings by introducing a modality connector,
+                                        existing circuit foundation models can be categorized into two main                and (2) Prediction-based alignment, which augments commercial
+                                        types: (a) circuit encoder for predictive tasks, and (b) circuit decoder           frozen LLMs by feeding them textual predictions from the encoder.
+                                        for generative tasks. TABLE I provides a detailed comparison of these                 Challenging application: generative functional reasoning of
+                                        two types of works. Circuit encoder refers to pre-trained models that              netlist. GenEDA’s alignment framework can support unprecedentedly
+                                        encode circuits into general embeddings (i.e., circuit representation              challenging generative applications, such as generative reasoning of
+                                        learning). Taking these embeddings as input, lightweight downstream                the netlist functionality2 . Unlike RTL code, netlists are composed
+                                        models are then fine-tuned for various predictive EDA tasks, such                  of a huge number of low-level, bit-blasted gates and their complex
+                                        as circuit functional reasoning [3], [4], [5], [6], [7] and circuit                connections, offering little human-readable semantics for LLMs to
+                                        quality prediction [8], [9], [10], [11]. Circuit decoder refers to                 understand. While prior netlist encoders [7], [23], [24], [10], [19] can
+                                        pre-trained models with circuit-related generative capability. Built               extract structural and functional features into embeddings, they are
+                                        mostly on large language models (LLMs), these decoders generate                    limited to predictive reasoning, only classifying the functionality of
+                                        text outputs, such as circuits in RTL code [12], [13], [14], verification          individual gates. GenEDA bridges this gap by aligning the encoder’s
+                                        assertions [15], [16], EDA tool scripts [17], etc.                                 structural and functional understanding of netlists with the decoder’s
+                                           Limitation: lack of alignment. Developed independently, circuit                 generative strengths. This encoder-decoder alignment enables gener-
+                                        encoders and decoders operate on different modalities and handle                   ating high-level functionality directly from low-level netlist inputs,
+                                        circuit representations in clearly distinct latent spaces. Specifically:           which is an unprecedentedly challenging task due to the irreversible
+                                        (a) Circuit encoders typically work in the circuit graph latent space.             nature of logic synthesis.
+                                        They excel at capturing circuit structural and functional properties                  1 The code of GenEDA and benchmarks of proposed tasks are available at:
+                                        into embeddings for predictive tasks, but lack generative capabilities.
+                                                                                                                           https://github.com/hkust-zhiyao/GenEDA
+                                        (b) Circuit decoders, typically LLMs, operate in the text latent                      2 In the reverse netlist functional reasoning scenario, the high-level specifi-
+                                        space. They are effective at generating circuit-related text (e.g., RTL            cation and RTL code as ground-truth are unknown to the model. Models are
+                                        code, assertions), but they rely solely on textual input and cannot                only provided with the low-level netlist as inputs.
+                                                                  Input                                                Task
+                  Type             Method†
+                                                        Format        Modality      Pred.        Gen.              Description                    Direction‡
+
+                              DeepGate [18], etc.        AIG           Graph          ✓                         function pred.                    Reverse
+                               CircuitFusion [8]         RTL                          ✓                          quality pred.                   Forward
+                Encoder                                                Graph
+                                 MGVGA [9]               AIG                          ✓                       func./quality pred.             Reverse/Forward
+                                                                       & Text
+                                 NetTAG [19]            Netlist                       ✓                       func./quality pred.             Reverse/Forward
+                             RTLCoder [20], etc.        Spec                                      ✓              RTL gen.                        Forward
+                                                                        Text
+                            HDLDebugger [21], etc.      RTL                                       ✓             RTL debug                        Forward
+                Decoder                                               (Image)
+                             AssertLLM [15], etc        Spec                                      ✓            assertion gen.                    Forward
+                               DeepRTL [22]⋆          RTL/Spec          Text                      ✓         RTL understand./gen.              Reverse/Forward
+                Enc-Dec         GenEDA (ours)           Netlist     Graph&Text        ✓           ✓              Function gen.                         Reverse
+   † We list one of the representative works for each method in the table. For a more comprehensive comparison, please refer to Section II-A.
+   ‡ Task direction is forward if they follow the VLSI design flow (e.g., predicting quality at the early stage, generating RTL from spec), and reverse if they
+   go against it (e.g., predicting or generating function from netlist). Reverse tasks are challenging due to the design flow’s irreversible nature.
+   ⋆ This work [22] leverages T5, an encoder-decoder LLM. However, it targets only generative tasks, so we categorize it as a circuit decoder.
+
+TABLE I: Comparison of GenEDA with representative categories of circuit foundation models. Existing circuit encoders mainly leverage
+graph structure for prediction tasks, while circuit decoders focus on semantic text for generation tasks. GenEDA bridges the gap between
+these two widely explored branches by aligning encoders and decoders within a shared latent space. After alignment, GenEDA supports
+more challenging generative netlist functional reasoning tasks.
+   Specifically, GenEDA reasons functionalities of given netlists                   Circuit encoders for prediction. Encoder-based models typically
+in a wide spectrum of granularities, with outputs including: (1)                 learn structured circuit representations to support predictive tasks
+general function description, (2) circuit implementation details, and            such as reverse functional reasoning and early-stage design quality
+(3) fine-grained exact RTL code. These GenEDA-supported new                      estimation. Most methods [6], [5], [4], [27], [18], [7], [24], [10], [28]
+generative netlist functional reasoning tasks are highly valuable                focus on AIG netlists and use graph learning to capture the circuit
+in multiple aspects: (1) Practical applications: Reasoning high-                 structure. Recent work [8], [9], [19] fuses multiple modalities (graph,
+level functionality from bit-blasted netlists can support critical               text, image), but their multimodal fusion are limited to the encoder
+applications [25], [26], [23], such as functional verification, datapath         side, lacking alignment with LLMs for enabling generation capabili-
+optimization, and malicious logic detection. (2) Unprecedented                   ties. Circuit decoders for generation. LLM-based decoders support
+reasoning quality: These tasks move beyond traditional gate function             forward-generation tasks like RTL or assertion generation [29], [20],
+classification by directly generating the overall functionality of entire        [30], [15], [31], debugging [21], optimization [13], [32], and knowl-
+circuits, including specifications and RTL code, offering a significant          edge querying [33], [34]. DeepRTL [22] further explores bidirectional
+leap in reasoning quality. (3) Benchmarking model capability:                    generation between RTL and specification. However, since RTL is
+Our proposed tasks introduce new benchmarks for evaluating the                   easier for LLMs to understand due to its rich semantics, the text-
+generative circuit reasoning capabilities and netlist understanding of           only T5 LLM is sufficient for these tasks. Additionally, existing
+foundation models. Since these tasks generate human-readable circuit             multimodal approaches focus on circuit images [32], [15], a capa-
+information, they help enhance the interpretability of circuit models.           biltity already present in current multimodal LLMs. They overlook
+   The contributions of this paper are summarized as follows:                    the crucial circuit graph structure, which remains largely unexplored
+   • Circuit encoder-decoder alignment framework. We propose                     in combination with LLMs.
+     the first framework that cross-modally aligns pre-trained circuit              Circuit encoder-decoder alignment by GenEDA. GenEDA
+     encoders with LLM decoders. It supports both trainable and                  bridges this gap by proposing the first cross-modal encoder-decoder
+     frozen LLMs for advanced generative tasks through two align-                alignment framework, which aligns circuit structural representations
+     ment paradigms.                                                             with LLM textual representations in a shared latent space, enabling
+   • Generative netlist foundation model. Leveraging this frame-                 support for advanced generative tasks.
+     work, we develop the first generative foundation model for
+     netlists. By integrating structural and functional insights cap-            B. Application Related: Functional Reasoning on Netlists
+     tured by netlist encoders, the model unleashes LLMs’ generative               Functional reasoning on gate-level netlists aims to reconstruct the
+     reasoning capability on the low-level and bit-blasted netlists.             high-level functionality originally described in specifications or RTL.
+   • New generative netlist reasoning tasks and benchmarks. We
+     propose three novel generative netlist functional reasoning tasks
+     with corresponding benchmarks, advancing beyond prior gate                           Circuit design flow (forward)       GenEDA generative reasoning (reverse)          Trainable
+                                                                                          Unknown during reasoning            GenEDA predictive reasoning (reverse)          Frozen
+     function classification. We also release these benchmarks to
+                                                                                                                                                                         Gate-Level Netlist
+     encourage follow-up research on these tasks.
+                                                                                                                                      RTL Code                          FF         XOR
+   • Boosting SOTA LLMs’ performance. Experimental results                                                                      reg [1:0] R1,R2,R3;
+                                                                                                                                reg [2:0] R4;                                                NOR
+
+     validate that GenEDA significantly boosts the performance of                       Specification                           wire [2:0] W1,W2;       EDA Tool
+                                                                                                                                                                                                   MUX
+
+
+
+
+                                                                                                                                                                        FF                               FF
+                                                                                                                   Designer     ...
+                                                                                                                                assign W1 = R0 + R1;    Synthesis
+                                                                                                                                                                             INV         …
+     cutting-edge LLMs on all three new functional reasoning tasks                  Function       Implement.       Coding      ...
+                                                                                                                                always @(posedge clk)
+                                                                                                                                                             X                       AND
+                                                                                   Description       Details                                             irreversible   FF
+     after alignment with the pre-trained netlist encoder.                                                                         R4 <= W2;
+
+                                                                                 Task1                    Task2 Reverse
+                          II. R ELATED W ORK                                                                 Reasoning Tasks      Task3
+A. Method Related: Circuit Foundation Model                                                Paradigm 1                  Paradigm 2      Align                Netlist
+                                                                                    Embedding-Based Align            Preidction-Based Align
+                                                                                                     Netlist Decoder 𝐟dec                                Encoder 𝐟enc
+   Recent advances in foundation AI for EDA have enabled strong
+generalization and generation capabilities through the pretrain-                                                          GenEDA
+finetune process. As summarized in TABLE I, these circuit foundation             Fig. 2: Overview of GenEDA framework integrated into the standard
+models can be categorized into encoder-based and decoder-based                   IC design flow. GenEDA aligns the pre-trained netlist encoder with
+architectures, each supporting different inputs and tasks.                       LLM decoders through two alignment paradigms, enabling challeng-
+                                                                                 ing generative netlist functional reasoning tasks.
+       Proposed netlist generative reasoning benchmark
+       Existing LLM generation          GenEDA generation                          Task 1 & 2 Specification Reasoning       Task 3 RTL Code Reasoning
+
+                         ① netlist (.v)                                             The design seems to conditionally            Generated RTL Code
+                                                LLMs            LLM                 combine bits from a and b to create
+                                                                                                                          module test (
+                           Netlist Text       (e.g., GPT,      Decoder              the output Out, using both logical         input [3:0] a,
+                                              DeepSeek)                             operations and multiplexing.               input [3:0] b,
+                         AOI22 U16(.A(n0)…)                                                                                    output [7:0] Result);
+                         NOR3 U01(.A(n2)…)                                                   Generated Spec                 wire n1;
+          …              OAI21 U21(.A(n3)…)                 GenEDA                  This module compares two 2-bit
+                                                                                                                            wire [7:0] Result_1;
+                                                                                                                            wire [7:0] Result_2;
+
+
+
+
+                                                             Connector
+                         ...                                                        values a and b, performs addition       assign Res_1 = a + b;
+                         MUX2 U5 (.S(n10)…)
+                                                  Netlist                 LLM                                               assign Res_2 = a * b;
+                                                                                    and multiplication on them, and         assign n1 = (a > b) ? 1'b1 : 1'b0;
+                                                 Encoder                 Decoder    selects the result based on the
+    Netlist Graph                                                                                                           assign Result = n1 ? Res_2 : Res_1;
+                                                                                    outcome of the comparison.            endmodule
+
+
+               ② question_prompt (.txt)                                               ③ ground-truth spec (.txt)          ④ ground-truth RTL + testbench (.v)
+                                                                                    Evaluation: NLP scores + GPT score     Evaluation: Simulation + GPT score
+Fig. 3: Proposed generative netlist functional reasoning benchmarks. For Tasks 1 and 2, the netlist and question prompt are processed by
+models for specification reasoning, and evaluated using NLP scores and GPT scores. For Task 3, the models reconstruct RTL code from the
+netlist, which is evaluated via simulation and GPT scores.
+It plays a critical role in functional verification, logic optimiza-               paradigms, as well as how to tackle the three tasks. In Section VI, we
+tion, datapath synthesis, and hardware security. Existing approaches               demonstrate the effectiveness of GenEDA in all three generative func-
+primarily fall into two categories: formal methods for analyzing                   tional reasoning tasks in experiments. Finally, in Section VII, we dis-
+functionality [25], [35], [26], [36], and machine learning methods                 cuss the potential of extending GenEDA to other circuit design stages
+for gate-level function classification [37], [38], [7], [23], [10]. We             and the broader applications of generative netlist functional reasoning.
+detail these two categories below.
+   Formal analysis. Traditionally, netlist functional reasoning relies               IV. B ENCHMARKING G ENERATIVE F UNCTIONAL R EASONING
+on structural and functional analysis using formal techniques [25],
+[35], [26], [36]. These approaches typically extract subcircuits from                 Fig. 3 illustrates our three novel generative functional reasoning
+the netlist and match them against components in a golden library via              tasks on netlists, along with the benchmarks developed to support
+exhaustive formal verification. However, they are time-consuming,                  them. These tasks aim to reversely generate high-level circuit
+dependent on library completeness, and incapable of recognizing                    functionality, including natural language specifications and exact
+functional variants. GNN-based individual gate function prediction.                RTL code, from low-level bit-blasted netlists. Please note that models
+Recently, GNN-based methods [37], [38], [7], [23], [10] have been                  are only provided with netlists, their corresponding specifications
+applied to predictive netlist functional reasoning. These methods                  and RTL code serve as ground-truths and and unknown to the
+focus on learning the netlist structure for gate-level function                    model. Our proposed benchmarks evaluate the generative model’s
+classification. While they effectively identify the roles of known                 ability to truly understand the functionality of netlists, setting a new
+components, they are limited in generalizing to unseen functionality               direction for generative EDA tasks. We detail the three tasks below.
+and cannot reason about the full behavior of the entire circuit.
+   GenEDA-based entire circuit function generation. GenEDA                         A. Task 1 & 2: specification reasoning from netlist.
+advances from gate-level prediction to full-circuit generative                        Task and benchmark description. Tasks 1 and 2 aim to reversely
+reasoning. By aligning netlist encoders with LLM decoders, it                      generate high-level natural language specifications from gate-level
+enables the direct generation of high-level specifications and RTL                 netlists, as shown in Fig. 3. Task 1 Function description generation
+code from low-level netlists.                                                      focuses on generating circuit functional descriptions from low-level
+                             III. OVERVIEW                                         netlists, emphasizing the overall behavior of the circuit. Task 2 Im-
+   Fig. 2 presents the overview of our GenEDA framework,                           plementation detail generation targets the reconstruction of step-by-
+integrated into the standard digital IC design flow. GenEDA aligns                 step signal propagation and logic behavior from the netlist, reflecting
+the state-of-the-art post-synthesis netlist encoder NetTAG [19] fenc               the underlying design implementation. As these are novel tasks with
+with cutting-edge LLM-based decoders fdec . It first converts the                  no prior benchmarks, we construct new datasets and benchmarks to
+circuit netlist N into embeddings via the encoder fenc , capturing                 support model training and evaluation. Specifically, we collect 400
+both netlist structural and functional information. The encoder                    circuit netlists with various design scales and complexities, annotated
+output is then provided to aligned decoders fdec to support advanced               with natural language specifications as ground-truth. For each design,
+generative reasoning tasks on netlists.                                            our proposed benchmark provides the following information in three
+   We propose two novel encoder-decoder alignment paradigms for                    separate files:
+both open-source trainable LLMs and commercial frozen LLMs:                           •   Netlist text. Gate-level netlist in Verilog text format synthesized
+(1) Embedding-based alignment, where a trainable LLM decoder is                           from RTL code. Please note that in these reverse tasks, the RTL
+instruction-tuned with encoder embeddings with a circuit modality                         code is unknown to the model.
+connector. (2) Prediction-based alignment, where the encoder                          •   Question prompt. For Task 1, the prompt inquires models to
+annotates textual gate function predictions on netlists to augment the                    describe the interface, purpose, functionality, and constraints of
+inputs to the frozen LLM. In our experiments, we apply paradigm 1                         the netlist. For Task 2, the prompt asks the model to explain the
+for specification reasoning tasks (Task 1 and Task 2) and paradigm                        combinational logic, sequential behavior, and control flow.
+2 for exact RTL code reasoning (Task 3).                                              •   Ground-truth specification text. Since real-world RTL
+   The rest of the paper is organized as follows: In Section IV, we first                 specifications are rarely available, following [22], [8], we
+provide a detailed explanation of our three novel generative netlist                      generate ground-truth reference answers for these two tasks
+functional reasoning tasks and our contributed benchmarks. In Sec-                        using GPT-4o prompted with RTL code and manually verify
+tion V, we illustrate the two proposed encoder-decoder alignment                          their quality through expert review.
+❶                                                Modality                                      ❷
+      Circuit Netlist                            Connector                                                                                       Predicton         𝒯𝒩 + 𝒯pred
+                                                                                                    Circuit Netlist
+                  Graph 𝒢𝒩                  𝑁𝑔                  𝐻𝑔                                                                               Connector
+                             Pretrained                                                                                                                           Netlist Text                    Task 3
+                                                                                                                Graph 𝒢𝒩                                          AOI22 mul_U1 …
+                               Netlist               MLP                                                                    Pretrained
+                              Encoder                                                                                         Netlist
+                                                                                                                                                          𝒯pred   NOR3 adder_U2 …       LLM     • RTL Code
+                                                      𝐟c                        Task 1 & 2                                                  𝑁𝑖     MLP
+                                𝐟enc                                                                                                                              OAI21 comp_U3 …     Decoder     Reasoning
+                                                                                                                             Encoder                𝐟p
+                                           circuit          text                                                                                                  ...                   𝐟dec
+       …                                  embed.           embed.      LLM     • Description
+                                                                                                     …                         𝐟enc                               MUX2 ctrl_U6 …
+                                                           concat    Decoder   • Details
+                   Text 𝒯𝒩                                      𝐻𝑡     𝐟dec                                       Text 𝒯𝒩
+                                  Input Text 𝑇in                                                                               Annotate pred. gate function on netlist
+                                                     tokenize
+                                 • Instruction                                                                                         Adder         Subtractor          Multiplier
+                                 • Signal name                                                                                         Control       Comparator
+                                                                                                                                                                                          …
+                                                                                                                                           Type of Gate Function 𝒯pred
+
+            (a) Paradigm 1: Embedding-based alignment                         (b) Paradigm 2: Prediction-based alignment
+Fig. 4: Two encoder-decoder alignment paradigms in GenEDA: 1. Embedding-based alignment integrating embeddings from the netlist
+encoder with trainable LLM decoders, and 2. Prediction-based alignment using functional predictions from the netlist encoder as textual
+input for frozen LLM decoders.
+
+   Evaluation metrics. As there are no standard metrics for evalu-                                 paradigms with their supported tasks are introduced in Section V-A
+ating the functional similarity of specification texts, we follow prior                            and V-B, respectively. In our experiments, Paradigm 1 is applied to
+work DeepRTL [22] (i.e., generating specification from RTL code)                                   Tasks 1 and 2 for specification reasoning, while Paradigm 2 is used
+to adopt a combination of natural language metrics. Specifically,                                  for Task 3 to generate exact RTL code.
+we use BLEU, ROUGE-1/2/L, and cosine similarity computed from                                         Netlist encoder and LLM decoder in GenEDA. Before dis-
+text embeddings. Additionally, GPT-4o is employed as an automated                                  cussing the alignment mechanisms, we briefly introduce the models
+evaluator to assess semantic similarity between generated outputs                                  used in GenEDA. For the encoder, we employ NetTAG [19], the state-
+and reference specifications. The prompt templates used are provided                               of-the-art encoder capable of handling post-synthesis netlists, whereas
+in Section VI.                                                                                     most prior netlist encoders are limited to the AIG format. NetTAG
+                                                                                                   introduces a text-attributed graph format for netlists and employs a
+B. Task 3: arithmetic RTL code reasoning from netlist.
+                                                                                                   multimodal architecture: it encodes the gate function via symbolic
+   Task and benchmark description. Task 3 arithmetic RTL code                                      Boolean expressions using an LLM encoder and captures global
+reasoning targets the reverse generation of RTL code from gate-                                    circuit structure through a graph transformer. This results in rich
+level netlists, specifically for arithmetic circuits, as shown in Fig. 3.                          embeddings that encode both functional and structural information.
+Unlike existing forward RTL code generation benchmarks [39], [40],                                 On the decoder side, we consider both general-purpose LLMs,
+which rely on human-readable specifications as input, our reverse task                             such as OpenAI GPT and DeepSeek, and circuit-specific LLMs like
+begins with post-synthesis netlists. This makes the task significantly                             RTLCoder [20], which is fine-tuned for forward RTL code generation.
+more challenging due to the irreversible nature of logic synthesis and
+the lack of high-level functional information.
+   We propose the first benchmark for reverse RTL code reasoning.                                  A. Paradigm 1: Embedding-Based Alignment
+Given the task’s complexity, we begin by focusing on arithmetic
+modules. Specifically, we extend the GNN-RE gate-level arithmetic                                     Paradigm 1 overview. Fig. 4 (a) shows our paradigm 1, which
+function prediction dataset [37] into a generative benchmark, incorpo-                             aligns trainable open-source LLM decoders fdec with the embeddings
+rating golden RTL code and testbenches. For each of the 9 arithmetic                               generated by the netlist encoder fenc from the netlist graph (i.e.,
+designs in our benchmark, we provide:                                                              text-attributed graph) modality. The main challenge is the modality
+   • Netlist text. Gate-level netlist from GNN-RE dataset [37],                                    gap between the encoder-generated netlist embeddings and the text
+     originally used for gate function prediction task.                                            embeddings expected by the decoder, as they lie in fundamentally
+   • Question prompt. Instructions to first infer the word-level                                   different latent spaces. To address this, our paradigm 1 introduces
+     arithmetic function, and then implement it using RTL code.                                    a modality connector fc , which acts as a “circuit tokenizer”,
+   • Ground-truth RTL code. The original RTL design used for                                       transforming the circuit embeddings from our encoder into text-alike
+     synthesis, which serves as the reconstruction target.                                         embeddings compatible with the LLM decoder. The connector fc is
+   • Testbench. A verified testbench with pre-defined module name                                  cross-modally instruction-tuned with the LLM fdec , enabling deep
+     and IO ports, containing multiple input-output cases for func-                                embedding-level alignment in the shared latent space. We describe
+     tional validation.                                                                            our aligned model architecture and training method below.
+   Evaluation metrics. Similar to the existing forward RTL genera-                                    Embedding alignment architecture. As shown in Fig. 4 (a), given
+tion evaluation metrics [39], [40], we validate both syntax correctness                            an input netlist N , we represent it in two modalities: text-attributed
+and function correctness of the reversely generated arithmetic RTL                                 graph GN and netlist Verilog code TN in text format. For GN , we
+code using our provided golden testbenches. Additionally, GPT-4o                                   employ our pre-trained netlist encoder fenc to process the netlist and
+is employed to assign a function similarity score, measuring how                                   generate the netlist graph-level embedding Ng , which contains the
+closely the generated RTL matches the ground truth. We provide                                     structural and functional netlist information. For the netlist Verilog
+detailed evaluation method implementation and prompts for obtaining                                text TN , we keep only the signal names and leave the structural
+GPT-score in Section VI.                                                                           details to be captured by the encoder model. As shown in Fig. 5, the
+                                                                                                   signal name text is combined with the question prompt instruction
+           V. G EN EDA E NCODER -D ECODER F RAMEWORK                                               to form the textual input Tin . This input Tin is then tokenized into
+   Fig. 4 presents our proposed two paradigms for the encoder-                                     language embeddings Ht and fed into the LLM decoder fdec .
+decoder alignment, accommodating both trainable open-source                                           To align the encoded embeddings Ng with the decoder fdec em-
+LLMs and frozen commercial LLMs. Through alignment, GenEDA                                         bedding Ht , we introduce a trainable connector MLP fc to transform
+integrates rich netlist information captured by the encoder to enhance                             Ng into language-modal embedding tokens Hg . These converted
+the generative reasoning capabilities of decoder LLMs. These two                                   embeddings have the same dimension as the word embedding (i.e.,
+ Human Input Example                           Ground-Truth Answer Example                     for LLMs. These predictions Tpred provide detailed gate-level analysis
+ // 1. Instruction 𝑇in                                                                         of netlist functionalities, which are then used by LLMs to summarize
+ Please write a function description of       Function Description                             and generate high-level functionality. This paradigm enables seamless
+ the given circuit netlist, following this    (1) Interface: input and output signals …
+                                              (2) Purpose: brief description of module …       integration without modifying the pre-trained frozen decoder. Below,
+ outline: (1) Interface: … (2) Purpose: …
+ (3) Functionality: … (4) Constraints: …      (3) Functionality: brief data flow description   we introduce the details of the task and our alignment method.
+ (Task 2 is similar)                              + key states or operations …                    Prediction alignment architecture. To generate functional
+ // 2. Signal name text 𝑇in                   (4) Constraints: reset and clock signals …
+                                                                                               predictions Tpred with the encoder fenc , we fine-tune our pre-trained
+ This design is a multi-input-single-         Implementation Details
+ output module. The output signal is ….                                                        encoder to enable gate functionality identification with the task
+                                              (1) Combinational logic computations: …
+ The input signals are: ...                   (2) Sequential register update function: …       proposed in [37]. This task involves classifying gates into 5 high-
+ // 3. Graph input for netlist encoder 𝒢𝒩     (3) State machine or pipeline flow if any: …     level function types defined in their arithmetic RTL code, including
+ <netlist graph>
+                                                                                               adder, multiplier, comparator, subtractor, and controller. During
+    Fig. 5: Instruction tuning data pair of alignment paradigm 1.                              fine-tuning, the encoder fenc remains frozen, and only the additional
+                                                                                               function predictor MLP fp is trained for gate function classification
+Ht ) space in the trainable LLM decoder fdec :                                                 using cross-entropy loss, as formulated below.
+                        fdec (Hg , Ht ) ⇒ Generative Reasoning,                                                                   X
+                                                                                         (1)                     Lalign2 pred = −      yi log(fp (Ni )),           (3)
+                with Hg = fc (Ng ) and Ng = fenc (GN ).                                                                             i
+   Training for encoder-decoder alignment. To enhance embedding                                where yi represents the ground-truth function type label for the netlist
+alignment, we propose cross-modal instruction tuning using task-                               gate i, and Ni are the encoder-generated embeddings for this gate.
+specific datasets (i.e., from Task 1 & 2) to achieve encoder-decoder                              After fine-tuning, the encoder generates textual predictions Tpred for
+alignment. As shown in Fig. 5, we generate a multimodal instruction-                           all gates’ functionalities. These predictions (i.e., gate functional roles)
+response pair for each netlist, where the input includes: (1) A                                are directly annotated into its netlist Verilog code TN , which serves
+task-specific instruction (e.g., request for function description or                           as input text for the frozen LLM decoder. The decoder then utilizes
+implementation details). (2) Input and output signals extracted from                           this fine-grained gate annotation for arithmetic RTL code generation.
+the netlist code. (3) The netlist graph format, with the encoder                               To illustrate this process more clearly, we present a detailed case
+capturing the structural and functional information. The ground truth                          study in Fig. 8. We formulate the process below:
+is the golden specification according to the task. This creates a unified
+                                                                                                             fdec (Tpred + TN ) ⇒ Generative Reasoning,
+format for multimodal instruction-following sequences. GenEDA                                                                                                          (4)
+is instruction-tuned on prediction tokens using the auto-regressive                                                 with Tpred = fp (fenc (GN )).
+training objective, maximizing the likelihood of the target ground-                               Chain-of-Thought for RTL code reasoning. Leveraging the
+truth specification text sequence y with length L, formulated as:                              annotated netlist, we employ the Chain-of-Thought (CoT) technique
+                                      L
+                                      X                                                        to improve the LLM in this challenging exact RTL code reasoning.
+                      Lalign1 = −            log p(yi | y<i , GN )                       (2)   The CoT prompt decomposes reasoning tasks into two sequential
+                                      i=1                                                      steps: (1) Reason about the word-level arithmetic function description
+where y<i represents the previously generated tokens before the cur-                           based on the given circuit netlist with gate annotations. (2) Generate
+rent token yi , and GN denotes the input netlist graph for the encoder.                        RTL code to implement the identified arithmetic function, ensuring
+   During instruction tuning, we leverage a two-step procedure for                             word-level RTL operations and avoiding bit-level operations.
+multimodal embedding alignment:
+                                                                                                                         VI. E XPERIMENTS
+  1) Pre-training for modality alignment. In this stage, the netlist
+                                                                                                  In this section, we first introduce the experimental setup and
+      encoder fenc and decoder fdec remain frozen. Only the connector
+                                                                                               evaluation metrics in Section VI-A. Then, in Section VI-C, we present
+      MLP fc is trained to maximize the likelihood of the generated
+                                                                                               our results on specification context reasoning (i.e., Task 1 & 2). Then
+      tokens of the auto-regressive loss, as formulated in Equation (2).
+                                                                                               we discuss the arithmetic RTL code reasoning results (i.e., Task 3)
+      This step aligns the netlist embeddings Hg with the pre-trained
+                                                                                               in Section VI-D and conclude with the ablation study in Section VI-E.
+      LLM word embeddings Ht , effectively acting as a modality
+      adapter (i.e., “netlist tokenizer”) for the LLM.                                         A. Experimental Settings
+  2) Fine-tuning end-to-end. In this stage, the encoder fenc remains                             Circuit dataset preparation. For the circuit encoder and Task 1
+      frozen, while both the connector fc and the LLM decoder fdec are                         & 2, we collect circuit datasets from various open-source RTL code
+      fine-tuned also with the auto-regressive loss (i.e., Equation (2)).                      benchmarks, including ITC99 [41], OpenCores [42], Chipyard [43],
+      This end-to-end training step further refines the alignment,                             and VexRiscv [44]. In Task 1 and 2, for large sequential circuits, we
+      allowing the model to perform generative tasks seamlessly across                         split them into multiple sub-circuits, following the techniques in [19].
+      graph and text modalities.                                                               After splitting, we collect 25k subcircuits, which are augmented by
+B. Paradigm 2: Prediction-Based Alignment                                                      functional equivalent transformation by Yosys [45] to create a total
+   Paradigm 2 overview. In addition to trainable open-source LLMs,
+advanced LLMs are often frozen due to commercial or computational                                            TABLE II: Statistics of the netlist dataset.
+limitations, yet they excel in reasoning and support longer input                                                                               # Tokens     # Gates
+contexts. Unlike paradigm 1, which aligns coarse-grained graph-level                                                Source        # Circuits
+                                                                                                                                                    (avg.)    (avg.)
+embeddings Ng , our paradigm 2 leverages fine-grained gate-level text
+                                                                                                                 ITC99 [41]              4k         15k       1025
+and frozen advanced LLMs to support the more challenging exact                                      Task       OpenCores [42]           55k          9k        173
+RTL code reasoning task. As Fig. 4 (b) shows, we align our multi-                                   1&2         Chipyard [43]           20k         24k       2813
+modal encoder fenc with frozen LLM decoders fdec by using the en-                                              VexRiscv [44]            21k         13k        901
+coder’s fine-grained gate functional predictions Tpred as textual inputs                            Task 3      GNN-RE [37]             8            4k        67
+  TABLE III: Evaluation results on Task 1 & 2, reasoning specification text from gate-level netlists. Best results are highlighted in bold.
+                                                  Task 1 Functional Description Reasoning                                                              Task 2 Implementation Detail Reasoning
+        Model              BLEU         ROUGE-1            ROUGE-2          ROUGE-L            Emb. Sim.             GPT Score     BLEU      ROUGE-1         ROUGE-2       ROUGE-L        Emb. Sim.      GPT Score
+     GPT4o                    5              34                10                 17               0.83                0.21           5           34            10             17            0.84            0.44
+   DeepSeek-V3                4              31                9                  17               0.82                0.19           3           34            10             17            0.83            0.42
+   DeepSeek-1B                0               7                 1                 5                0.77                0.04           0           5              1              4            0.73            0.01
+   DeepSeek-7B                0               8                 2                 6                0.77                0.06           0           5              1              4            0.74            0.02
+  RTLCoder-7B⋆                0               5                 1                 4                0.32                0.02           0           3              1              2            0.28            0.01
+   GenEDA-1B                 12              47                16                 27               0.9                 0.62          12           47            19             28            0.93             0.5
+   GenEDA-7B                 14              49                19                 28               0.91                0.62          14           50            21             30            0.94            0.51
+    ⋆ RTLCoder [20] is fine-tuned for generating RTL code from specifications. In our setting, we adopt the fine-tuned model as a circuit-specific LLM
+    baseline to generate specifications from netlists reversely.
+
+ Task 1 Response Example                                                                                                  Ground Truth Specification
+ (1) Interface: The module has numerous input signals including control and data inputs
+                                                                                                                         (1) Interface: - Inputs: clk, rst, csr, pmp, … - Outputs: csr_reg_pmp_3_addr
+     from various csr (Control and Status Register) and pmp (Physical Memory Protection)
+                                                                                                                         (2) Purpose: - This module seems to handle a variety of Control and Status Registers
+     …. The output signal is `csr_reg_pmp_3_addr`.
+                                                                                                                             (CSRs) within a system, likely part of a RISC-V processor or similar architecture. It
+ (2) Purpose: The purpose of this module is to manage control and status registers (CSR),
+                                                                                                                             manages read/write operations with CSR related computations and control flow.
+     handle memory protection, and update outputs based on these operations.
+                                                                                                                         (3) Functionality: - The module coordinates interactions with a wide array of CSR registers
+ (3) Functionality: The module reads various CSR and PMP configurations, performs logic
+                                                                                                                             to determine their read and write states. Primarily, it seems to decide whether CSRs
+     operations, and updates the output based on the logic. Key states or operations
+                                                                                                                             can be accessed based on the current CSR commands and inputs (likely reflecting
+     include: - CSR read and write operations - Memory protection configuration -
+                                                                                                                             different privilege modes and states of the processor). Key operations include decoding
+     Address decoding and control signal generation - Conditional data assignment based
+                                                                                                                             instruction inputs to access specific registers, handling of interrupts, and managing
+     on specific conditions.
+                                                                                                                             PMP protections.
+ (4) Constraints: The module is synchronized with a clock signal, and it can be reset using
+                                                                                                                         (4) Constraints: - The design uses reset and system clock for its sequential logic execution.
+     a reset signal.
+
+ Fig. 6: Case study for Task 1. Comparison between the response from GenEDA and the ground truth specification for a circuit module.
+
+
+of 50k samples. We randomly sample 400 subcircuits for testing,                                                          and 4096 to transform the netlist embedding (768 dimensions) into
+ensuring that no subcircuits from the same circuit are included in                                                       the LLM word embeddings (4096 dimensions). This connector can
+the training set. Since no specification documents are available, we                                                     be further explored using more advanced methods, such as Q-Former
+generate functional specifications from the RTL context using GPT-                                                       and cross-attention mechanism as in [48], [49], [50]3 . GenEDA is
+4o as the ground-truth for instruction-tuning. Human engineers then                                                      instruction-tuned using LoRA on the full task-specific dataset for
+verify these generated specifications, and those that do not contain                                                     one epoch. In alignment paradigm 2, the function predictor MLP for
+valid functionality are excluded. For Task 3, we use the open-source                                                     encoder fine-tuning contains three layers with a hidden dimension
+arithmetic RTL code from [37]. Please note that in all tasks, only                                                       of 256. Experiments are conducted on a server equipped with 8
+low-level netlists are provided for reverse reasoning, with high-                                                        NVIDIA A800 80G PCIe GPUs.
+level specifications and RTL code being unknown to models. All
+RTL designs are synthesized into netlists using the Synopsys Design                                                      B. Benchmark Evaluation
+Compiler with the NanGate 45nm technology library. We provide
+detailed statistics of our netlist dataset in TABLE II, including the                                                       For specification reasoning tasks (Task 1 & 2), the model-generated
+number of circuits, the average number of text tokens, and the average                                                   natural language specification is compared directly with the ground-
+number of gates.                                                                                                         truth specification using both natural language similarity metrics and
+                                                                                                                         LLM-assisted functionality evaluation metrics. Specifically, natural
+   Model and training. For the encoder model in GenEDA, we
+                                                                                                                         language similarity scores, including BLEU, ROUGE-1/2/L, are
+employ the state-of-the-art netlist encoder NetTAG [19] as the
+                                                                                                                         computed. These metrics assess the overlap between the gener-
+backbone. For the decoder LLMs in GenEDA, we fine-tune the
+                                                                                                                         ated text and the reference text by comparing n-grams. For LLM-
+DeepSeek-Coder [46] 1B and 7B models in the trainable embedding-
+                                                                                                                         based evaluation, we use the OpenAI text embedding model, text-
+based alignment (Paradigm 1), and directly leverage the commercial
+                                                                                                                         embedding-ada-002, to obtain text embeddings for both the generated
+APIs of OpenAI GPT-4o and DeepSeek-V3 [47] as the frozen LLMs
+                                                                                                                         and reference specifications. Cosine similarity is then calculated
+in the prediction-based alignment (Paradigm 2). The training process
+                                                                                                                         between the embeddings to generate the embedding similarity score.
+utilizes DeepSpeed ZeRO and LoRA techniques. In alignment
+                                                                                                                         Additionally, we utilize GPT-4o to directly evaluate the specifications
+paradigm 1, we adopt a three-layer MLP with dimensions 768, 2048,
+                                                                                                                         and assign a similarity score between 0 and 1 based on how closely
+                                                                                                                         the generated specification matches the intended functionality of the
+                                                                                                                         designs. Detailed prompts for GPT-4o are provided in Fig. 7.
+ SPEC Similarity Evaluation by GPT                         RTL Code Similarity Evaluation by GPT                            For RTL code reasoning (Task 3), we use Synopsys VCS to
+• You are a professional Verilog designer that needs to    • You are a professional Verilog designer that needs to
+  evaluate the similarity between two textual                evaluate the functional similarity between two VLSI         simulate the generated RTL code with the proposed testbench,
+  functional summaries describing VLSI designs.
+• The first summary is the ground truth description of
+                                                             designs in Verilog code format.
+                                                           • The first Verilog is the ground truth, and the second
+                                                                                                                         validating both syntax and functional correctness. Each circuit is
+  the circuit, and the second summary is the generated       one is the generated Verilog of the circuit.                generated five times, and we compute the average success rate and
+  description of the circuit.                              • Please first analyze their implemented arithmetic
+• Please read the following summaries and provide a          functionality and provide a similarity score between        Pass@k metrics [20]. Similar to specification reasoning, GPT-4o is
+  similarity score between 0 and 1 based on how              0 and 1 based on how similar the two Verilog code
+  similar the two summaries are in terms of describing       are in terms implemented arithmetic, where 0
+                                                                                                                         also used to evaluate the functional similarity between the generated
+  the functionality of the designs, where 0 means
+  completely dissimilar and 1 means identical. Note
+                                                             means completely dissimilar and 1 means their
+                                                             implemented functionalities are identical. Note that
+                                                                                                                         and ground-truth RTL codes, with the prompt outlined in Fig. 7.
+  that you should strictly only output the score without     you should strictly only output the score without any
+  any additional information.                                additional information.                                       3 Complex connectors like Q-Former are typically used with frozen open-
+                                                                                                                         source LLMs [49], [50], while simpler connectors such as MLPs are often
+ Fig. 7: Prompt used in GPT-assisted evaluation (i.e., GPT Score).                                                       suitable when the LLM is trainable [48].
+TABLE IV: Evaluation results on Task 3, reasoning arithmetic RTL code from gate-level netlists. Each design is generated five times per
+model. Best results are highlighted in bold.
+                                  GPT-4o                          GenEDA (w. GPT-4o)                            DeepSeek-V3                      GenEDA (w. DeepSeek-V3)
+     Circuit         Syntax     GPT Score       Function     Syntax    GPT Score       Function      Syntax      GPT Score       Function     Syntax      GPT Score       Function
+        1             80%           0.36           0%         100%        0.52           20%          100%          0.18            0%         100%          0.85           80%
+        2             20%           0.32           0%         100%        0.88           80%          100%          0.55            40%        100%          0.99          100%
+        3            100%            0.3          60%         100%        0.28           40%          100%           0.2            0%         100%          0.74           60%
+        4            100%           0.66          60%          40%        0.44           20%          100%          0.95           100%        100%            1           100%
+        5             60%           0.18           0%          80%        0.51            0%          100%            0             0%         100%          0.98           80%
+        6             20%            0.2           0%         100%        0.79           60%          100%          0.28            0%         100%          0.95          100%
+        7             80%           0.18           0%          80%        0.54            0%           60%          0.18             0%        80%           0.91           0%
+        8             40%           0.28           0%          80%         0.7            0%           40%          0.49             0%        80%           0.76           0%
+        9             80%            0.3           0%         100%        0.56           40%          100%           0.2            0%         100%          0.78          100%
+  Success Rate        64%           0.31          13%          87%        0.58           29%           89%          0.34           16%          96%          0.88           69%
+    Pass@1            67%             /           17%          83%          /            50%           92%            /             8%         100%            /            58%
+    Pass@5           100%             /           22%         100%          /            67%          100%            /            22%         100%            /            78%
+
+
+   Task 3 CoT Prompt                                              Task 3 Response from GenEDA
+ You are a professional Verilog designer.
+ Step 1: Please first reason the word-level arithmetic function   Step 1: Reasoning the Word-Level Arithmetic Circuit Function
+ of the given circuit netlist with gate functionality             The given Verilog netlist describes a module `test` that takes two 4-bit inputs `a` and `b` and produces an 8-bit
+ annotations.                                                     output `Result`. The module consists of three main components:
+ Step 2: Then, follow the arithmetic function to write an RTL     1. Adder: This component adds the two 4-bit inputs `a` and `b` and produces an 8-bit result `Result_1`.
+ code to implement the functionality. Please use word-level       2. Multiplier: This component multiplies the two 4-bit inputs `a` and `b` and produces an 8-bit result `Result_2`.
+ operations, avoiding bit-level operations.                       3. Comparator: This component compares the two 4-bit inputs `a` and `b` and produces a 1-bit output `n1`,
+ Here is the netlist Verilog code with gate annotations:          which is `1` if `a > b` and `0` otherwise. The final output `Result` is determined based on the value of `n1`:
+ module test ( a, b, Result );                                         - If `n1` is `1`, the output `Result` is selected from `Result_2`.
+    input [0:3] a;
+    input [0:3] b;                                                     - If `n1` is `0`, the output `Result` is selected from `Result_1`.
+    output [0:7] Result;
+    XNOR3 adder_U4 (.A(b[0]),.B(a[0]),.C(n1),                     Step 2: Writing the RTL Code
+      .Y(Result_1[2]));
+    NAND2 adder_U3 (.A(a[1]),.B(b[1]),.Y(n1));
+                                                                      module test (                                        Task 3 Response from GPT-4o
+                                                                             input [3:0] a,
+    OA21 adder_U2 (.A0(a[1]),.A1(b[1]),.B0(n1),                              input [3:0] b,                                module test (
+      .Y(Result_1[3]));                                                      output [7:0] Result);                           ...
+    AND3 multiplier_U6 (.A(a[0]),.B(b[0]),                                                                                   assign Result_1[4] = a[0] ^ b[0] ^ (a[1] & b[1]);
+                                                                        wire n1;
+      .C(Result_2[3]),.Y(Result_2[0]));                                 wire [7:0] Result_1;                                 assign Result_1[5] = a[1] + b[1] + (a[2] & b[2]);
+   ……                                                                   wire [7:0] Result_2;                                 assign Result_1[7] = ~(a[3] | b[3]);
+    AOI22 multiplier_U1 (.A0(a[0]),.A1(b[1]),                           assign Result_1 = a + b;                             assign Result_2[4] = a[3] ^ b[3];
+      .B0(b[0]),.B1(a[1]),.Y(n2));                                      assign Result_2 = a * b;                             assign Result_2[6] = a[1] & b[1];
+    INV comparator_U2 (.A(a[0]),.Y(n1));                                assign n1 = (a > b) ? 1'b1 : 1'b0;                   ...
+    AO21 comparator_U1 (.A0(b[0]),.A1(n1),                              assign Result = n1 ? Result_2 : Result_1;            assign n1 = (a > b) ? 1'b1 : 1'b0;
+      .B0N(a[1]),.Y(n2));                                             endmodule                                              assign Result[0] = n1 ? Result_2[0] : Result_1[0];
+ endmodule                                                                                                                 endmodule
+
+
+Fig. 8: Case study for Task 3. By utilizing gate function predictions from GenEDA’s encoder, the LLM in GenEDA can reason about the word-
+level arithmetic functionality of bit-blasted netlists and accurately reconstruct the corresponding RTL code (blue box). In contrast, without
+these predictions, LLMs (e.g., GPT-4o) generate only bit-level operations (red box), leading to significantly lower reconstruction accuracy.
+
+C. Result of Specification Reasoning (Task 1 & 2)                                          tural and functional information through encoders to enhance genera-
+                                                                                           tive capabilities. Moreover, the GenEDA-7B demonstrates further im-
+   Baseline solutions. To ensure a comprehensive comparison, we                            provements over the GenEDA-1B, indicating that potential gains can
+evaluate both general-purpose and circuit-adapted LLMs as baseline                         be achieved by employing more powerful open-sourced base models.
+methods. For general-purpose LLMs, we use advanced commercial                                 Natural language specification reasoning case study. We present
+models like GPT-4o and DeepSeek-V3, as well as lightweight open-                           detailed case studies for these results in Fig. 6. We compare a model-
+source models like DeepSeek-Coder 1B and 7B. For circuit-adapted                           generated response and the corresponding ground truth specification
+LLMs, we select RTLCoder-7B [20], a representative LLM fine-tuned                          for Task 1, function description generation. The model accurately
+for spec-to-RTL generation. These baselines take netlist text and the                      generates key functionality of the specification, aligning closely with
+question prompt as input and generate the specification text.                              the ground truth. For example, in the functionality section, the
+   Comparison with baselines. TABLE III presents the evaluation                            model effectively describes how the module handles various control
+results for specification reasoning in Task 1 and Task 2, comparing                        and status registers and memory protection configuration, which
+GenEDA models with baseline models. For both tasks, after aligning                         matches the ground truth’s detailed explanation of register states and
+with netlist encoder embeddings through multimodal instruction                             operations. These results underline GenEDA’s capability to generate
+tuning, our GenEDA models (1B and 7B), based on DeepSeek Coder                             high-level natural language descriptions from low-level netlist inputs.
+1B and 7B, significantly outperform all general-purpose LLMs across
+all textual semantic similarity metrics. Additionally, although RTL-                       D. Result of RTL Code Reasoning (Task 3)
+Coder [20] is fine-tuned for RTL code generation from specifications,                         Baseline solutions. In this task, we choose the advanced com-
+it performs poorly on both tasks, even underperforming its base                            mercial LLMs, including GPT-4o and DeepSeek-V3, as the baseline
+model, DeepSeek-7B. This is primarily due to the substantial differ-                       methods. For the open-source LLMs (e.g., DeepSeek-Coder 1B, 7B,
+ences between the tasks. Notably, for the GPT scores, which analyze                        and RTLCoder), these models fail to generate high-level RTL and
+the similarity between generated specifications and ground truth with                      instead produce only gate-level netlist code.
+GPT, GenEDA scored much higher than the baseline LLMs.                                        Comparison with baselines. For netlist gate function classifica-
+   These results highlight the effectiveness of aligning circuit struc-                    tion, our encoder achieves a 97% accuracy rate, providing a strong
+                              GenEDA (Paradigm 1)                                                  GenEDA (Paradigm 2)      to 0.32 on Task 1 and from 0.51 to 0.21 on Task 2, highlighting the
+                              SFT w/o encoder alignment                                            Less effective encoder   effectiveness of embedding alignment.
+                    1                                                                            100%                          Impact of encoder quality. GenEDA alignment paradigm 2
+                                                             0.8
+                              Task 1                                  Task 2                                       Task 3
+
+
+
+                                          Similarity Score
+Similarity Score
+
+
+
+
+                                                                                                                            heavily relies on the accuracy of gate functionality classification
+
+
+
+
+                                                                                  Success Rate
+                                                                   0.51                                      69%
+                            0.62
+                   0.6                                       0.4
+                                                                                                                            from the encoder. In this ablation study, we replace the high-quality
+                                                                                                 60%
+                                                                          0.21
+                                                                                                                    40%
+                                                                                                                            encoder NetTAG [19] with a less effective baseline, GNN-RE [37].
+                                   0.32
+                                                                                                                            This results in a significant drop in classification accuracy from 97%
+                   0.2                                        0                                  20%
+                            GPT Score                              GPT Score
+                                                                                                                            to 83%. Consequently, the performance of reconstructed RTL code
+                                                                                                             Function
+                                                                                                                            also degrades, with syntax accuracy dropping from 96% to 91%
+                         (a) Effectiveness of alignment                          (b) Impact of encoder quality
+                                                                                                                            and function accuracy decreasing from 69% to only 40%, as shown
+Fig. 9: Ablation study demonstrating the effectiveness of encoder-                                                          in Fig. 9 (b). This demonstrates the importance of using high-quality
+decoder alignment and the impact of encoder quality.                                                                        encoders and their impact on the generation after alignment.
+
+foundation for our prediction-based alignment paradigm. The impact                                                                                    VII. D ISCUSSION
+of encoder quality on alignment performance is further discussed                                                            A. Extending GenEDA Alignment to Other Circuit Stages and Tasks
+in Section VI-E. TABLE IV evaluates Task 3: Arithmetic RTL Code                                                                Beyond the netlist stage addressed in this work, GenEDA’s
+Reasoning for various models. GenEDA combined with DeepSeek-                                                                encoder-decoder alignment framework can be extended to various
+V3 achieves the highest success rate with a 97% syntax pass rate, 88%                                                       stages in the circuit design flow. At the RTL stage, even though the
+GPT Score, and a 60% functional pass rate, outperforming GPT-4o,                                                            same RTL functionality can be generated, different circuit structures
+DeepSeek-V3 alone, and other combinations. Without the prediction                                                           can yield significantly varying PPA characteristics. By leveraging
+alignment, the powerful commercial LLMs alone cannot reason the                                                             structural RTL information captured by RTL encoders, LLMs can
+high-level word-level arithmetics to generate RTL code, and they                                                            potentially enable structure-aware generation, generating more opti-
+only generate RTL code using bit-level operations. This demonstrates                                                        mized RTL code with better PPA metrics. Additionally, at the layout
+GenEDA’s ability to reversely reconstruct RTL code from netlists with                                                       stage, GenEDA can be adapted to handle cross-modal inputs, such
+exact functionality.                                                                                                        as layout images and netlist graphs. This might enable the direct
+   Notably, even state-of-the-art commercial LLMs like GPT-4o and                                                           generation of macro positions on a chip by learning from image
+DeepSeek-V3 achieve less than a 20% functional success rate on our                                                          representations, thus enabling more efficient and optimized physical
+benchmark, highlighting the difficulty of this task. In contrast, exist-                                                    design generation.
+ing specification-to-RTL generation benchmarks like RTLLM [39]
+and VerilogEval [40] report over 60% success with off-the-shelf                                                             B. Potential Application of Generative Netlist Functional Reasoning
+LLMs like GPT-4, emphasizing the challenge of reverse reconstruct-                                                             GenEDA can reason the detailed functionality from netlists, which
+ing high-level RTL code from low-level bit-blasted netlists.                                                                can significantly benefit verification and optimization processes.
+   Arithmetic RTL code reasoning case study. Fig. 8 provides an                                                             Before loading the netlists into EDA tools, GenEDA can guide the
+example of the reasoning process for Task 3. The Chain-of-Thought                                                           selection of appropriate strategies for verifying or optimizing different
+(CoT) prompt guides the model in two steps: (1) Understanding the                                                           parts of the design, such as datapaths or control logic. Additionally,
+arithmetic circuit function: The model reasons about the circuit’s                                                          it can assist in verifying the equivalence of netlists by transforming
+gate annotations to identify components like adders, multipliers, and                                                       them into higher-level RTL code, making the verification process
+comparators, and determines their combined functionality. These pre-                                                        more scalable. In hardware security, GenEDA can be applied to detect
+dictions are then annotated back onto the original netlist text, which                                                      malicious hardware trojans. By analyzing netlists, it can identify
+is provided to the LLM as input for further reasoning. (2) Writing the                                                      unexpected or unauthorized functional behaviors, helping to ensure
+RTL code: Based on the identified functionality, the model generates                                                        the integrity and security of hardware systems.
+RTL code using word-level operations, successfully implementing
+                                                                                                                                         VIII. C ONCLUSION AND F UTURE W ORK
+the circuit’s logic. This case study illustrates the effectiveness of
+GenEDA in generating correct and interpretable RTL code, bridging                                                              In this paper, we present GenEDA, a framework that aligns
+low-level gate details with high-level functional implementations.                                                          multimodal circuit encoders and decoders for advanced generative
+                                                                                                                            netlist functional reasoning tasks. We align the state-of-the-art netlist
+E. Ablation Study                                                                                                           encoder with both trainable and frozen LLM decoders through two
+   In Fig. 9, we present ablation studies to demonstrate the effec-                                                         alignment paradigms. Our experiments and ablation studies demon-
+tiveness of our encoder-decoder alignment and encoder quality in                                                            strate the effectiveness of this approach, with GenEDA significantly
+improving generative reasoning tasks. We conduct experiments by                                                             enhancing the performance of state-of-the-art LLMs, showcasing the
+selectively removing the encoder alignment or using less effective                                                          critical role of integrating both graph and text circuit modalities
+encoders to assess their impact on task performance. These studies                                                          for complex netlist tasks. Future work will explore extending this
+allow us to isolate and understand the contributions of different                                                           alignment framework to other stages of the circuit design flow, such
+components of GenEDA to its overall performance.                                                                            as RTL code generation and layout-stage tasks, further enhancing the
+   Effectiveness of alignment with encoders. GenEDA alignment                                                               capabilities of GenEDA for diverse EDA applications.
+paradigm 1 is achieved by cross-modally fine-tuning the LLMs                                                                                     IX. ACKNOWLEDGEMENT
+using netlist encoder embeddings. In this ablation study, we remove
+the encoder alignment and only perform supervised fine-tuning                                                                  This research was supported by Hong Kong Research Grants
+(SFT) of the LLMs using the same prompts and labels as in                                                                   Council (RGC) CRF-YCRG Grant C6003-24Y, GRF 16200724, and
+GenEDA. As shown in Fig. 9 (a), removing the encoder alignment                                                              ACCESS – AI Chip Center for Emerging Smart Systems, sponsored
+significantly decreases model performance on Task 1 and Task 2                                                              by the InnoHK initiative of the Innovation and Technology Commis-
+across all metrics. Notably, the GPT scores drop sharply from 0.62                                                          sion of the Hong Kong Special Administrative Region Government.
+                               R EFERENCES                                       [26] P. Subramanyan, N. Tsiskaridze, K. Pasricha, D. Reisman, A. Susnea,
+                                                                                      and S. Malik, “Reverse engineering digital circuits using functional
+ [1] L. Chen, Y. Chen, Z. Chu et al., “Large circuit models: opportunities            analysis,” in DATE, 2013.
+     and challenges,” Science China Information Sciences, 2024.                  [27] S. Khan, Z. Shi, Z. Zheng, M. Li, and Q. Xu, “Deepseq2: Enhanced
+ [2] W. Fang, J. Wang, Y. Lu, S. Liu, Y. Wu, Y. Ma, and Z. Xie, “A survey             sequential circuit learning with disentangled representations,” in Asia
+     of circuit foundation model: Foundation ai models for vlsi circuit design        and South Pacific Design Automation Conference (ASP-DAC), 2025.
+     and eda,” arXiv preprint arXiv:2504.03711, 2025.                            [28] J. Liu, J. Zhai, M. Zhao, Z. Lin, B. Yu, and C. Shi, “Polargate: Breaking
+ [3] W. Fang, S. Liu, H. Zhang, and Z. Xie, “A self-supervised, pre-trained,          the functionality representation bottleneck of and-inverter graph neural
+     and cross-stage-aligned circuit encoder provides a foundation for various        network,” in ICCAD, 2024.
+     design tasks,” in ASP-DAC, 2025.                                            [29] M. Liu, T.-D. Ene, R. Kirby, C. Cheng, N. Pinckney et al., “Chip-
+ [4] Z. Shi, Z. Zheng, S. Khan, J. Zhong, M. Li, and Q. Xu, “Deep-                    NeMo: Domain-Adapted LLMs for Chip Design,” arXiv preprint
+     gate3: towards scalable circuit representation learning,” arXiv preprint         arXiv:2311.00176, 2023.
+     arXiv:2407.11095, 2024.                                                     [30] K. Chang, Y. Wang, H. Ren, M. Wang, S. Liang, Y. Han, H. Li, and
+ [5] Z. Shi, H. Pan, S. Khan, M. Li, Y. Liu, J. Huang, H.-L. Zhen,                    X. Li, “Chipgpt: How far are we from natural language hardware design,”
+     M. Yuan, Z. Chu, and Q. Xu, “DeepGate2: Functionality-aware circuit              arXiv preprint arXiv:2305.14019, 2023.
+     representation learning,” in ICCAD, 2023.                                   [31] C. Sun, C. Hahn, and C. Trippel, “Towards improving verification
+ [6] M. Li, S. Khan, Z. Shi, N. Wang, H. Yu, and Q. Xu, “DeepGate: Learning           productivity with circuit-aware translation of natural language to sys-
+     neural representations of logic gates,” in DAC, 2022.                            temverilog assertions,” in International Workshop on Deep Learning-
+ [7] Z. Wang, C. Bai, Z. He, G. Zhang, Q. Xu, T.-Y. Ho, B. Yu, and                    aided Verification (DAV), 2023.
+     Y. Huang, “Functionality matters in netlist representation learning,” in    [32] X. Yao, Y. Wang, X. Li, Y. Lian, R. Chen, L. Chen, M. Yuan, H. Xu,
+     Design Automation Conference (DAC), 2022.                                        and B. Yu, “Rtlrewriter: Methodologies for large models aided rtl code
+ [8] W. Fang, S. Liu, J. Wang, and Z. Xie, “Circuitfusion: multimodal                 optimization,” arXiv preprint arXiv:2409.11414, 2024.
+     circuit representation learning for agile chip design,” in International    [33] Y. Jiang, X. Lu, Q. Jin, Q. Sun, H. Wu, and C. Zhuo, “Fabgpt: An
+     Conference on Learning Representations (ICLR), 2025.                             efficient large multimodal model for complex wafer defect knowledge
+ [9] H. Wu, H. Zheng, Y. Pu, and B. Yu, “Circuit representationlearning               queries,” arXiv preprint arXiv:2407.10810, 2024.
+     with masked gatemodeling and verilog-aigalignment,” in International        [34] H. Wu, Z. He et al., “Chateda: A large language model powered
+     Conference on Learning Representations (ICLR), 2025.                             autonomous agent for eda,” IEEE Transactions on Computer-Aided
+[10] C. Deng, Z. Yue et al., “Less is more: Hop-wise graph attention for              Design of Integrated Circuits and Systems, 2024.
+     scalable and generalizable learning on circuits,” in DAC, 2024.             [35] W. Li, Z. Wasson, and S. A. Seshia, “Reverse engineering circuits using
+[11] C. Xu, P. Sharma, T. Wang, and L. W. Wills, “Fast, robust and                    behavioral pattern mining,” in 2012 IEEE international symposium on
+     transferable prediction for hardware logic synthesis,” in IEEE/ACM               hardware-oriented security and trust. IEEE, 2012, pp. 83–88.
+     International Symposium on Microarchitecture (MICRO), 2023.                 [36] A. Gascón, P. Subramanyan, B. Dutertre, A. Tiwari, D. Jovanović, and
+[12] Y. Zhang, Z. Yu et al., “Mg-verilog: Multi-grained dataset to-                   S. Malik, “Template-based circuit understanding,” in Formal Methods in
+     wards enhanced llm-assisted verilog generation,” arXiv preprint                  Computer-Aided Design (FMCAD). IEEE, 2014, pp. 83–90.
+     arXiv:2407.01910, 2024.                                                     [37] L. Alrahis, A. Sengupta et al., “Gnn-re: Graph neural networks for
+[13] Z. Pei, H.-L. Zhen, M. Yuan, Y. Huang, and B. Yu, “Betterv: Con-                 reverse engineering of gate-level netlists,” IEEE TCAD, 2021.
+     trolled verilog generation with discriminative guidance,” arXiv preprint    [38] S. D. Chowdhury, K. Yang, and P. Nuzzo, “Reignn: State register iden-
+     arXiv:2402.03375, 2024.                                                          tification using graph neural networks for circuit reverse engineering,”
+[14] S. Liu, W. Fang, Y. Lu, Q. Zhang, H. Zhang, and Z. Xie, “RTLCoder:               in ICCAD, 2021.
+     Outperforming GPT-3.5 in design RTL generation with our open-source         [39] Y. Lu, S. Liu, Q. Zhang, and Z. Xie, “RTLLM: An open-source
+     dataset and lightweight solution,” IEEE LLM-Aided Design (LAD), 2023.            benchmark for design rtl generation with large language model,” in Asia
+[15] Z. Yan, W. Fang, M. Li, M. Li, Z. Yan, S. Liu, Z. Xie, and H. Zhang,             and South Pacific Design Automation Conference (ASP-DAC), 2024.
+     “AssertLLM: Generating and evaluating hardware verification assertions      [40] M. Liu, N. Pinckney, B. Khailany, and H. Ren, “Verilogeval: Evaluating
+     from design specifications via multi-LLMs,” in ASP-DAC, 2025.                    large language models for verilog code generation,” arXiv preprint
+                                                                                      arXiv:2309.07544, 2023.
+[16] R. Kande, H. Pearce et al., “(security) assertions by large language
+                                                                                 [41] F. Corno, M. S. Reorda, and G. Squillero, “RT-level ITC’99 benchmarks
+     models,” IEEE Transactions on Information Forensics and Security
+                                                                                      and first ATPG results,” IEEE Design & Test of Computers, 2000.
+     (TIFS), 2024.
+                                                                                 [42] OpenCores: The reference community for Free and Open Source gate-
+[17] Z. He, H. Wu, X. Zhang, X. Yao, S. Zheng, H. Zheng, and B. Yu,
+                                                                                      ware IP cores, https://opencores.org/.
+     “Chateda: A large language model powered autonomous agent for eda,”
+                                                                                 [43] A. Amid, D. Biancolin, A. Gonzalez, D. Grubb, S. Karandikar, H. Liew,
+     in Workshop on Machine Learning for CAD (MLCAD), 2023.
+                                                                                      A. Magyar, H. Mao, A. Ou, N. Pemberton et al., “Chipyard: Integrated
+[18] Z. Zheng, S. Huang, J. Zhong et al., “Deepgate4: Efficient and effective
+                                                                                      design, simulation, and implementation framework for custom SoCs,”
+     representation learning for circuit design at scale,” in International
+                                                                                      IEEE Micro, 2020.
+     Conference on Learning Representations (ICLR), 2025.
+                                                                                 [44] VexRiscv, “VexRiscv: A FPGA friendly 32 bit RISC-
+[19] W. Fang, W. Li, S. Liu, Y. Lu, H. Zhang, and Z. Xie, “Nettag: A                  V CPU implementation,” 2022. [Online]. Available: https:
+     multimodal rtl-and-layout-aligned netlist foundation model via text-             //github.com/SpinalHDL/VexRiscv
+     attributed graph,” in Design Automation Conference (DAC), 2025.             [45] C. Wolf, J. Glaser, and J. Kepler, “Yosys-a free verilog synthesis suite,”
+[20] S. Liu, W. Fang, Y. Lu, Q. Zhang, H. Zhang, and Z. Xie, “Rtlcoder: Fully         in Austrian Workshop on Microelectronics (Austrochip), 2013.
+     open-source and efficient llm-assisted rtl code generation technique,”      [46] D. Guo, Q. Zhu, D. Yang, Z. Xie, K. Dong, W. Zhang, G. Chen,
+     IEEE TCAD, 2024.                                                                 X. Bi, Y. Wu, Y. Li et al., “Deepseek-coder: When the large language
+[21] X. Yao, H. Li, T. H. Chan, W. Xiao, M. Yuan, Y. Huang, L. Chen, and              model meets programming–the rise of code intelligence,” arXiv preprint
+     B. Yu, “Hdldebugger: Streamlining hdl debugging with large language              arXiv:2401.14196, 2024.
+     models,” arXiv preprint arXiv:2403.11671, 2024.                             [47] A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng,
+[22] Y. Liu, C. Xu, Y. Zhou, Z. Li, and Q. Xu, “DeepRTL: Bridging verilog             C. Zhang, C. Ruan et al., “Deepseek-v3 technical report,” arXiv preprint
+     understanding and generation with a unified representation model,” in            arXiv:2412.19437, 2024.
+     International Conference on Learning Representations (ICLR), 2025.          [48] H. Liu, C. Li, Q. Wu, and Y. J. Lee, “Visual instruction tuning,” Advances
+[23] N. Wu, Y. Li, C. Hao, S. Dai, C. Yu, and Y. Xie, “Gamora: Graph                  in neural information processing systems, vol. 36, 2024.
+     learning based symbolic reasoning for large-scale boolean networks,” in     [49] J. Li, D. Li, S. Savarese, and S. Hoi, “Blip-2: Bootstrapping language-
+     ACM/IEEE Design Automation Conference (DAC), 2023.                               image pre-training with frozen image encoders and large language
+[24] Z. Wang, C. Bai, Z. He, G. Zhang, Q. Xu, T.-Y. Ho, Y. Huang, and                 models,” in ICML, 2023.
+     B. Yu, “Fgnn2: A powerful pre-training framework for learning the logic     [50] J. Li, D. Li, C. Xiong, and S. Hoi, “Blip: Bootstrapping language-image
+     functionality of circuits,” IEEE Transactions on Computer-Aided Design           pre-training for unified vision-language understanding and generation,”
+     of Integrated Circuits and Systems (TCAD), 2024.                                 in International Conference on Machine Learning (ICML), 2022.
+[25] A. Kuehlmann, V. Paruthi, F. Krohm, and M. K. Ganai, “Robust boolean
+     reasoning for equivalence checking and functional property verification,”
+     IEEE TCAD, 2002.
+

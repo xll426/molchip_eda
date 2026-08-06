@@ -1,0 +1,565 @@
+                                          VerilogCoder: Autonomous Verilog Coding Agents with Graph-based Planning
+                                                 and Abstract Syntax Tree (AST)-based Waveform Tracing Tool
+                                                                             Chia-Tung Ho, Haoxing Ren, Brucek Khailany
+                                                                                             NVIDIA Research
+                                                                      chiatungh@nvidia.com, haoxingr@nvidia.com, bkhailany@nvidia.com
+
+
+
+                                                                    Abstract                                Several works have focused on refining LLMs with selected
+arXiv:2408.08927v2 [cs.AI] 5 Mar 2025
+
+
+
+
+                                                                                                            datasets for Verilog generation (Liu et al. 2023a; Thakur
+                                          Due to the growing complexity of modern Integrated Cir-           et al. 2024). Pei et al. (Pei et al. 2024) proposed leveraging
+                                          cuits (ICs), automating hardware design can prevent a sig-
+                                          nificant amount of human error from the engineering process
+                                                                                                            instruct-tuned LLM and a generative discriminators to opti-
+                                          and result in less errors. Verilog is a popular hardware de-      mize Verilog implementation with the considerations of PPA
+                                          scription language for designing and modeling digital sys-        (Power, Performance, Area). However, these works lack of
+                                          tems; thus, Verilog generation is one of the emerging ar-         a mechanism to fix syntactic or functional errors, thus, they
+                                          eas of research to facilitate the design process. In this work,   still struggle to generate functionally correct Verilog code.
+                                          we propose VerilogCoder, a system of multiple Artificial In-      Recently, Tsai et al. (Tsai, Liu, and Ren 2023) presented an
+                                          telligence (AI) agents for Verilog code generation, to au-        autonomous agent framework incorporating feedback from
+                                          tonomously write Verilog code and fix syntax and functional       simulators and Retrieval Augmented Generation to fix syn-
+                                          errors using collaborative Verilog tools (i.e., syntax checker,   tax errors, but it failed to improve the functional success rate.
+                                          simulator, and waveform tracer). Firstly, we propose a task          In this work, we propose a framework leveraging multi-
+                                          planner that utilizes a novel Task and Circuit Relation Graph
+                                          retrieval method to construct a holistic plan based on module
+                                                                                                            ple Artificial Intelligence (AI) agents for Verilog code gen-
+                                          descriptions. To debug and fix functional errors, we develop      eration, which autonomously writes the Verilog code and
+                                          a novel and efficient abstract syntax tree (AST)-based wave-      fixes syntax and functional errors using collaborative Ver-
+                                          form tracing tool, which is integrated within the autonomous      ilog toolkits and the ReAct (Yao et al. 2022) technique. In
+                                          Verilog completion flow. The proposed methodology suc-            the framework, we develop a novel task planner to generate
+                                          cessfully generates 94.2% syntactically and functionally cor-     high-quality plans, and integrate a crafted Abstract Syntax
+                                          rect Verilog code, surpassing the state-of-the-art methods by     Tree (AST)-based waveform tracing tool for improving the
+                                          33.9% on the VerilogEval-Human v2 benchmark.                      functional success rate. Our contributions are as follows.
+                                                                                                             • We are the first to explore the use of mult-AI agents for
+                                        Code — https://github.com/NVlabs/VerilogCoder
+                                                                                                               autonomous Verilog code completion, including syntax
+                                                                                                               correction, and functional correction.
+                                                                Introduction                                 • We have developed a novel Task and Circuit Relation
+                                        Designing modern integrated circuits requires designers to             Graph (TCRG) based task planner to create a high-
+                                        write code in hardware description languages such as Ver-              quality plan with step-by-step sub-tasks and related cir-
+                                        ilog and VHDL to specify hardware architectures and model              cuit information (i.e., signal, signal transition, and single
+                                        the behaviors of digital systems. Due to the growing com-              examples).
+                                        plexity of VLSI design, writing Verilog and VHDL is time-            • We propose a novel Abstract Syntax Tree (AST)-based
+                                        consuming and prone to bugs, necessitating multiple iter-              waveform tracing tool to assist the LLM agent in fixing
+                                        ations for debugging functional correctness. Consequently,             functional correctness.
+                                        reducing design costs and designer effort for completing             • We conduct extensive and holistic ablation studies of
+                                        hardware specifications has emerged as a critical need.                each key component on the VerilogEval-Human v2
+                                           Large Language Models (LLMs) have shown remarkable                  benchmark (Pinckney et al. 2024). We demonstrate the
+                                        capacity to comprehend and generate natural language at a              proposed VerilogCoder achieve 94.2% pass rate, includ-
+                                        massive scale, leading to many potential applications and              ing syntax and functional correctness, and outperform the
+                                        benefits across various domains. In the field of coding, LLM           one of the state-of-the-art methods by 33.9%.
+                                        can assist developers by suggesting code snippets, offering
+                                        solutions to fix bugs, and even generating the code with ex-          The remaining sections are organized as follows. We first
+                                        planation (Mastropaolo et al. 2023; Nijkamp et al. 2023).           review prior works on AI agents and multi-AI agent sys-
+                                                                                                            tems. Then, we introduce and describe our novel Verilog-
+                                        Copyright © 2025, Association for the Advancement of Artificial     Coder in details. Lastly, we present main experimental re-
+                                        Intelligence (www.aaai.org). All rights reserved.                   sults and conclude the paper.
+       (a) An illustration of Traditional LLM Planning leads to functional incorrect Verilog                  (b) An illustration of Human Verilog designer debugging
+       code and TCRG Based Planning for functional correct implementation                                     process (left) and back tracing signals in AST (right)
+        Query Module: Implement the following                             TCRG Based Planning                 module TopModue (input wire a_in,    TopModule
+        Moore state machine ...                                            High-level task description.        …
+                                                                        Signal, state transition, examples.    output wire q
+        state (output)              --input--> next state                                                     );                             assign     assign
+        -----------------------------------------------------      Task: Define the Module Interface            wire and1;
+         S       ()                --d=0--> S                                                                   assign and1 = a_in | b_in;   and1     or          q      or
+                                                                 module TopModule (
+         S       ()                --d=1--> S1                                                                  assign q = c_in | and1;
+                                                                   input logic d,
+         S1      ()               --d=0--> S                                                                  endmodule                       a_in         b_in and1 c_in
+                                                                 …
+         S110 ()                  --d=0--> S
+                                                                 endmodule
+         S110 ()                  --d=1--> B0                                       ⋮                         Output ‘q’ has 12 mismatches.
+        (… some content omitted)                                                                                                                    RVALUE/LVALUE Tree
+         Wait (done=1)             --ack=0--> Wait                 Task: Implement the combinational            Back trace signals’ (c_in,
+         Wait (done=1)             --ack=1--> S                         logic for the S_next signal.            and1) waveform.                 Back trace 1 level up
+                                                                                                                                                signal waveforms
+                                                                 - S_next: Output signal that is high
+                                                                 when the next state is S.                           q_ref                           a_in     b_in
+                    Traditional LLM Planning                     - S ()            --d=0--> S                        q_dut
+        1.   Define the Module Interface: ...                    …
+                                                                                                                      c_in                                 and1 c_in
+        2.   Define the State Encoding: ...                      - Wait (done=1)       --ack=1--> S
+        3.   State Transition Logic: ...                        // Implement the S_next logic                         and1
+        4.   Output Logic: Assign the output signals ...        always @(*) begin                                                                             q
+                                                                  S_next = 0;
+                                                                  if ((state & S) && !d) S_next=1;            Back trace another 1 level up
+        module TopModule                                                                                      signals’ (a_in, b_in)         Back trace another 1
+                                                                  else if ((state & S1) && !d) S_next=1;      waveform.                     level up signal waveforms
+         // Next state logic
+                                                                  else if ((state & S110) && !d) S_next=1;
+         assign S_next = (state == S && !d) || (state
+                                                                  else if ((state & Wait) && ack) S_next=1;          c_in
+        == S1 && !d) || (state == S110 && !d);                                                                                                         a_in       b_in
+                                                                end
+         assign S1_next = (state == S && d) || (state                              ⋮                                 and1
+        == S1 && d);
+                                                                                                                     a_in                                   and1 c_in
+          …         Lost the implementation details      Task: Check and correct the
+        endmodule                                                functionality                                       b_in
+                                                   • Easy to follow step by step tasks.                                                                           q
+       • High-level plans without manageable task.
+                                                   • Leverage Task and Circuit Graph to
+       • Hard to follow in the implementation.
+                                                     link signal transitions to tasks.                               Ahhh! and1=a_in | b_in is wrong!!! Corrected:
+                                                                                                                                                           1
+       • Lost the signal transition details.
+                                                   • Higher accuracy for implementation.                             and1=a_in & b_in
+
+
+Figure 1: Illustrations of (a) traditional LLM planning versus TCRG based planning, and (b) human Verilog designer debugging
+process and AST signal back tracing in Motivation and Preliminary Study section.
+
+
+                               Background                                                         edge of the LLMs, such as summary, conversation, etc.
+Autonomous agents have long been a research focus in aca-                                            Recently, AI agents empowered by LLMs (i.e., Open-
+demic and industrial communities across various fields. Re-                                       Devin (OpenDevin Team 2024), SWE-agent (Yang et al.
+cently, LLMs have shown great potential of human-level in-                                        2024), AgentCoder (Huang et al. 2023), etc) have shown
+telligence through the acquisition of vast amounts of knowl-                                      impressive performance in software engineering for solving
+edge, documents and textbooks, leading to a surge in re-                                          real world challenging benchmarks (i.e., SWE-Bench, Hu-
+search on LLM-based autonomous agents. Here, we firstly                                           manEval) through planning, memory management, actions
+review prior AI agent works and introduce the multi-AI                                            involving external environment tools.
+agent frameworks below.
+                                                                                                  Multi-AI Agents
+AI Agent                                                                                          In addition to single AI agents, many researchers are start-
+Several works study the architecture of LLM-based au-                                             ing to explore the capabilities of multiple AI agents for solv-
+tonomous agents to effectively perform diverse tasks (Wang                                        ing complex tasks. Autogen (Wu et al. 2023) has been pro-
+et al. 2024; Weng 2023). From these studies, an LLM-                                              posed to enable multiple agents to operate in various modes
+powered autonomous agent system is composed of several                                            (i.e., hierarchical chat, multi-agent conversation, etc.) that
+key components: (a) Planning, (b) Memory, (c) Action, etc.                                        employ combinations of LLMs, human inputs, and tools.
+The planning module enables the agent to break down large                                         crewAI (crewAI Inc. 2024) facilitates process-oriented solv-
+tasks into smaller, manageable sub plans, enabling efficient                                      ing with a crew of customized multi-AI agents operating as
+handling of complex tasks. In the memory module, short-                                           a cohesive unit. Currently, the applications of these multi-
+term memory consists of chat history and in-context learn-                                        AI agent frameworks are mostly for general tasks (i.e., QA,
+ing techniques to guide LLM actions. Long-term memory                                             summarization, coding copilot, etc.).
+consolidates important information over time and provides                                            However, these agent frameworks cannot be directly used
+the agent with the capability to retain and recall it over ex-                                    for designing hardware because solving hardware tasks re-
+tended periods. The action module translates the agent’s de-                                      quires integrated domain knowledge and specific hardware
+cisions into outcomes for solving tasks. The actions of an                                        design toolkits (i.e., circuit simulators, waveform debugging
+autonomous LLM-based agent can be categorized into two                                            tools) to analyze signals, trace signal transitions, and decom-
+classes: (1) External tools for additional information and the                                    pose tasks into manageable sub-tasks from circuit architec-
+expansion of the agent’s capabilities, and (2) Internal knowl-                                    ture and signal transaction perspectives.
+       (a) Flow Overview                                        (b) Large Language Model (LLM) Roles of Multi-LLM Agents in VerilogCoder
+                    Module in Natural Language
+                       Problem Description
+
+            VerilogCoder                                             Planner            Plan Verify Assistant          Verilog Engineer          Verilog Verify Assistant
+             Task Planning: TCRG based Task Planner
+                                                                (c) Multi-LLM Agents’ Configurations in Task Planning
+              High-level          Circuit Signal, Transition,
+            Planner Agent         Example Extraction Agent         High-level Planner Agent          Circuit Signal, Transition,          Task-Driven Circuit Relation
+                                                                                                     Example Extraction Agent                Graph Retrieval Agent
+            Task and Circuit Relation Graph Construction
+                                                                               Plans                                                          Retrieve k-hop
+                                                                                                                                               of a subtask
+          Task-Driven Circuit Relation Graph Retrieval Agent              Consistent?
+                                                                  Iteratively verification until    Extract circuit signal, signal              Retrieved TCRG Retrieval
+                                                                   the plan is consistent with      transitions, and example in                  (ReAct)      Tool
+                            Task Plans                               the module description           the module description
+
+
+                    Verilog Code Implementation                 (d) Code Agent and Debug Agent for Sub-Tasks in Verilog Code Implementation
+             Task1: Define the module input, and output.
+                             (Code Agent)                            Code Agent: Write partial Verilog code          Debug Agent: Check and Correct the functionality
+
+          Task2: Implement the next state logic for state S0.          Verilog Code                                     Verilog Verification Tools
+                                                                                           action        syntax
+                            (Code Agent)                                                                                  AST-based Waveform
+                                                                                                     checker Tool
+                                                                                                       (iverilog)             Tracing Tool           action
+                                 ⋮                                      Consistent?         Obs.                                                                   Reason:
+                                                                       Syntax Error?       (ReAct)                                                                 Thought
+             Task N: Check and correct the functionality
+                                                                                                                                                       Obs.
+                           (Debug Agent)
+                                                                                                      Testbench              Simulator Tool          (ReAct)
+                                                                                                      of Module                (iverilog)
+                      Verilog Code of Module
+                                                                                                                                                               1
+
+
+
+
+Figure 2: Flow overview of VerilogCoder. (a) Overall flow for Verilog code implementation task. (b) LLM roles of multi-LLM
+agents. (c) Multi-LLM agents in Task Planning. (d) Multi-LLM Agents for sub-tasks in Verilog Code Implementation.
+
+
+        Motivation and Preliminary Study                                                     step with essential signals, and state transition information.
+Given a hardware module description, hardware designers                                      Once the state transition information and signal definitions
+usually write Verilog using the following steps: (1) decom-                                  are included with the sub-task plan, LLM can generate the
+pose the task into manageable sub-tasks, (2) implement Ver-                                  correct code. Signals and state transition information can be
+ilog code for each sub-task, and (3) iterate between Verilog                                 extracted from the problem descriptions. In this work, we
+simulations, signal waveform debugging, and code updates                                     structure sub-task, signal, and state transition information in
+until all output signals match expected behavior. It is very                                 a graph format and call it the TCRG. Consequently, we study
+challenging to autonomously complete a functionally cor-                                     the benefits of leveraging the TCRG to assist the planning to
+rect Verilog module using LLM agents since it requires do-                                   generate sub-tasks that include not only high-level task goals
+main knowledge to break down the task into meaningful sub-                                   but also the signal, and signal transition information to com-
+tasks and comprehend the hardware descriptions and wave-                                     plete functional correct Verilog module.
+form during the functional debug process. Consequently, we
+first discuss the issues of using traditional LLM planning on                                Functional Debug with Waveform
+writing Verilog code of a Finite State Machine (FSM) mod-                                    Figure 1(b) shows a typical functional debug process for a
+ule. Then, we study the functional debug process of a Ver-                                   human Verilog designer. Given the mismatched signals, a
+ilog module and propose a debugging tool that enables LLM                                    human Verilog designer traces the signals and their wave-
+agents to autonomously correct the functional errors.                                        form iteratively until they know how to fix the functional-
+                                                                                             ity. This backtracing procedure is the same as tracing the
+Planning                                                                                     RVALUE of the target signals in the AST. Inspired by the
+Planning is one of the core modules for an agent (Wang et al.                                human Verilog designer debug process, we propose to in-
+2024; Weng 2023) to decompose a complex task into man-                                       corporate the hardware signal structure, and waveform, to
+ageable sub-tasks. For Verilog coding, the traditional LLM-                                  assist LLM agents in fixing functional errors of the gener-
+generated plans usually lack of the details of relevant sig-                                 ated Verilog module. This process can be implemented with
+nals, and signal transitions for each sub-task, thus, leading                                a tool based on AST and waveform tracing. Several prior
+to incorrect functionality implementation of Verilog mod-                                    works (Alon et al. 2019; Bairi et al. 2024; Bui et al. 2023) de-
+ules. Figure 1(a) shows an illustration of using the traditional                             veloped AST-based methods/tools (i.e., encoded AST paths,
+LLM and TCRG based planning methods on a FSM module.                                         AST dependency graph, etc) to assist LLM in capturing
+The implementation of traditional LLM planning lost part                                     structural information from the code for improving the capa-
+of the state transitions for S next, and S1 next signals, thus,                              bilities of LLMs on various software engineering tasks such
+leading to an incorrect FSM module. Therefore, it is impor-                                  as code classification, understanding, and code completion.
+tant to guide the agent to implement each sub-task step by                                   Here, the use of AST for signal tracing in our work is novel.
+               Query: Retrieving required information for the following               Plan      Signal      Signal Transition   Signal Example
+               plan. Implement the combinational logic for the S1_next.
+                                                                                      IMPLEMENT             SIGNALTRANSITION        EXAMPLE
+                   Thought: Retrieving the information using graph
+                   retrieval tool.
+                 Tool Response:
+               [Retrieved 1-hop neighbor information]:
+               S1_next: Output signal … (Type:Signal)
+                                                                            Tool
+                   Thought: Retrieve more information of “Implement       Execution
+                   the combinational logic for the S1_next” using
+                   graph_retrieval_tool by increasing k.
+
+                  Tool Response:                                                         Queried Plan          Retrieved Node (k-hop, k=1)
+               [Retrieved 2-hop neighbor information]:
+               S ()          --d=0--> S (Type:StateTransition)
+               (… some content omitted)
+               When the input state[9:0] = 10'b1000100100, the states
+               includes Wait, B1, and S11 states. (Type:SignalExample)      Tool
+                                                                          Execution
+                    Thought: Final Answer: Implement the logic to
+                    determine the S1_next signal
+                    [Retrieved Related Information]:
+                    - S1_next: Output signal … (Type:Signal)
+                    - S ()         --d=1--> S1 (Type:StateTransition)
+                    (… some content ommited)                                                 Queried Plan                        1 k=2)
+                                                                                                               Retrieved Node (k-hop,
+
+
+Figure 3: An illustration of task-driven circuit relation graph retrieval agent reasoning and interacting with the developed TCRG
+retrieval tool to enrich the task with the relevant circuit and signal descriptions.
+
+
+                       VerilogCoder                                          lized large language models (LLMs) to analyze texts and
+We introduce the details of VerilogCoder, which consist of a                 extract entities and relations for knowledge graph construc-
+task planning and Verilog code implementation. The multi-                    tion (Edge et al. 2024; Kommineni, König-Ries, and Samuel
+AI agents of VerilogCoder operate with developed TCRG re-                    2024; Zhang and Soh 2024). Inspired by these works, we
+trieval and Verilog tools through the ReAct (Yao et al. 2022)                leverage LLM agents to construct the TCRG with designer
+technique in a cohesive and orchestrated manner.                             guidelines. In Figure 2(a), the task plan generation flow
+                                                                             comprises four components: (1) High-level planner agent,
+Flow Overview                                                                (2) Circuit signal, transition, example extraction agent, (3)
+                                                                             TCRG construction, and (4) Task-driven circuit relation
+We outline the overall flow of VerilogCoder in Figure 2(a).                  graph retrieval agent. Figure 2(c) shows the configuration
+Given the natural language problem description of a mod-                     and tools of each AI agent in TCRG based Task Planner.
+ule (Pinckney et al. 2024), the novel Task and Circuit Re-
+lation Graph (TCRG) based task planner first generates the
+task plans. Then, a task dependency graph is built according                 High-level planner agent The high-level planner agent
+to the task plans and its sub-tasks are assigned to Multi-LLM                consists of a planner and a plan verification assistant, as
+agents that write Verilog code and correct the functionality                 shown in Figure 2(c). Given the module description or spec-
+using a collaborative Verilog toolkit (i.e., syntax checker,                 ification, the planner first decomposes the task into sub-
+simulator, and the proposed novel AST-based waveform                         tasks, which mostly consist of high-level task descriptions.
+tracing tool). In the flow, each agent may consist of multiple               Then, the plan verification assistant checks the consistency
+LLMs with different roles, which are listed in Figure 2(b),                  between the sub-tasks and the module description, provid-
+to complete each step correctly and consistently. Some of                    ing suggestions to modify the plan if any inconsistencies are
+the agents are equipped with provided TCRG and Verilog                       found. This iterative process continues until the planner’s
+tools to reason and act through Thought, Action, and Ob-                     plan is verified to be consistent with the module description.
+servation tracing of the ReAct prompting mechanism (Yao
+et al. 2022). For agent memory, we keep the original query                   Circuit signal, transition, example extraction agent A
+and the last four chats in the chat history. The correspond-                 LLM acts as a Verilog engineer, extracting circuit signals,
+ing testbench of the module is used only for running Verilog                 transitions, and examples from the given module description
+simulator to check the functional correctness.                               or specification into JSON format, as shown in Figure 2(c).
+                                                                             The extracted information is represented as nodes in the sub-
+Task Planning                                                                sequent TCRG construction. The examples of extracted sig-
+We introduce a novel and effective TCRG based Task Plan-                     nals, transitions, and signal examples are ”w: input signal
+ner that constructs a high-quality plan encompassing not                     examined by FSM in state B”, ”State A to State B: FSM
+only the high-level objectives but also the relevant descrip-                moves to state B when s = 1.”, and ”For example, when the
+tions or definitions of signals, signal transitions, and ex-                 input w = 1, 1, 0 in these three clock cycles, output z is set
+amples for each sub-task. Recently, many works have uti-                     to 1 for the following cycle.”, respectively.
+        System: You are a Verilog RTL                                                                             Thought: The waveform trace indicates that
+                                                     Thought: Use the Verilog simulator tool to
+        designer that only writes code
+        using correct Verilog syntax and
+                                          Verilog verify the functionality.                             Verilog there is an issue with the initialization of the
+        verify the functionality.
+                                         engineer                                                      engineer `q_reg` signal. (… some content omitted) To
+                                                                                                                  resolve this issue, I will add an initialization
+        Query: Implement a module         [Compiled Success]
+                                                                                                                  block for `q_reg` to ensure it starts with a
+        named TopModule with the          [Function Check Failed]
+                                                                                                                  defined value.
+        following interface ...           Hint: Output 'Q' has 1 mismatches. First mismatch occurred
+                                                                                                                  ```verilog
+        # Completed Verilog Module # at time 5.                                                                   // Flipflop
+        ```verilog                        Hint: Total mismatched samples is 1 out of 199
+                                                                                                                   logic q_reg;
+        module TopModule (                samples
+                                                                                                                   // Initialize q_reg
+          input logic clk,                                                                    Verilog              initial begin
+          input logic L,                  Simulation  finished at 996  ps                   Sim.  Tool
+                                                                                                                     q_reg = 0;
+          input logic q_in,                                                                                        end
+          input logic r_in,                                       ⋮                                               ```
+          output logic Q
+                                                      Thought: Use the AST waveform tracing tool to
+        );
+        logic q_reg;
+                                           Verilog trace the signal using trace level 2.                                                ⋮
+                                          engineer                                                         [Compiled Success]
+          always @(posedge clk) begin
+           if (L)                          [Traced Signals]: Q, q_reg, r_in, q_in, L, clk                  [Function Check Success]
+             q_reg <= r_in;                [Table  Waveform]                                               Hint: Output 'Q' has no mismatches.
+           else                            ###  First mismatched   signals time(ns) Trace ###              Hint: Total mismatched samples is 0 out of
+             q_reg <= q_in;                       L_dut L_ref Q_dut Q_ref …                                199 samples
+          end                              time(ns)                                                                                                          Verilog
+          assign Q = q_reg;                0 - - - 0 …                                                     Simulation finished at 996 ps                   Sim. Tool
+        endmodule                          5 1 1 - - …                               AST Waveform
+        ```                                10 0 0 - - …                               Tracing Tool                                                    1
+                                                                                                                         Successfully fix functional error
+
+
+    Figure 4: An example of Debug Agent reasoning and interacting with simulator and AST-based waveform tracing tool.
+
+
+TCRG construction We create nodes from the previously                                     dency graph is created. A child task can not be executed until
+generated high-level task descriptions, extracted circuit sig-                            all its parent tasks have been completed without errors. The
+nals, transitions, and examples. We then sequentially cre-                                sub-tasks are divided into two types: (1) Type1: Writing Ver-
+ate the relations (edges) between nodes: task nodes to signal                             ilog code for partial function/logic, and (2) Type2: Verify-
+nodes, signal nodes to transition nodes, and signal nodes to                              ing and debugging the generated Verilog module. The code
+example nodes, using ”IMPLEMENTS”, ”SIGNALTRAN-                                           agent and debug agent are assigned to complete the Type1
+SITION”, and ”EXAMPLES” relationships, respectively.                                      sub-task and Type 2 sub-task, respectively. We first discuss
+                                                                                          the Verilog tools including a third-party simulator (i.e., iver-
+Task-driven circuit relation graph retrieval agent Here,                                  ilog (Williams and Baxter 2002)) and customized AST-based
+an LLM (acting as a Verilog Engineer) autonomously re-                                    waveform tracing tool. Then, we introduce a code agent and
+trieves relevant signal and circuit descriptions and compiles                             a debug agent.
+this information for each sub-task using the collaborative
+TCRG retrieval tool through Thought-Action-Observation                                    Verilog Tools The Verilog tools to assist agents for code
+ReAct tracing (Yao et al. 2022), as shown in Figure 2(c).                                 implementation are listed below.
+We firstly introduce the tool and then describe the workflow                              Syntax checker tool: We use iverilog to compile the gener-
+of the retrieval agent.                                                                   ated Verilog code module and provide compiled messages
+   TCRG retrieval tool assists the task-driven circuit relation                           as feedback for syntax checking.
+graph retrieval agent in obtaining relevant descriptions or                               Verilog simulator tool: We use iverilog to compile the gener-
+definitions of signals, signal transitions, and examples re-                              ated Verilog code module and launch the Verilog simulation.
+lated to a specified sub-task in the constructed TCRG. The                                If the generated Verilog code module contains syntax errors,
+inputs are the sub-task description in string format and an                               the tool reports the lines where these errors occur. On the
+integer value, k, which indicates the number of hops for re-                              other hand, the tool also reports the simulation results, in-
+trieval from the sub-task node in the graph. Here, k is deter-                            cluding the number of mismatches in output signals and the
+mined by the AI agent automatically through the Thought-                                  first mismatched time point. Additionally, the tool generates
+Action-Observation reasoning trace. The output consists of                                a VCD file format for waveform tracing.
+the retrieved k-hop signals, signal transitions, and examples                             AST-based waveform tracing tool (AST-WT): We developed
+corresponding to the sub-task node.                                                       a novel AST-based waveform tracing tool to assist agents
+   The retrieval agent reasons and interacts with the TCRG                                in back-tracing the waveform of signals from mismatched
+retrieval tool to incorporate additional information as illus-                            output signals. Here, we extract the AST of generated Ver-
+trated in Figure 3. Ultimately, the retrieval agent compiles                              ilog module using Pyverilog library (Takamaeda-Yamazaki
+the retrieved circuit and signal information from the graph                               2015). By inputting the mismatched output signals from the
+and removes irrelevant information from the final answer.                                 Verilog simulation tool and the desired back-tracing level,
+                                                                                          the tool starts from the mismatched signal and iteratively
+Verilog Code Implementation                                                               extracts the RVALUE signals until it reaches the specified
+We describe the Verilog code implementation flow of writ-                                 back-tracing level in the AST, as the illustration shown in
+ing Verilog code and ensuring the functionality of the written                            Figure 1(b). The back-tracing level parameter is determined
+Verilog module in detail. Given a task plan, the task depen-                              dynamically by the AI agent through the Thought-Action-
+Observation reasoning trace. The output includes the Ver-                     Method            Model Size Model Type Pass-Rate (%)
+ilog code reference, a tabular waveform of the mismatched                    RTL-Coder             6.7B      Open          36.5
+                                                                           DeepSeek Coder          6.7B      Open          28.2
+signal, and the extracted RVALUE signals.
+                                                                            CodeGemma               7B       Open          23.1
+Code Agent For the code agent to write syntax-correct                      DeepSeek Coder          33B       Open          37.2
+and consistent Verilog code, there are two LLMs: one acting                  CodeLlama             70B       Open          41.0
+as a Verilog Engineer and the other as a Verilog Verification                 Llama 3              70B       Open          41.7
+Assistant, as shown in Figure 2(d). The Verilog Engineer                    Mistral Large       Undisclosed Closed         48.7
+                                                                               GPT-4            Undisclosed Closed         50.6
+writes the Verilog code according to the sub-task, while the
+                                                                            GPT-4 Trubo         Undisclosed Closed         60.3
+Verilog Verification Assistant ensures that the written Ver-
+ilog code is consistent with the sub-task requirements and             VerilogCoder (Llama3)       70B        Open        67.3
+                                                                     VerilogCoder (GPT-4 Turbo) Undisclosed   Closed      94.2
+free of syntax errors using the syntax checker tool. If there
+are syntax errors or inconsistencies between the written Ver-
+                                                                 Table 1: Pass-rates of recent large language models (i.e.,
+ilog code and the sub-task description, the Verilog Verifica-
+                                                                 non-agentic method) and the proposed VerilogCoder. We
+tion Assistant will provide suggestions to the Verilog Engi-
+                                                                 run the VerilogCoder once for each problem in the bench-
+neer for fixing the issues. This process continues iteratively
+                                                                 mark. The pass-rates of VerilogCoder (agentic method) =
+between the Verilog Engineer and the Verilog Verification
+                                                                 #passed case/#total case. For the pass-rates of recent large
+Assistant until the generated Verilog code is free of syntax
+                                                                 language models, we report the best pass@1 score across 0-
+errors and consistent with the sub-task description.
+                                                                 shot, 1-shot, and sample sizes ranging from 1 to 20 on the
+Debug Agent The Debug Agent verifies the functionality           specification-to-RTL tasks from (Pinckney et al. 2024).
+and modifies the Verilog code to pass the functionality check
+from a provided testbench using collaborative Verilog veri-      to generate functionally correct Verilog code, we compare
+fication tools as shown in Figure 2(d). Given the generated      the proposed VerilogCoder with recent LLMs using prompt
+Verilog module from the previous task, the LLM-based Ver-        engineering approaches. Table 1 shows the pass rates for
+ilog Engineer performs reasoning and interacts with Verilog      RTL-Coder (Liu et al. 2023b), DeepSeek Coder (Guo et al.
+simulators, as well as the novel AST-WT through a Thought-       2024), CodeGemma (CodeGemma Team, Google 2024),
+Action-Observation process until the generated Verilog code      CodeLlama (Meta 2024a), Llama3 (Meta 2024b), Mistral
+passes the functionality check. Figure 4 shows an example        Large (AI 2024), GPT-4 (OpenAI 2023), GPT-4 Turbo (Ope-
+of the Thought-Action-Observation process of the Verilog         nAI 2024), and the proposed VerilogCoder. For a fair com-
+engineer fixing functionality issues through reasoning and       parison, we report the highest pass@1 score across 0-shot,
+interaction with Verilog simulator tool and AST-WT.              1-shot, and a sample size ranging from 1 to 20 on the
+                                                                 Specification-to-RTL tasks from (Pinckney et al. 2024). For
+                Experimental Results                             the VerilogEval-Human v2 benchmark, the proposed Ver-
+Our work is implemented in Python and is built on top of         ilogCoder (Llama3) successfully improves the Verilog cod-
+the Autogen (Wu et al. 2023) multi-AI agent framework.           ing ability of the open-source model and achieves 25.6%
+We employ VerilogEval-Human v2 (Pinckney et al. 2024),           and 7.3% higher pass rates than Llama3 and GPT-4 Turbo
+which extends the 156 problems of VerilogEval-Human              with few-shot and in-context learning techniques (Pinckney
+from (Liu et al. 2023a) to specification-to-RTL tasks, as our    et al. 2024), respectively. Moreover, the proposed Verilog-
+evaluation benchmark. We use the same planning, coding,          Coder (GPT-4 Turbo) not only achieves a 94.2% pass rate
+and debugging prompts for these 156 problems. To check the       but also outperforms the state-of-the-art recent LLMs GPT-
+functional correctness, the generated Verilog code is tested     4 and GPT-4 Turbo by 43.6% and 33.9%, respectively.
+with the provided golden testbench. We measure Verilog              Here, the average number of group chat rounds for the
+functional correctness by running the VerilogCoder once for      high-level planner agent and the TCRG retrieval agent is
+each problem in the benchmark.                                   1.58 and 1.09, respectively. The code agent makes an av-
+   Firstly, we demonstrate the Verilog functional correctness    erage of 2.37 Verilog simulator tool calls and 1.37 AST-WT
+of prior works and the proposed VerilogCoder in the Main         calls. The average token count of VerilogCoder is approxi-
+Results. Next, we conduct an ablation study on the impact        mately 13× more than the GPT-4 Turbo baseline method.
+of various types of planners and on the effect of using the
+proposed AST-WT for specification-to-RTL tasks.                  Ablation Study
+                                                                 We conducted an ablation study to evaluate the impact of
+Main Results                                                     various types of planners, both with and without the pro-
+We demonstrate the pass-rates of the proposed method             posed AST-based waveform tracing tool. We list two types
+and prior works on the VerilogEval-Human v2 bench-               of planners: (a) Planner1: A multi-LLM agent consisting of
+mark. We use OpenAI’s GPT-4 Turbo (OpenAI 2024) and              a planner and verilog engineer, and (b) Planner2: The pro-
+Llama3 (Meta 2024b) as the LLM models for the proposed           posed TCRG based task planner for task-oriented solving.
+VerilogCoder (Llama3) and VerilogCoder (GPT-4 Turbo),            In Planner1, given a module description or specification, the
+respectively, in the main experiment. The temperature and        planner first decomposes the task into sub-tasks, and the Ver-
+top p parameters of the LLMs are set to 0.1 and 1.0, respec-     ilog engineer generates functionally correct Verilog code, in-
+tively. As we are the first to explore using an agentic method   cluding interactions with the provided Verilog verification
+                                 Planner1     Planner2                    study. Figure 5(a) shows the statistics of the number of each
+                                   66.7%       74.4%                      category and their description are listed below.
+               without AST-WT
+                                 (baseline)    (7.7%)
+                                   78.2%       94.2%
+                                                                           • Application (Descr.): The module is considered for an
+                with AST-WT                                                   application (i.e., maze games, lemmings, timer, etc) with
+                                  (11.5%)     (27.5%)
+                                                                              descriptions of its functionality in the query prompt.
+Table 2: Pass-rate (%) of Ablation study of Planner1 without               • Comb+Seq+FSM (Descr.): The module is a block of
+AST-WT, Planner1 with AST-WT, Planner2 without AST-                           combinational logic, sequential components, or finite
+WT, Planner2 with AST-WT. AST-WT=AST-based wave-                              state machine (FSM) with descriptions of its connections,
+form tracing tool. Planner1 without AST-WT is the baseline,                   and state transitions in the query prompt.
+and Planner2 with AST-WT is the proposed VerilogCoder.                     • Comb+Seq+FSM (Waveform): The module is a block
+                                                                              of combinational logic, sequential components, or FSM
+(a) Statistics of Failed Problems for Taxonomy Study                          with tabular waveform examples in the query prompt.
+             9 (13.9%)                                                     • Comb (Kmap): The module is a block of combinational
+                              19 (29.2%)
+ 6 (9.2%)                                                                     logic with the Karnaugh map in the query prompt.
+                                                                           • FSM (Trans. Table): The module is a FSM block with the
+                                                                              state transition table in the query prompt.
+                                                                             Figure 5(b) shows the pass-rate (%) of Planner1 without
+                                                                          AST-WT, Planner1 with AST-WT, Planner2 without AST-
+ 8 (12.3%)                                                                WT, and the proposed method. We observe that Planner1
+                  23 (35.4%)                                              with AST-WT achieves 10.5%, 39.1%, and 12.5% higher
+(b) Pass-rate (%) of various module (query prompt) types                  pass-rates on the Application (Descr.), Comb+Seq+FSM
+                                                                          (Descr.), and Comb+Seq+FSM (Waveform) categories than
+                                                                          Planner2 without AST-WT, respectively. The agent needs
+                                                                          AST-WT to iteratively modify the generated Verilog code, as
+                                                                          the indirect transformation from description and waveform
+                                                                          to hardware description language may lead to confusion
+                                                                          and misleading information. On the other hand, Planner2
+                                                                          without AST-WT outperforms Planner1 with AST-WT on the
+                                                                          Comb (Kmap) and FSM (Trans. Table) tasks by 33.3% and
+        Application Comb+Seq+FSM Comb+Seq+FSM     Comb        FSM         44.5%, respectively. This is because the proposed task plan-
+         (Descr.)      (Descr.)    (Waveform)    (Kmap)   (Tran. Table)
+                                                                          ner can accurately capture the specified input-output map-
+                                                                          pings or state transitions in the plan without missing any
+Figure 5: Taxonomy study results. (a) The statistics of ex-               information, ensuring that the code agent solves the sub-
+tracted failed problems set and the number of problems in                 tasks step-by-step. Consequently, with the assistance of the
+each module and query prompt type category. (b) Pass-rate                 proposed task planner and the AST-based waveform tracing
+(%) of each module and query prompt type categories.                      tool, the proposed VerilogCoder can significantly improve
+                                                                          the pass-rate across these types of tasks in the benchmark.
+
+tools. If syntax or functionality errors occur, the planner de-                      Conclusion and Future Work
+bugs and suggests alternative fixes for the Verilog engineer              Our proposed VerilogCoder has demonstrated the capabil-
+to correct the code. This iterative process between the plan-             ity to autonomously write Verilog code and fix syntax and
+ner and the Verilog engineer continues until the syntax and               functional errors using the Verilog simulator and the pro-
+functionality are correct or the number of consecutive auto-              posed AST-WT. The ablation study reveals that the proposed
+replies in the group chat exceeds the maximum limit of 100.               novel TCRG-based task planner and task-oriented solving
+   Table 2 shows the pass-rates from the ablation study                   approach show a 7.7% improvement in pass-rate. Addi-
+involving the combinations of Planner1, Planner2, and                     tionally, the proposed AST-WT achieves an 11.5% improve-
+the proposed AST-based waveform tracing tool on the                       ment in pass-rate. In summary, with the proposed TCRG
+VerilogEval-Human v2 benchmark. With Planner1, the                        based task planner and AST-WT, the proposed Verilogcoder
+AST-WT achieves a 11.5% improvement in pass-rate. In con-                 achieves a 33.9% higher pass-rate compared to the state-of-
+trast, Planner2 without AST-WT improves by 7.7% com-                      the-art method.
+pared to the baseline. Combining Planner2 with AST-WT,                       We also believe that important directions for future Ver-
+as in the proposed VerilogCoder, significantly improves the               ilog agent-based research include: (1) training LLMs with
+pass-rate by 27.5% compared to the baseline.                              high-quality Verilog code, (2) improving the generated Ver-
+   To further investigate the reasons behind the significant              ilog code by considering PPA metrics, and (3) incorporating
+improvement in the pass rate of the proposed VerilogCoder,                more efficient self-learning techniques and memory systems
+we extract the union set of failed problems from the four                 to enable the agent to accumulate experiences and continu-
+combinations and categorize them based on the module and                  ously improve the quality of the generated Verilog code in
+query prompt type of each failed problem for taxonomy                     terms of PPA metrics in the design flow.
+                       References                                Meta. 2024b. meta-llama/llama3. Original-date: 2024-03-
+AI, M. 2024. Au large. Section: news. https://mistral.ai/        15T17:57:00Z. https://github.com/meta-llama/llama3.
+news/mistral-large/.                                             Nijkamp, E.; Hayashi, H.; Xiong, C.; Savarese, S.; and
+Alon, U.; Zilberstein, M.; Levy, O.; and Yahav, E. 2019.         Zhou, Y. 2023. Codegen2: Lessons for training llms
+code2vec: Learning distributed representations of code.          on programming and natural languages. arXiv preprint
+Proceedings of the ACM on Programming Languages,                 arXiv:2305.02309.
+3(POPL): 1–29.                                                   OpenAI. 2023. Gpt-4 technical report.
+Bairi, R.; Sonwane, A.; Kanade, A.; Iyer, A.; Parthasarathy,     OpenAI. 2024. New models and developer products an-
+S.; Rajamani, S.; Ashok, B.; and Shet, S. 2024. Codeplan:        nounced at DevDay. https://openai.com/index/new-models-
+Repository-level coding using llms and planning. Proceed-        and-developerproducts-announced-at-devday/.
+ings of the ACM on Software Engineering, 1(FSE): 675–698.        OpenDevin Team. 2024. OpenDevin: An Open Platform for
+Bui, N. D.; Le, H.; Wang, Y.; Li, J.; Gotmare, A. D.; and        AI Software Developers as Generalist Agents. https://github.
+Hoi, S. C. 2023. Codetf: One-stop transformer library for        com/OpenDevin/OpenDevin.
+state-of-the-art code llm. arXiv preprint arXiv:2306.00029.      Pei, Z.; Zhen, H.-L.; Yuan, M.; Huang, Y.; and Yu, B. 2024.
+CodeGemma Team, Google. 2024. google/codegemma-7b                Betterv: Controlled verilog generation with discriminative
+· hugging face. https://huggingface.co/google/codegemma-         guidance. arXiv preprint arXiv:2402.03375.
+7b.                                                              Pinckney, N.; Batten, C.; Liu, M.; Ren, H.; and Khailany,
+crewAI Inc. 2024. crewAI: Cutting-edge framework for or-         B. 2024. Revisiting VerilogEval: Newer LLMs, In-Context
+chestrating role-playing, autonomous AI agents. By foster-       Learning, and Specification-to-RTL Tasks. arXiv preprint
+ing collaborative intelligence, CrewAI empowers agents to        arXiv:2408.11053.
+work together seamlessly, tackling complex tasks. https:         Takamaeda-Yamazaki, S. 2015. Pyverilog: A Python-Based
+//github.com/crewAIInc/crewAI.                                   Hardware Design Processing Toolkit for Verilog HDL. In
+Edge, D.; Trinh, H.; Cheng, N.; Bradley, J.; Chao, A.; Mody,     Applied Reconfigurable Computing, volume 9040 of Lecture
+A.; Truitt, S.; and Larson, J. 2024. From local to global: A     Notes in Computer Science, 451–460. Springer International
+graph rag approach to query-focused summarization. arXiv         Publishing.
+preprint arXiv:2404.16130.                                       Thakur, S.; Ahmad, B.; Pearce, H.; Tan, B.; Dolan-Gavitt,
+Guo, D.; Zhu, Q.; Yang, D.; Xie, Z.; Dong, K.; Zhang,            B.; Karri, R.; and Garg, S. 2024. Verigen: A large language
+W.; Chen, G.; Bi, X.; Wu, Y.; Li, Y.; et al. 2024.               model for verilog code generation. ACM Transactions on
+DeepSeek-Coder: When the Large Language Model Meets              Design Automation of Electronic Systems, 29(3): 1–31.
+Programming–The Rise of Code Intelligence. arXiv preprint        Tsai, Y.; Liu, M.; and Ren, H. 2023. Rtlfixer: Automatically
+arXiv:2401.14196.                                                fixing rtl syntax errors with large language models. arXiv
+Huang, D.; Bu, Q.; Zhang, J. M.; Luck, M.; and Cui,              preprint arXiv:2311.16543.
+H. 2023. Agentcoder: Multi-agent-based code generation           Wang, L.; Ma, C.; Feng, X.; Zhang, Z.; Yang, H.; Zhang, J.;
+with iterative testing and optimisation. arXiv preprint          Chen, Z.; Tang, J.; Chen, X.; Lin, Y.; et al. 2024. A survey on
+arXiv:2312.13010.                                                large language model based autonomous agents. Frontiers
+Kommineni, V. K.; König-Ries, B.; and Samuel, S. 2024.          of Computer Science, 18(6): 186345.
+From human experts to machines: An LLM supported ap-             Weng, L. 2023. LLM-powered Autonomous Agents. lilian-
+proach to ontology and knowledge graph construction. arXiv       weng.github.io.
+preprint arXiv:2403.08345.                                       Williams, S.; and Baxter, M. 2002. Icarus verilog: open-
+Liu, M.; Pinckney, N.; Khailany, B.; and Ren, H. 2023a. Ver-     source verilog more than a year later. Linux Journal,
+ilogeval: Evaluating large language models for verilog code      2002(99): 3.
+generation. In 2023 IEEE/ACM International Conference on         Wu, Q.; Bansal, G.; Zhang, J.; Wu, Y.; Zhang, S.; Zhu, E.;
+Computer Aided Design (ICCAD), 1–8. IEEE.                        Li, B.; Jiang, L.; Zhang, X.; and Wang, C. 2023. Autogen:
+Liu, S.; Fang, W.; Lu, Y.; Zhang, Q.; Zhang, H.; and Xie, Z.     Enabling next-gen llm applications via multi-agent conver-
+2023b. Rtlcoder: Outperforming gpt-3.5 in design rtl gener-      sation framework. arXiv preprint arXiv:2308.08155.
+ation with our open-source dataset and lightweight solution.     Yang, J.; Jimenez, C. E.; Wettig, A.; Lieret, K.; Yao, S.;
+arXiv preprint arXiv:2312.08617.                                 Narasimhan, K.; and Press, O. 2024. Swe-agent: Agent-
+Mastropaolo, A.; Pascarella, L.; Guglielmi, E.; Ciniselli, M.;   computer interfaces enable automated software engineering.
+Scalabrino, S.; Oliveto, R.; and Bavota, G. 2023. On the ro-     arXiv preprint arXiv:2405.15793.
+bustness of code generation techniques: An empirical study       Yao, S.; Zhao, J.; Yu, D.; Du, N.; Shafran, I.; Narasimhan,
+on github copilot. In 2023 IEEE/ACM 45th International           K.; and Cao, Y. 2022. React: Synergizing reasoning and act-
+Conference on Software Engineering (ICSE), 2149–2160.            ing in language models. arXiv preprint arXiv:2210.03629.
+IEEE.
+                                                                 Zhang, B.; and Soh, H. 2024. Extract, Define, Canonicalize:
+Meta. 2024a. meta-llama/CodeLlama-70b-instruct-hf · hug-         An LLM-based Framework for Knowledge Graph Construc-
+ging face. https://huggingface.co/meta-llama/CodeLlama-          tion. arXiv preprint arXiv:2404.03868.
+70b-Instructhf.
+

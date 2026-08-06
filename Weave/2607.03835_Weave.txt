@@ -1,0 +1,344 @@
+                                            Weave: Verified Netlist-to-Schematic Conversion
+                                                      via Layered Graph Layout
+                                                                                                    Senol Gulgonul
+                                                                               Department of Electrical and Electronics Engineering
+                                                                                   Ostim Technical University, Ankara, Turkey
+
+
+                                            Abstract—Converting a SPICE netlist into a human-readable          the ASG value-propagation layout; Arsintescu [5] placed sym-
+                                        schematic is a longstanding problem in electronic design au-           metric pairs on a grid and minimized wire length and bends;
+                                        tomation: simulators and machine-learning pipelines readily            Wu [6] and others advanced function-block placement along
+                                        produce netlists, but designers reason about circuits through
+                                        diagrams. Recent learning-based approaches translate netlists          the signal-flow direction. Naveen and Raghunathan [7] built
+arXiv:2607.03835v1 [cs.AR] 4 Jul 2026
+
+
+
+
+                                        into schematics probabilistically, yet they provide no guarantee       an early netlist-to-schematic generator with channel routing,
+                                        that the generated drawing preserves the original connectivity,        and Frezza and Levitan [8] combined placement and routing
+                                        and their accuracy degrades sharply as circuits grow. We present       in a single system. These methods are interpretable and fast,
+                                        Weave, a deterministic converter that turns a SPICE netlist into       but, as the review notes, they typically settle for a good rather
+                                        an LTspice .asc schematic using a layered (Sugiyama-style)
+                                        graph layout, and that certifies every output by a round-trip          than an optimal arrangement [1].
+                                        connectivity check: the generated schematic is re-parsed into a           The modern wave is learning-based. Hsu and Lin [9] gen-
+                                        netlist and compared, net for net, against the input. A result is      erate analog schematics through building-block classification
+                                        reported as correct only when the two partitions are identical,        and reinforcement learning, optimizing an aesthetic reward.
+                                        giving a binary correctness certificate rather than a similarity       Most directly related to our work, Schemato [2] fine-tunes a
+                                        score. Weave runs entirely client-side as a single dependency-free
+                                        file and embeds a pin table for 5093 LTspice symbols. On the           large language model to translate netlists into LTspice .asc
+                                        identical public Circuits-LTSpice test set used by the state-of-the-   files, reporting up to 76% compilation success and outper-
+                                        art LLM converter Schemato (117 circuits, netlisted with LTspice       forming general-purpose LLMs. These approaches produce
+                                        itself), Weave achieves 100% compilation and 100% round-               visually plausible schematics, but they share two structural
+                                        trip-verified connectivity equivalence, compared with Schemato’s       limitations that the review and the Schemato paper both make
+                                        reported 76% compilation and a graph-edit-distance similarity
+                                        of 0.35; notably, 73% of that set exceeds the five-component           explicit. First, they degrade with scale: the review observes that
+                                        threshold beyond which Schemato reports losing connectivity            the reinforcement-learning approach of Hsu and Lin does not
+                                        accuracy. On a larger and harder corpus, the 3460 netlistable          exceed roughly 40 components [1], and Schemato itself reports
+                                        circuits of the official Analog Devices LTspice demo collection,       that “for circuits with more than 5 components, Schemato
+                                        Weave verifies exact connectivity for 88.4% of circuits, with the      struggles to generate schematics with accurate connectiv-
+                                        remaining failures concentrated in a single, well-characterized
+                                        class of dense multi-pin power modules.                                ity” [2]. Second, and more fundamentally, they offer no guar-
+                                            Index Terms—Automatic schematic generation, netlist-to-            antee of correctness: their quality is measured by continuous
+                                        schematic, layered graph layout, LTspice, connectivity verifica-       similarity scores such as graph edit distance (GED) [10] and
+                                        tion, electronic design automation.                                    structural similarity (MSSIM) [11], and a substantial fraction
+                                                                                                               of their outputs do not even compile.
+                                                               I. I NTRODUCTION                                   We take a different position. We argue that for a converter
+                                           The netlist is the lingua franca of circuit simulation, but         to be useful in an engineering workflow, connectivity correct-
+                                        it is not how engineers understand circuits. Designers rely            ness should be guaranteed by construction and verified, not
+                                        on schematics to recognize structure, trace signal flow, and           approximated and scored. We present Weave, a deterministic
+                                        debug behavior [1]. As machine-learning methods increas-               netlist-to-schematic converter with three contributions:
+                                        ingly generate circuits directly as netlists, the gap between             1) A deterministic, verification-first pipeline. Weave re-
+                                        machine-produced netlists and human-interpretable schematics                  vives the classical layered-flow layout line and rebuilds
+                                        has become a practical bottleneck: to bring domain experts into               it on a modern industrial graph engine (elkjs, an im-
+                                        the loop, netlists must be turned back into readable diagrams                 plementation of the Sugiyama framework), combined
+                                        quickly and accurately [2].                                                   with a small set of placement patterns for feedback
+                                           Automatic schematic generation (ASG) is a mature field.                    loops, divider legs, and shunts. No training, no GPU,
+                                        The recent review by Yang et al. [1] organizes ASG layout                     no probabilistic sampling.
+                                        into two families: heuristic-based methods and, more recently,            2) Round-trip connectivity verification. Every generated
+                                        deep-reinforcement-learning-based methods. The heuristic line                 .asc is parsed back into a netlist and compared, net
+                                        is classical and well understood. Swinkels and Hafer [3]                      for net, against the input. A result is accepted only
+                                        framed schematic layout as an expert-system problem with                      when the two connectivity partitions are identical—a
+                                        horizontal and vertical ordering; Jehng et al. [4] introduced                 binary certificate equivalent to GED = 1.0, produced
+       at generation time. To our knowledge, no prior netlist-                      netlist → parse → classify nets → layered layout
+       to-schematic method certifies connectivity in this way.                                           (elkjs)
+   3) A safe-mode ladder. When the default layout leaves a                          → pattern placement → grid snap + route → emit
+       connectivity gap, Weave retries with progressively sim-                                           .asc
+       pler layout modes down to pure graph layout, keeping                           → round-trip verify → {MATCH | partial}
+       the first result the verifier accepts. Because the verifier
+       gates every rung, a reported match is never wrong—only                 Fig. 1. The Weave pipeline. The final round-trip verification certifies that the
+       plainer.                                                               emitted schematic preserves the input connectivity.
+
+   Weave runs entirely in the browser as a single dependency-
+free file and ships with a command-line tool for batch con-                   length). For PCB reverse engineering, the AEM-PCB re-
+version and reproducible benchmarking.1 On the identical                      verser [17] drives a reinforcement-learning agent with an
+Circuits-LTSpice test set used by Schemato, Weave achieves                    aesthetic evaluation metric designed to align with designers’
+100% compilation and 100% round-trip-verified connectivity,                   subjective judgments, addressing the historical lack of objec-
+against Schemato’s 76% compilation and 0.35 GED similarity,                   tive quality standards for PCB schematics [1]. Schemato [2]
+on a set where 73% of circuits lie beyond Schemato’s stated                   fine-tunes an LLM on netlist-schematic pairs to emit .asc
+five-component limit.                                                         directly. All three report strong results within their regimes,
+                        II. R ELATED W ORK                                    but all are bounded by scale and by the absence of a cor-
+                                                                              rectness guarantee. The review [1] attributes the scale limit
+A. Heuristic layout for schematics                                            to the exponential growth of the search or generation space
+   The heuristic ASG line established the layered-flow                        with circuit density, and suggests hierarchical or heuristic
+paradigm that Weave builds on. The layout is typically split                  pruning as the way forward—precisely the role played by
+into logical (global) and geometric (local) phases [1]. In                    Weave’s placement patterns and safe-mode ladder. Schemato
+the logical phase, a horizontal ordering assigns components                   additionally reports a data-scarcity limitation: more than half
+to columns following left-to-right signal flow, detecting and                 of its training samples contain components seen fewer than ten
+removing feedback loops so the remainder is acyclic; a ver-                   times, so it cannot reliably place unfamiliar parts [2]. Weave
+tical ordering then assigns rows, classically by a barycen-                   sidesteps this entirely with a deterministic symbol table and a
+ter or value-propagation rule [3], [4]. Arsintescu [5] added                  generic-block fallback, so connectivity is preserved even for
+grid snapping and mirror placement of symmetric pairs with                    parts whose exact symbol is unknown.
+wire-length and bend minimization, while later work placed
+function blocks incrementally along the flow direction [6].                   C. Evaluation
+Simulated annealing was applied to the same problem as                           Learning-based converters are evaluated with similarity and
+a global optimizer [12], but, as the review notes, its slow                   compilation metrics: GED [10] for topological similarity,
+convergence on large schematics limited its adoption [1].                     MSSIM [11] for visual similarity, and a compilation success
+   Routing in this line follows its own taxonomy [1]: sequential              rate (CSR) for whether the output opens in the target tool [2].
+methods route nets one at a time, from maze search [13]                       On the aesthetics side, the AEM [17] quantifies layout and
+through A*-guided search as used in SPAR [8], [14] to                         routing quality against designer judgment. These are appro-
+constant-time pattern routing [15], with rectilinear Steiner                  priate for probabilistic methods, but they leave correctness
+trees for multi-terminal nets [16]; simultaneous methods trade                as a matter of degree. Weave instead reports a binary, exact
+running time for global optimality. Weave does not implement                  connectivity check; a Weave “match” corresponds to the best
+a separate router: orthogonal edge routing is performed jointly               case those metrics can represent (GED = 1.0), obtained as
+with placement by the layered engine, and the wires emitted by                a guarantee rather than an average. We view the two axes as
+placement patterns are direct, net-tagged connections that the                complementary: aesthetic metrics such as AEM measure how
+verifier audits. These classical ideas map almost directly onto               pleasant a schematic is, while round-trip verification certifies
+Weave’s pipeline—layered assignment, feedback handling as a                   that it is right.
+placement pattern, grid snapping, and orthogonal routing—but
+Weave replaces the hand-built layout heuristics with a general                                              III. M ETHOD
+Sugiyama engine and, crucially, adds a correctness certificate                A. Overview
+the classical line never had.                                                    Weave converts a SPICE netlist to an LTspice .asc
+B. Learning-based schematic generation                                        schematic in a short, deterministic pipeline: parse, classify
+                                                                              nets, place, route, emit, and verify (Fig. 1). Each stage has
+  Hsu and Lin [9] treat placement as a reinforcement-learning                 a single responsibility, and the final stage certifies the result.
+problem, rewarding aesthetic quality (crossings, bends, wire
+                                                                              B. Parsing and net classification
+  1 The  tool is available at https://senolgulgonul.github.io/weave; source
+code, the CLI, and benchmark-reproduction scripts at https://github.com/        The parser covers the standard SPICE element set: passives
+senolgulgonul/weave.                                                          and sources (R, C, L, V, I, D), active devices (Q, M with
+substrate collapse, J), subcircuits (X with parameter tails), de-   G. Safe-mode ladder
+pendent sources (E, G, F, H), behavioral sources (B), switches         A single circuit may not lay out cleanly with all patterns
+(S, W), transmission lines (T), coupling (K), and special-          active. Rather than fail, Weave climbs a ladder of increasingly
+function/digital devices (A), with SPICE line continuations         conservative modes, disabling placement patterns one at a
+joined. Each net is then classified as ground, supply rail,         time down to pure elkjs layout and, at the extreme, widening
+or signal. Ground and rail nets are realized as flags (local        channel spacing. It applies the verifier at each rung and keeps
+connections) rather than drawn wires, which keeps the signal        the first result that passes. Because correctness is gated by
+structure legible; only signal nets enter the layout graph.         the verifier, a match from any rung is fully correct; higher
+                                                                    rungs simply trade some visual compactness for a clean, ver-
+C. Layered layout
+                                                                    ifiable result. If any rung produces a connectivity-preserving
+   Signal components become nodes in a graph laid out by            schematic, Weave returns it, and the outcome is always labeled
+elkjs using its layered (Sugiyama) algorithm with left-to-right     honestly.
+flow and orthogonal routing. Node sizes encode the symbol
+body plus reserved space for pin escapes and flag stubs, all                            IV. E XPERIMENTAL S ETUP
+snapped to LTspice’s 16-unit grid so that ports land on grid and    A. Benchmark against Schemato
+pin coordinates are exact. Elkjs guarantees non-overlapping
+node boxes and orthogonal edge routes; Weave translates the            To compare directly with the state of the art, we evaluate
+resulting coordinates and edge sections into .asc symbols           on the exact public test set used by Schemato: the Circuits-
+and wires.                                                          LTSpice repository2 . We follow Schemato’s methodology pre-
+                                                                    cisely. Starting from the repository’s .asc files, we generate
+D. Placement patterns                                               netlists with LTspice itself (XVIIx64.exe -netlist), not
+                                                                    with Weave’s own extractor, so there is no circularity: the input
+   Certain structures are handled outside the layout graph,
+                                                                    to Weave comes from LTspice, exactly as Schemato’s input
+as placement patterns, because forcing them into the graph
+                                                                    did. Circuits whose symbols are missing from the installed
+degrades the main signal chain: local and far feedback around
+                                                                    library cannot be netlisted and are omitted, as in Schemato.
+amplifiers, divider legs to ground or rail, hanging shunts, and
+                                                                    With LTspice XVII 17.0.36.0 this yields 117 netlists, identical
+supply corners. Each pattern places its element relative to
+                                                                    to the count Schemato reports. Because both methods are
+already-placed nodes and emits the connecting wires directly.
+                                                                    evaluated on the same 117 circuits derived by the same tool,
+This mirrors the classical heuristic line [3], [5], but every
+                                                                    the denominator is identical.
+pattern’s wires are tagged with their net so the verifier can
+                                                                       For each netlist, Weave produces an .asc (climbing the
+audit them.
+                                                                    safe-mode ladder) and the round-trip verifier reports MATCH
+E. Symbol table and generic fallback                                or partial. We report compilation rate (a valid .asc produced)
+                                                                    and the round-trip-verified MATCH rate (exact connectivity
+   Weave embeds a pin table for 5093 LTspice symbols, storing       equivalence). Weave can be run either as a browser application
+only what layout needs: pin offsets and SpiceOrder indices.         at https://senolgulgonul.github.io/weave/, where a netlist is
+When a netlist calls a known part whose symbol pin count            pasted and the verified .asc downloaded interactively, or
+differs from the call, or a part absent from the table, Weave       through the command-line tool used for the batch results
+substitutes a synthetic rectangular block sized to the netlist’s    reported here.
+pin count. The glyph is generic, but the name and connectivity
+are exact, so the schematic still opens in LTspice and still        B. Large-corpus evaluation
+passes verification. This is the deterministic counterpart to the      To probe scale and to characterize failure honestly, we
+data-scarcity problem that limits learned models [2].               additionally evaluate on the official LTspice demo-circuit
+                                                                    collection published by Analog Devices [18]: 3610 .asc
+F. Round-trip verification
+                                                                    circuits retrieved on July 1, 2026. Applying the same protocol
+   The verifier is the core of Weave’s correctness claim.           as Sec. IV-A (netlisting with LTspice XVII 17.0.36.0; circuits
+Given the emitted .asc, it reconstructs a connectivity graph        with symbols missing from the installed library are omitted)
+by unioning wire endpoints, flags, and symbol pins that             yields a corpus of 3460 netlists. Table I summarizes the corpus.
+share coordinates into nets, then partitions both the generated     It is substantially larger than any test set in the related work,
+schematic and the original netlist into nets and compares           its circuits are markedly denser (mean 14.4 elements, median
+the partitions. If they are identical, connectivity is preserved    12, up to 138), and it contains many dense multi-pin power
+and the result is a match; otherwise the verifier reports           modules that are absent from the generic-component Circuits-
+exactly which nets differ. This check is binary and exact. It       LTSpice set. Because the collection is public and the protocol
+is equivalent to a graph-edit-distance score of 1.0 between         is fully specified, other converters can be evaluated on the
+the schematic’s connectivity graph and the netlist, but it          identical corpus for direct comparison.
+is produced as a certificate at generation time rather than
+estimated as a similarity.                                            2 https://github.com/mick001/Circuits-LTSpice
+                           TABLE I
+   T HE LARGE EVALUATION CORPUS : LT SPICE DEMO CIRCUITS [18],
+             NETLISTED WITH LT SPICE XVII 17.0.36.0.
+
+
+   Source .asc circuits (retrieved 2026-07-01)                     3610    V1   N001    0 AC 1
+   Netlistable with XVII 17.0.36.0 (evaluated corpus)              3460    C1   N002    N001 100n
+                                                                           R1   N002    Vout 10k
+   Total circuit elements                                         49 791
+                                                                           R2   Vout    0 10k
+   Elements per circuit (mean / median / max)            14.4 / 12 / 138   C2   Vout    0 100n
+   Circuits   with   2–5 elements                                    261
+   Circuits   with   6–10 elements                                  1274               (a) input netlist
+   Circuits   with   11–20 elements                                 1274
+   Circuits   with   21–50 elements                                  615
+   Circuits   with   51+ elements                                     36
+                                                                                                                            (b) Weave output
+   Round-trip verified MATCH                               3060 (88.4%)
+                                                                                Fig. 3. RC band-pass filter: input netlist (a) and Weave output (b).
+   Partial (connectivity gaps, downloadable)                 285 (8.2%)
+   Conversion error                                          115 (3.3%)
+
+                                                                           largest circuits (37–39 components: a three-phase supply and
+                                V. R ESULTS                                a common-emitter amplifier design). Figures 4 and 5 show
+A. Head-to-head on Circuits-LTSpice                                        one such circuit, a 32-component RLC step-response network,
+                                                                           more than six times the five-component threshold: Fig. 4 lists
+   Table II reports the comparison. On the identical 117-circuit           the input netlist and Fig. 5 the schematic Weave generates
+set, Weave produces a valid schematic for every circuit and                from it; the layout remains balanced and the connectivity is
+every one is a round-trip-verified MATCH: 100% compilation                 round-trip-verified (exact).
+and 100% connectivity equivalence. Schemato’s best reported
+figures on the same set are 76% compilation and a CSR-scaled
+GED similarity of 0.35 [2]; GPT-4o reaches 63% compilation.                V1   N004 0 10                             L5 N014 N015 30m
+                                                                           L1   N005 N006 30m                         R5 N013 N014 5
+                                                                           R1   N004 N005 34.64                       C5 N015 0 100u
+                                                                           C1   N006 0 100u                           L6 N016 0 30m
+                                                                           L2   N007 0 30m                            R6 N016 0 50
+                                                                           R2   N007 0 8.66                           C6 N016 0 100u
+                                                                           C2   N007 0 100u                           I3 0 N016 10
+                                                                           I1   0 N007 10                             V4 N001 0 SINE(0 1 91.93)
+T1 N002 0 N003 0                                                           V2   N009 0 10                             L7 N002 N003 30m
++ Td=50n Z0=50                                                             L3   N010 N011 30m                         R7 N001 N002 50
+V1 N001 0 AC 1                                                             R3   N009 N010 100                         C7 N003 0 100u
+RS N002 N001 50                                                            C3   N011 0 100u                           L8 N008 0 30m
+RL N003 0 50                                                               L4   N012 0 30m                            R8 N008 0 8.66
+                                                                           R4   N012 0 8                              C8 N008 0 100u
+        (a) input netlist                                                  C4   N012 0 100u                           I4 0 N008 SINE(0 1 91.93)
+                                                                           I2   0 N012 10                             .tran 0 50ms 0 0.05ms
+                                                                           V3   N013 0 10                             + startup
+
+                                               (b) Weave output            Fig. 4. Input netlist of the 32-component RLC step-response network of Fig. 5
+    Fig. 2. Transformer circuit: input netlist (a) and Weave output (b).   (annotation comments omitted; the micro suffix is written in its ASCII form
+                                                                           u).
+   Figures 2 and 3 show two circuits from this set used as
+qualitative examples in [2]: a transformer circuit and an RC                  We confirmed that the verifier is not vacuous: deleting a
+band-pass filter, each with its input netlist and the schematic            wire from a generated schematic causes the verifier to report
+Weave generates from it. The transformer netlist in Fig. 2                 a mismatch (nets break apart), and altering a net in the input
+also illustrates the SPICE + line continuation, which the                  netlist likewise produces a mismatch. The 100% therefore
+parser joins automatically. Both outputs are round-trip-verified           reflects genuine connectivity equivalence, not a verifier that
+(exact connectivity). Schemato reports that GPT-4o fails to                accepts everything.
+produce a compilable schematic for the transformer circuit
+across all prompts [2], whereas Weave produces a verified
+schematic with clean left-to-right signal flow for both. Each                                           TABLE II
+conversion can be reproduced either with the command-line                    C OMPARISON ON THE IDENTICAL C IRCUITS -LTS PICE TEST SET (117
+                                                                            CIRCUITS , NETLISTED BY LT SPICE ). S CHEMATO AND GPT-4 O FIGURES
+tool or interactively in the browser at https://senolgulgonul.                                   ARE AS REPORTED IN [2].
+github.io/weave/ by pasting the netlist.
+   The result is not an artifact of an easy set. The 117 circuits                  Metric                  Schemato     GPT-4o        Weave
+average 11 components (median 9, maximum 39), and 86                               Compilation rate          76%         63%          100%
+of them (73%) exceed five components—exactly the region                            Connectivity            GED 0.35    GED 0.23    100% exact
+where Schemato reports losing connectivity accuracy [2].                           Guarantee                 none        none       per-output
+                                                                                   Infrastructure           8×GPU        API         browser
+Weave returns a verified match for all of them, including the
+                                                                       Circuits-LTSpice benchmark used by the state-of-the-art LLM
+                                                                       converter, Weave achieves 100% compilation and 100% veri-
+                                                                       fied connectivity against 76% and 0.35 GED, on a set where
+                                                                       most circuits exceed the scale at which the learned model
+                                                                       degrades.
+                                                                          Two limitations point to the same next step. Connectivity
+                                                                       failures concentrate in a single class of dense multi-pin power
+                                                                       modules, and, separately, deep cascade topologies (such as
+                                                                       multi-stage amplifiers) are stretched by the layered layout
+                                                                       into long chains that are correct but not compact. Both are
+                                                                       addressed by a box-contract layout in which feedback, far-
+                                                                       feedback, and block slots enter the graph as fixed-size nodes
+                                                                       so that all routing, including cascades and dense modules, is
+                                                                       optimized jointly—a direction consistent with the hierarchical,
+                                                                       partition-based generation that the review identifies as the way
+                                                                       to scale ASG to dense circuits [1], [19]. Adding the aesthetic
+  Fig. 5. Weave output for a 32-component RLC step-response network.   metrics emphasized by the learning-based line, and a direct
+                                                                       comparison on those metrics, is the other clear direction. We
+                                                                       believe the broader lesson generalizes beyond LTspice: for
+B. Large-corpus behavior                                               netlist-to-schematic conversion, correctness by construction
+   On the 3460-circuit corpus, Weave verifies exact connec-            with verification is both achievable and, on connectivity,
+tivity for 3060 circuits (88.4%); 285 (8.2%) are partial results       decisively stronger than learned approximation.
+with reported connectivity gaps, and 115 (3.3%) fail to convert
+(Table I). The failures are highly concentrated: the great                                           R EFERENCES
+majority of partials involve dense multi-pin power modules              [1] J. Yang, K. Qiao, J. Chen, C. Chen, L. Guo, and B. Yan, “A review
+(large regulators with many repeated nets), which form a                    of automatic schematic generation techniques and their application to
+single, well-characterized class rather than a scattered set of             printed circuit boards,” Frontiers of Information Technology & Electronic
+                                                                            Engineering, vol. 26, no. 9, pp. 1534–1550, 2025.
+errors, and most conversion errors stem from parts newer than           [2] R. Matsuo, S. Uhlich, A. Venkitaraman, A. Bonetti, C.-Y. Hsieh, A. Mo-
+the installed LTspice version, whose symbols are absent from                meni, L. Mauch, A. Capone, E. Ohbuchi, and L. Servadei, “Schemato
+the table. This corpus is deliberately harder than Circuits-                – an LLM for netlist-to-schematic conversion,” in Proc. ACM/IEEE Int.
+                                                                            Workshop on Machine Learning for CAD (MLCAD), 2025.
+LTSpice—it is dominated by exactly the components that are              [3] G. M. Swinkels and L. Hafer, “Schematic generation with an expert
+rare in the generic-component benchmark—and it delineates                   system,” IEEE Trans. Computer-Aided Design of Integrated Circuits and
+precisely where the current layout reaches its limit.                       Systems, vol. 9, no. 12, pp. 1289–1306, 1990.
+                                                                        [4] Y.-S. Jehng, L.-G. Chen, and T.-M. Parng, “ASG: automatic schematic
+C. Discussion                                                               generator,” Integration, the VLSI Journal, vol. 11, no. 1, pp. 11–27,
+                                                                            1991.
+   The contrast with learning-based converters is structural            [5] B. G. Arsintescu, “A method for analog circuits visualization,” in
+rather than incremental. Schemato’s difficulty beyond five                  Proc. Int. Conf. on Computer Design (ICCD): VLSI in Computers and
+                                                                            Processors, 1996, pp. 454–459.
+components and its data-scarcity limitation are inherent to             [6] Y. P. Wu, “Novel method of analog circuit schematic synthesis,” in IEEE
+a probabilistic model that must learn both connectivity and                 8th Int. Conf. on ASIC, 2009, pp. 1209–1212.
+symbol geometry from examples [2]. Weave separates these                [7] B. Naveen and K. Raghunathan, “An automatic netlist-to-schematic
+                                                                            generator,” IEEE Design & Test of Computers, vol. 10, no. 1, pp. 36–41,
+concerns: connectivity is constructed deterministically from                1993.
+the netlist and then verified, while symbol geometry comes              [8] S. T. Frezza and S. P. Levitan, “SPAR: a schematic place and route
+from a fixed table with a generic fallback. The cost of this                system,” IEEE Trans. Computer-Aided Design of Integrated Circuits and
+design is aesthetic: Weave optimizes for verified connectivity              Systems, vol. 12, no. 7, pp. 956–973, 1993.
+                                                                        [9] H.-Y. Hsu and M. P.-H. Lin, “Automatic analog schematic diagram
+first, and does not yet report the crossing, bend, or visual-               generation based on building block classification and reinforcement
+similarity metrics that the learning-based line emphasizes [1],             learning,” in Proc. ACM/IEEE Workshop on Machine Learning for CAD
+[9]. We regard this as an honest scoping of the contribution: a             (MLCAD), 2022, pp. 43–48.
+                                                                       [10] Z. Abu-Aisheh, R. Raveaux, J.-Y. Ramel, and P. Martineau, “An exact
+converter that is provably correct on connectivity is a stronger            graph edit distance algorithm for solving pattern recognition prob-
+primitive to build aesthetics on than an aesthetically tuned one            lems,” in Int. Conf. on Pattern Recognition Applications and Methods
+whose connectivity is uncertain.                                            (ICPRAM), 2015.
+                                                                       [11] Z. Wang, A. C. Bovik, H. R. Sheikh, and E. P. Simoncelli, “Image
+                        VI. C ONCLUSION                                     quality assessment: from error visibility to structural similarity,” IEEE
+                                                                            Trans. Image Processing, vol. 13, no. 4, pp. 600–612, 2004.
+  We presented Weave, a deterministic netlist-to-schematic             [12] T. D. Lee and L. P. McNamee, “Structure optimization in logic schematic
+converter that certifies every output by round-trip connectivity            generation,” in IEEE Int. Conf. on Computer-Aided Design (ICCAD)
+                                                                            Digest of Technical Papers, 1989, pp. 330–333.
+verification and, through a safe-mode ladder, guarantees an            [13] L. C. Abel, “On the ordering of connections for automatic wire routing,”
+always-correct, as-clean-as-possible result. On the identical               IEEE Trans. Computers, vol. C-21, no. 11, pp. 1227–1233, 1972.
+[14] P. E. Hart, N. J. Nilsson, and B. Raphael, “A formal basis for the heuristic
+     determination of minimum cost paths,” IEEE Trans. Systems Science and
+     Cybernetics, vol. 4, no. 2, pp. 100–107, 1968.
+[15] R. Kastner, E. Bozorgzadeh, and M. Sarrafzadeh, “Predictable routing,”
+     in IEEE/ACM Int. Conf. on Computer-Aided Design (ICCAD), 2000, pp.
+     110–113.
+[16] Lee and McNamee, “Aesthetic routing for transistor schematics,” in
+     IEEE/ACM Int. Conf. on Computer-Aided Design (ICCAD), 1992, pp.
+     35–38.
+[17] J. Yang, K. Qiao, S. H. Shi et al., “AEM-PCB reverser: circuit schematic
+     generation in PCB reverse engineering using reinforcement learning
+     based on aesthetic evaluation metric,” IEEE Trans. Computer-Aided
+     Design of Integrated Circuits and Systems, vol. 43, no. 5, pp. 1608–
+     1612, 2024.
+[18] Analog Devices, “LTspice demo circuits,” https://www.analog.
+     com/en/resources/design-tools-and-calculators/ltspice-simulator/
+     lt-spice-demo-circuits.html, accessed: Jul. 1, 2026.
+[19] X. N. Hong, T. Lin, Y. Q. Shi et al., “GraphClusNet: a hierarchical
+     graph neural network for recovered circuit netlist partitioning,” IEEE
+     Trans. Artificial Intelligence, vol. 4, no. 5, pp. 1199–1213, 2023.
+

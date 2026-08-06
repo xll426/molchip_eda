@@ -1,0 +1,980 @@
+This work has been submitted to the IEEE for possible publication. Copyright may be transferred without notice, after which this version may no longer be accessible.
+
+arXiv:2607.23523v1 [cs.AR] 26 Jul 2026
+
+CircuitWeave: Topology–Behavior Alignment for Executable
+Multimodal RTL Generation
+Jiahao Feng
+
+Haiyan Qin
+
+Hangzhou International Innovation Institute, Beihang
+University
+Hangzhou, China
+fengjiahao@buaa.edu.cn
+
+National College for Excellent Engineers, Beihang
+University
+Beijing, China
+Jingjinji National Center of Technology Innovation
+Beijing, China
+haiyanq@buaa.edu.cn
+
+Zhiwei Xie
+
+Wang Kang∗
+
+Hangzhou International Innovation Institute, Beihang
+University
+Hangzhou, China
+xiezhiwei@buaa.edu.cn
+
+Hangzhou International Innovation Institute, Beihang
+University
+Hangzhou, China
+School of Integrated Circuit Science and Engineering,
+Beihang University
+Beijing, China
+wkang@buaa.edu.cn
+
+Abstract
+
+Keywords
+
+Text-only LLMs generate RTL from natural-language specifications, but prose can leave connectivity, register boundaries, and
+state–output relations implicit even when interfaces and cycle-level
+behavior are specified. Schematics can make these structural relations explicit and thereby complement the behavioral constraints
+conveyed by text. Yet simply adding an image creates a fusion
+challenge: direct multimodal decoding does not explicitly separate
+the evidence roles of text and schematics or make missing and
+conflicting constraints explicit before code generation. We present
+CircuitWeave, a contract-mediated multimodal framework that
+extracts a topology contract from the schematic and a behavior contract from the text. It fuses these records into a circuit contract that
+serializes correspondences, missing evidence, and conflicts, then
+generates RTL only from this contract. A joint objective supervises
+both contracts, serialized fusion, contract-conditioned RTL generation, and reverse reconstruction of covered contract fields from
+reference RTL. We construct 5,000 executable-qualified packages,
+each containing a specification, generated schematic, structured
+contracts, reference RTL, and self-checking testbench, and use the
+training split to adapt Qwen3.5-4B with LoRA. On VerilogEvalHuman, CircuitWeave reaches 46.60% pass@1, 61.49% pass@5,
+and 65.39% pass@10. These point estimates are 8.46, 5.85, and 2.57
+points above those of the same adapted checkpoint without the
+schematic. On RTLLM, it reaches 40.00%, 48.00%, and 52.00%, two
+points above the adapted text-only condition at each cutoff. The
+dataset is publicly available at https://huggingface.co/datasets/fe
+ngjiahao0421/CircuitWeave.
+
+RTL generation, electronic design automation, Verilog, multimodal
+learning, circuit contracts, cross-modal alignment, executable verification
+
+CCS Concepts
+• Hardware → Hardware description languages and compilation; Electronic design automation; • Computing methodologies → Machine learning.
+∗ Corresponding
+
+author: Wang Kang (wkang@buaa.edu.cn).
+
+1
+
+Introduction
+
+Prior LLM-based RTL methods include English-to-Verilog translation, domain adaptation, and hierarchical instruction construction [14, 18, 25], as well as structured training tasks and reasoning
+with executable feedback [9, 26]. Executable evaluation is stricter
+than syntax generation: a candidate must satisfy the interfaces,
+widths, clock/reset semantics, and cycle-level behaviors exercised
+by a functional testbench. VerilogEval and RTLLM evaluate candidates through compilation and simulation [8, 11]. Intended circuit
+organization remains a separate structural target because black-box
+simulation need not verify it.
+Text and schematics provide complementary views of hardware
+intent. Text can specify ports, bit widths, reset polarity, clocks,
+latency, corner cases, and expected behavior, but may leave connectivity and state organization implicit. Schematics can expose
+hierarchy, datapaths, register boundaries, and state transitions, but
+may omit exact interface and timing details. Chang et al. report
+benchmark cases in which diagrams provide hardware information absent from language [1]. Thus, for independently authored
+specifications, neither modality fully substitutes for the other. In
+our controlled benchmark study, however, each schematic is generated from the same description and provides a structured visual
+restatement rather than an independent specification.
+These roles motivate a more precise question than whether an
+image helps: under what training conditions does a descriptionderived schematic improve executable RTL generation? A single
+text+image score cannot distinguish RTL-specific adaptation from
+image conditioning. Without an explicit division of evidence, direct
+fusion need not preserve which constraints come from text and
+
+Feng et al.
+
+Figure 1: Conceptual overview of CircuitWeave. Text and the generated schematic provide behavior and topology evidence,
+which reconciliation combines into fused contract 𝑧. The RTL-generation call receives only 𝑧, and only extracted RTL reaches
+the hidden EDA boundary. The source-restricted calls follow Eq. 1; the training-only reverse-reconstruction task is omitted.
+which come from the schematic. A model may follow visual connectivity while violating a textual width, or match the interface while
+inserting an incorrect register boundary. We therefore encode the
+two evidence roles separately and vary checkpoint state and image
+input in a matched design.
+We formulate this setting as topology–behavior contract mediation and instantiate it in CircuitWeave. The topology contract
+𝑧 𝑣 records components, connectivity, datapath operators, and sequential structure from the schematic. The behavior contract 𝑧𝑡
+records interfaces, widths, clock/reset semantics, latency, corner
+cases, and required function from the text. The fusion stage serializes correspondences, missing evidence, and conflicts in a circuit
+contract 𝑧. A separate stage generates RTL conditioned on 𝑧; the
+raw modalities are excluded from the RTL-generation call. Figure 1
+gives the conceptual overview. Equation 1 and Listing 1 specify
+the source-restricted calls and fused-contract-only RTL stage. We
+jointly optimize contract extraction, serialized fusion, contractconditioned RTL generation, and reverse reconstruction of covered
+contract fields from reference RTL, and adapt Qwen3.5-4B using
+LoRA [6, 16].
+We evaluate this setting using 5,000 executable-qualified packages and a matched 2 × 2 comparison of checkpoint state and input
+condition. On VerilogEval-Human, the adapted text+image condition reaches 46.60% pass@1, 61.49% pass@5, and 65.39% pass@10.
+At pass@1, its image-input difference is +8.46 points, compared
+with −3.01 points for the base checkpoint. On RTLLM, the adapted
+text+image condition reaches 40.00%, 48.00%, and 52.00%, two points
+above the adapted text-only condition at each cutoff. Across these
+descriptive point estimates, the image-input difference varies by
+checkpoint state, benchmark, and sampling cutoff (Tables 4 and 5).
+This work makes three main contributions:
+
+• We introduce contract-mediated multimodal RTL generation, which constructs modality-specific topology and behavior contracts, fuses them into a circuit contract, and
+decodes RTL from that fused record. The joint objective
+supervises contract extraction, serialized fusion, RTL generation, and reverse reconstruction of covered contract fields.
+• We construct 5,000 executable-qualified design–verification
+packages through a role-specialized multi-agent pipeline
+for schematic generation, contract construction, and testbench synthesis. Qualification requires the reference RTL/
+
+testbench pair to elaborate, terminate, and satisfy the expected checks under Icarus.
+• We conduct a matched 2 × 2 comparison of checkpoint
+adaptation and generated-schematic input. On VerilogEvalHuman pass@1, the image-input difference is −3.01 points
+for the base checkpoint and +8.46 points for the adapted
+checkpoint; interactions at larger cutoffs and on RTLLM
+are smaller or mixed.
+
+2
+
+Related Work
+
+We compare CircuitWeave with prior work on language-based
+RTL generation, multimodal generation, structured circuit representations, and executable verification.
+
+2.1
+
+Language-Based RTL Generation
+
+Language-based RTL systems span English-to-Verilog translation,
+domain adaptation, and reasoning-enhanced generation. DAVE
+studied English-to-RTL translation [14]; VeriGen studied domain
+adaptation [18]; and CodeV constructed hierarchical instruction
+data from RTL repositories [25]. VeriThoughts combines reasoning
+data with formal-verification labels [22]; ReasoningV uses adaptive hybrid reasoning [15]; and VeriReason, VeriRL, and CodeVR1 use simulator feedback or reinforcement learning [17, 19, 26].
+These systems operate on language, code, reasoning, or EDA traces.
+CircuitWeave instead inserts a specification-side circuit contract
+before RTL generation.
+
+2.2
+
+Multimodal RTL Generation
+
+Hardware specifications use circuit, timing, and FSM diagrams to
+encode relations that can be cumbersome to state in prose. Chang
+et al. report cases in which language omits information needed
+to recover the intended hardware [1]. VeriGround reports that
+blank-image and anonymized-identifier controls can reveal circuitto-RTL improvements without corresponding visual grounding [20].
+CircuitWeave instead maps each modality to a source-specific
+contract and uses matched checkpoint-by-input conditions. Because
+the present study lacks these grounding controls, its image deltas
+measure conditioning rather than verified visual grounding.
+
+2.3
+
+Structured Circuit Representations
+
+Prior structure-aware methods constrain hardware generation without image input. CraftRTL uses correct-by-construction non-image
+
+CircuitWeave
+
+tasks [9], whereas CPPL lowers a typed circuit IR under legality
+checks [21]. CircuitWeave does not replace RTL with a compiler IR. Its specification-side contracts retain separate schematictopology and textual-behavior records before fusion; the fused
+record then conditions RTL generation.
+
+2.4
+
+Executable Verification and Adaptation
+
+Executable tests are a standard correctness signal in code generation [2], while RTL testbenches can check top-level interfaces and
+the cycle-level behavior they cover. VerilogEval and RTLLM evaluate generated RTL by simulation [8, 11], and LLM4DV generates verification stimuli [24]. VeriReason and VeriRL use testbench or simulation feedback [17, 19]; QiMeng-SALV introduces signal-aware
+learning [23]; and CodeV-R1 combines reasoning supervision with
+reinforcement learning [26]. Before training, CircuitWeave executes each reference RTL/testbench pair; qualification means that
+the pair elaborates, terminates, and satisfies the expected checks.
+During benchmark evaluation, generated RTL is accepted only if it
+compiles and passes simulation against the hidden testbench.
+
+3
+
+CircuitWeave: Contract-Mediated Multimodal
+RTL Generation
+
+CircuitWeave decomposes the pipeline into contract construction,
+contract fusion, and RTL generation with executable acceptance.
+Separate source-restricted calls predict a topology contract from
+the schematic and a behavior contract from the text. Their fused
+contract is the only serialized input supplied to the RTL-generation
+call. Training combines losses for the two source-specific contracts,
+serialized fusion, RTL generation, and reverse RTL-to-contract reconstruction. Figure 1 summarizes this evidence flow. The following
+subsections define the source-restricted calls, fused-only RTL decoder, training objective, and executable boundary.
+
+3.1
+
+Problem Formulation
+
+Let 𝑥𝑡 denote a textual specification and 𝑥 𝑣 a generated schematic.
+Let 𝑧𝑡 and 𝑧 𝑣 denote the behavior and topology contracts, respectively, and let 𝑧 be the fused circuit contract decoded from 𝑝𝜃 (𝑧 |
+𝑧 𝑣 , 𝑧𝑡 ). Finally, let 𝑦 denote the serialized RTL response containing
+the generated Verilog module. We parameterize the conditional
+model according to the following source-restricted inference graph:
+𝑝𝜃 (𝑧 𝑣 , 𝑧𝑡 , 𝑧, 𝑦 | 𝑥 𝑣 , 𝑥𝑡 )
+= 𝑝𝜃 (𝑧 𝑣 | 𝑥 𝑣 ) 𝑝𝜃 (𝑧𝑡 | 𝑥𝑡 ) 𝑝𝜃 (𝑧 | 𝑧 𝑣 , 𝑧𝑡 ) 𝑝𝜃 (𝑦 | 𝑧).
+
+(1)
+
+Equation 1 encodes the designed conditional dependencies among
+evidence extraction, contract fusion, and code generation. Under
+this parameterization, marginalizing the intermediate contract sequences gives
+∑︁
+𝑝𝜃 (𝑦 | 𝑥𝑡 , 𝑥 𝑣 ) =
+𝑝𝜃 (𝑦 | 𝑧)𝑝𝜃 (𝑧 | 𝑧 𝑣 , 𝑧𝑡 )
+(2)
+𝑧 𝑣 ,𝑧𝑡 ,𝑧
+· 𝑝𝜃 (𝑧 𝑣 | 𝑥 𝑣 )𝑝𝜃 (𝑧𝑡 | 𝑥𝑡 ).
+At inference, we do not enumerate all intermediate contracts in
+Equation 2. Instead, we follow the factorization through two phases
+and four separate decoder calls. In the contract phase, the topology call receives only 𝑥 𝑣 , the behavior call receives only 𝑥𝑡 , and
+the fusion call receives only 𝑧 𝑣 , 𝑧𝑡 . In the RTL phase, the fourth
+
+Table 1: Artifact source and role in each package. Contracts
+supervise generation; only the reference RTL/testbench pair
+is EDA-executed.
+Artifact
+
+Construction source
+
+Learning/validation role
+
+Text
+Schematic
+Contract record
+RTL
+Testbench
+
+Web collection
+Schematic agent
+Contract agent
+Web collection
+Verification agent
+
+Source for behavior contract 𝑧𝑡
+Source for topology contract 𝑧 𝑣
+Targets 𝑧 𝑣 , 𝑧𝑡 , and fused 𝑧
+Target 𝑦 ; compiled and simulated
+Hidden qualifier; executed with RTL
+
+call receives only serialized 𝑧 and emits 𝑦. Thus, the raw text and
+image are not supplied directly to the RTL-generation call. Source
+restriction denotes this call-level input constraint, not statistical
+independence between the modalities. When the image is absent, 𝑧 𝑣
+contains explicit unknown fields instead of inferred visual evidence.
+
+3.2
+
+Contract-Annotated Executable Package
+Construction
+
+Each of 5,000 design–verification packages contains the five artifact
+classes in Table 1. The contract record contains separate 𝑧 𝑣 , 𝑧𝑡 , and
+𝑧 sections; the testbench remains a hidden qualification artifact and
+is never a model input.
+We construct each design–verification package through a rolespecialized multi-agent pipeline. Starting from a publicly accessible
+Verilog module and its natural-language description, a schematic
+agent translates the design intent into a visual representation. A
+contract agent then receives only its designated input in each pass:
+the topology pass receives the schematic, the behavior pass receives
+the description, and the fusion pass receives the two resulting
+contracts. During contract construction, this agent receives neither
+the reference RTL nor the testbench. These call-level restrictions
+remove the agent’s direct access to the reference artifacts. In parallel,
+a verification agent synthesizes a self-checking testbench from the
+textual specification. An executable validator finally compiles and
+simulates the reference RTL/testbench pair, retaining only packages
+that elaborate, terminate, and satisfy the expected checks.
+Nano Banana 2, Gemini 3 Flash, and GPT-5.5 instantiate the
+schematic, contract, and verification roles, respectively [4, 5, 13].
+The executable validator uses Icarus Verilog, invoking iverilog
+for compilation and elaboration and vvp for simulation [7].
+This executable gate retains reference RTL/testbench pairs that
+elaborate and pass simulation; it does not establish test coverage,
+cross-modal fidelity, or semantic correctness beyond the exercised
+checks. The fusion and reverse-reconstruction losses are training
+signals rather than certification. We therefore call the retained
+packages executable-qualified. After normalizing module identifiers, contract headings, code fences, answer tags, and simulator
+outcomes, we screen within-corpus duplicates and split 4,750/250
+packages for training/validation. The available records do not support a benchmark-aware semantic-overlap count, which we treat
+as a validity threat in Section 6.
+Table 2 compares this package design with representative RTLtraining resources. Each package in this work co-locates a generated
+schematic, modality-specific and fused contracts, reference RTL,
+and an executable testbench.
+
+Feng et al.
+
+Table 2: Representative RTL-generation training resources. “TB use” describes testbenches used in curation or learning, not
+necessarily model inputs. Scale is rounded from the cited releases.
+Resource
+
+Scale
+
+RTLCoder-27K [10]
+CodeV-Verilog [25]
+CraftRTL [9]
+OriGen [3]
+VeriThoughts [22]
+CodeV-R1 [26]
+Veribench-53K [17]
+This work
+† CraftRTL
+
+27K
+165K
+110K
+222K
+20K
+87K+3.1K
+53K
+5K
+
+Learning target
+
+Image
+
+TB use
+
+Instruction + RTL SFT
+Multilevel summaries + RTL SFT
+Structured tasks + RTL/repair
+RTL augmentation + repair
+Reasoning + RTL SFT
+Reasoning SFT + RL
+Reward modeling + RL
+
+No
+No
+No†
+No
+No
+No
+No
+
+No
+No
+No
+No
+No
+Filter/RL
+5–10/pair
+
+Topology/behavior/fused contracts +
+RTL
+
+Yes
+
+1/pair
+
+Group
+
+Topology 𝑧 𝑣
+
+Behavior 𝑧𝑡
+
+Interface
+
+Visible pins and
+links
+Registers, state
+edges
+Operators,
+dependencies
+Visible or unknown
+
+Name, direction,
+𝑧 : fuse ports; 𝑧 cov :
+width
+declarations
+Clock, reset, latency 𝑧 : fuse state/timing;
+𝑧 cov : event controls
+Function, corner
+𝑧 : fuse operations; 𝑧 cov :
+cases
+selected dependencies
+Stated or unknown
+𝑧 : preserve
+source/status; 𝑧 cov :
+omit
+unknown/conflict
+
+Datapath
+Status
+
+3.3
+
+Syntax checking
+Syntax, deduplication, and decontamination
+Construction checks and filtered repair
+Compiler-guided syntax repair
+Formal-equivalence labels
+Generated-testbench equivalence
+Multi-testbench simulation
+Icarus compilation and simulation
+
+includes K-maps, FSMs, and waveforms as structured non-image representations. Executable QC does not imply full semantic certification.
+
+Table 3: Contract fields and their treatment in fused 𝑧 and
+reverse-reconstruction target 𝑧 cov .
+
+Sequential
+
+Pair-level quality control
+
+Treatment in 𝑧 / 𝑧 cov
+
+Topology–Behavior Contract Fusion
+
+The topology contract 𝑧 𝑣 assigns the schematic a structural role. Its
+fixed headings cover components and ports, connectivity, datapath
+operators, register boundaries, state transitions, internal dependencies, and unknown evidence. The behavior contract 𝑧𝑡 assigns
+the text a complementary role and records the module interface,
+widths, clock/reset semantics, function, latency, output timing, and
+corner cases. Here, source isolation is a call-level restriction: the
+topology pass receives only 𝑥 𝑣 , and the behavior pass receives only
+𝑥𝑡 . It removes direct access to the other raw input before fusion but
+does not imply provenance or statistical independence.
+The fusion target aligns shared entities, carries forward modalityspecific constraints, and labels shared fields as supported, missing,
+or conflicting. Explicit textual interface and timing requirements fill
+fields absent from the schematic, while visible structural relations
+retain their 𝑧 𝑣 provenance. The resulting 𝑧 serializes the cross-modal
+correspondence and the constraints supplied to the RTL-generation
+call. Listing 1 shows the two-phase serialization used by the model.
+Table 3 summarizes the contract groups and their fusion policy.
+The serialized schema stores each field value with its evidence
+source. In the target records, unsupported fields are labeled unknown.
+When two explicit values disagree, the field remains conflict
+unless a stated field-specific authority rule applies; any unresolved
+conflict remains explicit in 𝑧. These labels distinguish missing from
+conflicting evidence instead of leaving both implicit in a free-form
+rationale.
+
+Listing 1: Source-restricted contract calls and fused-only RTL
+call.
+Contract phase:
+A. schematic only -> <topology> components; edges; operators; state </topology>
+B. text only -> <behavior> ports/widths; clock/reset; timing; function </
+behavior>
+C. z_v and z_t only -> <fused> correspondence; missing/conflict; RTL constraints
+</fused>
+RTL phase:
+D. fused z only -> <answer> complete Verilog module </answer>
+
+3.4
+
+Contract-Conditioned RTL Generation
+
+We train the shared decoder on five conditional tasks with lengthnormalized token losses. Let 𝑧 cov = 𝑃cov (𝑧) be a deterministic projection of 𝑧. It retains port declarations, register/state elements,
+clock/reset event controls, and explicit datapath operators and dependencies. The projection omits unknown/conflict values and
+behavioral requirements outside the scope of the reverse task, including latency, corner-case behavior, and full functional equivalence. The losses Ltopo , Lbehavior , and LRTL predict 𝑧 𝑣 from 𝑥 𝑣 ,
+𝑧𝑡 from 𝑥𝑡 , and reference RTL 𝑦 from fused 𝑧, respectively. The
+serialized fusion loss Lalign = − log 𝑝𝜃 (𝑧 | 𝑧 𝑣 , 𝑧𝑡 ) supervises the
+target fused record, including its correspondence and status fields.
+The reverse-reconstruction loss Lcons = − log 𝑝𝜃 (𝑧 cov | 𝑦) predicts
+𝑧 cov from reference RTL and supplies an indirect auxiliary signal
+through the shared parameters. The complete objective is
+L = Ltopo + Lbehavior + LRTL + 𝜆Lalign + 𝜇Lcons .
+
+(3)
+
+Because 𝑧 explicitly serializes field correspondences and their status,
+Lalign supervises those targets but is not an independent measurement of alignment accuracy. We use LoRA for parameter-efficient
+adaptation of the base multimodal model. The training scheme combines contract-mediated generation with a reverse-reconstruction
+auxiliary objective. Concretely, trainable low-rank updates are inserted into the Qwen3.5-4B language-model linear layers while
+the base weights, vision encoder, and multimodal aligner remain
+frozen [6, 12]. No benchmark testbench or simulator outcome is
+exposed during training.
+Each term has a teacher-forced gradient path to the shared decoder parameters. The contract-phase terms supervise the two
+source-specific serializations and their fusion; the RTL term supervises 𝑧 → 𝑦; and the reverse term supervises 𝑦 → 𝑧 cov . Training
+
+CircuitWeave
+
+supplies the reference fused contract to the RTL task, whereas inference supplies the predicted contract from the contract phase.
+Because the reverse task does not compare a sampled 𝑦ˆ with 𝑧,
+it regularizes the shared parameters only indirectly and does not
+enforce per-candidate contract–RTL consistency. It is neither an
+EDA reward nor a claim of formal equivalence.
+
+3.5
+
+Candidate Extraction and Executable
+Acceptance
+
+All base and adapted variants receive the same two-stage and
+output-format instructions. Let 𝐸 (𝑦) extract a complete module
+from the final <answer> block and return ⊥ otherwise. The evaluator removes response markup but does not repair code. It compiles
+𝐸 (𝑦) with hidden testbench 𝑇 and simulates each successfully elaborated candidate:
+
+𝐴(𝑦,𝑇 ) = 1 𝐸 (𝑦) ≠ ⊥ ∧ compile(𝐸 (𝑦),𝑇 )
+
+(4)
+∧ simulate(𝐸 (𝑦),𝑇 ) .
+Extraction failures, interface mismatches, compilation errors, timeouts, and testbench-detected functional mismatches all receive zero.
+The reverse auxiliary task reconstructs selected contract fields from
+reference RTL during training, whereas the hidden testbench defines the final benchmark acceptance decision for generated candidates. A passing result establishes only satisfaction of the behavior
+exercised by 𝑇 . Every condition uses the same extraction and EDA
+procedure without checker-based reranking or post-generation
+repair.
+
+4
+
+Experimental Setup
+
+The experiments cross checkpoint state with inference condition in
+a matched 2 × 2 design. RQ1 quantifies the end-to-end difference
+between the base checkpoint and the checkpoint adapted with the
+complete contract-mediated objective. RQ2 quantifies the withincheckpoint difference associated with adding a description-derived
+schematic. RQ3 examines whether the resulting descriptive interaction has a consistent direction across benchmarks and sampling
+cutoffs.
+
+4.1
+
+Benchmarks, Conditions, and Metric
+
+We evaluate VerilogEval-Human (156 tasks) [8] and RTLLM [11],
+both of which provide textual tasks and functional testbenches.
+For each task and condition, we draw 20 samples at temperature
+0.7 and compile and simulate every candidate independently. We
+report pass@1, pass@5, and pass@10 using the standard unbiased
+estimator of Chen et al. [2], averaged across tasks without category
+reweighting. A candidate must satisfy Eq. 4; similarity to reference
+RTL is not used.
+The four conditions in Table 4 cross checkpoint state (base or
+adapted) with contract input (text or text+image). In the text+image
+condition, Nano Banana 2 generates a schematic from the released
+task description alone and does not receive the reference RTL or
+benchmark testbench. In text-only inference, the topology contract
+uses explicit unknown values; in text+image inference, it is extracted
+from the generated schematic. The same LoRA adapter is evaluated
+
+in both modes. Every row follows the same contract-first, RTLsecond protocol, sampling budget, extraction procedure, and EDA
+harness, without reranking or repair.
+
+4.2
+
+Training and Comparison Protocol
+
+We train on 4,750 packages and validate on 250. Training optimizes
+Eq. 3, with each term normalized by its supervised token count.
+Separate source-restricted examples implement the two contract
+branches, and the reference fused contract conditions LRTL during
+teacher forcing. The base checkpoint is Qwen3.5-4B [16]. Training
+uses bfloat16 on one GPU and the ms-swift all-linear LoRA
+target [12]. Rank is 32 with scaling factor 64. We train for three
+epochs at learning rate 1 × 10−4 , warmup ratio 0.05, and sequence
+length 8192. Per-device batch size is 2 with gradient accumulation 2,
+and the image-token budget is 1024. Evaluation and checkpointing
+occur every 100 steps, with two checkpoints retained.
+External systems in Table 4 differ in prompting, model scale,
+decoding, benchmark revision, and post-processing. Their reported
+values provide approximate context for the compact 4B model rather
+than head-to-head comparisons. All claims about adaptation and
+image input rely on the four controlled rows.
+
+5 Results and Analysis
+5.1 RQ1: Base-to-Adapted Performance
+Across both benchmarks and all three 𝑘 values, the adapted checkpoint has higher point estimates than the corresponding base checkpoint. At 𝑘 = 1, 5, 10, text-only VerilogEval-Human pass@𝑘 rises by
+14.55, 14.23, and 14.74 points to 38.14%, 55.64%, and 62.82%. With
+text+image, the corresponding differences are 26.02, 18.52, and 14.11
+points, reaching 46.60%, 61.49%, and 65.39%. On RTLLM, the baseto-adapted differences are 10, 11, and 9 points for text and 13, 9, and
+8 points for text+image. These comparisons evaluate the combined
+adaptation recipe, including all five objective terms and LoRA; they
+do not identify the contribution of any individual branch, loss, or
+adaptation component.
+
+5.2
+
+RQ2–RQ3: Checkpoint–Input Interaction
+
+The within-checkpoint deltas in Table 5 summarize the difference
+associated with adding the generated schematic. On VerilogEvalHuman pass@1, the image delta changes from −3.01 points in the
+base model to +8.46 after adaptation, giving a descriptive interaction of 11.47 points. The corresponding interaction is +4.29 at
+pass@5 but −0.63 at pass@10. On RTLLM, the adapted image delta
+is consistently +2 points, while the interactions are +3, −2, and
+−1 points at pass@1, pass@5, and pass@10. The interaction is
+largest at the lower VerilogEval-Human cutoffs and does not have
+a consistent direction across benchmarks or sampling cutoffs.
+The reported external rows contextualize scale but do not form a
+unified leaderboard. In the reported values, CircuitWeave is above
+StarCoder2-15B at every VerilogEval-Human cutoff and on all three
+RTLLM metrics; because the protocols differ, these are contextual
+rather than head-to-head comparisons. Several external systems
+also report higher values on parts of the table. Without blankimage, mismatched-image, or identifier-anonymization controls,
+the positive image-minus-text deltas for the adapted checkpoint are
+consistent with generated-schematic conditioning but do not verify
+
+Feng et al.
+
+Table 4: Executable RTL-generation results (%). Controlled rows share decoding and EDA settings; bold marks the best controlled
+value for each metric. Reported external rows provide scale context only because protocols differ.
+
+Group
+
+Model
+
+VerilogEval-Human
+
+Input
+
+Controlled
+Controlled
+Controlled
+Controlled
+
+Base Qwen3.5-4B
+Base Qwen3.5-4B
+CircuitWeave w/o image
+CircuitWeave
+
+Text
+Text+image
+Text
+Text+image
+
+Reported
+Reported
+Reported
+Reported
+Reported
+Reported
+
+GPT-4o [9]
+DeepSeek-V3 [23]
+StarCoder2-15B [9]
+CodeV-CodeQwen [9]
+OriGen [23]
+CodeV-R1-7B [26]
+
+Text
+Text
+Text
+Text
+Text
+Text
+
+RTLLM
+
+pass@1
+
+pass@5
+
+pass@10
+
+pass@1
+
+pass@5
+
+pass@10
+
+23.59
+20.58
+38.14
+46.60
+
+41.41
+42.97
+55.64
+61.49
+
+48.08
+51.28
+62.82
+65.39
+
+28.00
+27.00
+38.00
+40.00
+
+35.00
+39.00
+46.00
+48.00
+
+41.00
+44.00
+50.00
+52.00
+
+57.1
+70.7
+37.7
+53.2
+54.4
+69.9
+
+63.9
+77.4
+50.6
+65.1
+60.1
+79.3
+
+66.7
+78.8
+57.2
+68.5
+64.2
+81.7
+
+33.8
+62.0
+15.5
+36.6
+50.6
+72.9
+
+44.4
+72.0
+37.6
+53.3
+68.3
+86.1
+
+48.3
+72.4
+45.7
+61.3
+74.3
+–
+
+Table 5: Image-input deltas (generated schematic minus text
+only, percentage points). Interaction is the adapted delta minus the base delta; all values are descriptive. “VerilogEval”
+denotes VerilogEval-Human.
+Benchmark
+
+𝑘
+
+Base Δ
+
+Adapted Δ
+
+Interaction
+
+VerilogEval
+
+1
+5
+10
+1
+5
+10
+
+−3.01
++1.56
++3.20
+−1.00
++4.00
++3.00
+
++8.46
++5.85
++2.57
++2.00
++2.00
++2.00
+
++11.47
++4.29
+−0.63
++3.00
+−2.00
+−1.00
+
+RTLLM
+
+visual grounding [20]. Task-level bootstrap intervals and stage-wise
+failure counts are unavailable, so all differences remain descriptive,
+with uncertainty especially consequential for the smaller deltas.
+Under the shared EDA protocol, the adapted checkpoint has positive image-minus-text differences on all reported metrics, whereas
+evidence for a stable adaptation-by-image interaction is mixed.
+
+Figure 2: Paired outputs from the same adapted Qwen3.5-4B
+checkpoint on one FSM task. The image-conditioned candidate uses the current state; the text-only candidate uses
+the pre-transition state and introduces a one-cycle lag. Highlights mark the assignments.
+
+6
+5.3
+
+Qualitative FSM Case Study
+
+Figure 2 compares outputs from the same adapted Qwen3.5-4B
+checkpoint on the same FSM prompt. The model and text are fixed;
+one condition also receives the generated schematic. Both candidates recover the reset and transitions. The schematic specifies
+𝑍 = 𝑄, which the image-conditioned candidate implements as
+assign out = state. The text-only candidate updates out in the
+clocked block; nonblocking semantics therefore use the pre-edge
+state and cause a one-cycle lag on both transitions. This paired
+example illustrates how schematic conditioning can help the same
+model avoid a concrete RTL error and complements the adapted
+checkpoint’s positive aggregate image-minus-text deltas in Tables 4
+and 5.
+
+Limitations
+
+The present study is limited to description-derived schematics, one
+4B checkpoint, and simulation-level evaluation. Passing Icarus qualification establishes agreement between the reference RTL and
+testbench only for the exercised behaviors; it does not establish
+coverage or cross-modal fidelity, and weak tests may accept incorrect RTL. Web collection also creates provenance, licensing, and
+benchmark-overlap risks. The reported results are aggregate point
+estimates without repeated runs across training or sampling seeds,
+paired task-level intervals, or stage-wise failure counts. Evaluation
+excludes synthesis, timing, area, power, and physical design.
+The controlled design compares checkpoint state and the addition of a description-derived schematic; it does not isolate the
+individual contributions of the contract branches, Lalign , Lcons , or
+LoRA. Generated contracts have not been independently audited,
+
+CircuitWeave
+
+and the schematics derive from the same text used by the text-only
+condition. Without blank, mismatched, anonymized, or topologyperturbed image controls, the results quantify conditioning on these
+generated schematics rather than verified visual grounding. Future
+evaluation should include objective ablations, independently authored diagrams, broader contract coverage, and coverage-guided
+tests.
+
+7
+
+Conclusion
+
+We presented CircuitWeave, which fuses schematic topology
+and textual behavior into a contract before RTL decoding. LoRA
+adaptation of Qwen3.5-4B uses the training split of a 5,000-package
+executable-qualified corpus. Under the text+image condition, the
+adapted model reaches 46.60% pass@1 on VerilogEval-Human and
+40.00% on RTLLM. On VerilogEval-Human pass@1, the image-input
+difference is −3.01 points for the base checkpoint and +8.46 points
+for the adapted checkpoint. Under the shared evaluation protocol,
+these point estimates characterize the end-to-end performance of
+contract-mediated multimodal RTL generation; they do not isolate
+individual adaptation components or establish visual grounding.
+
+Feng et al.
+
+References
+[1] Kaiyan Chang, Zhirong Chen, Yunhao Zhou, Wenlong Zhu, Kun Wang, Haobo Xu,
+Cangyuan Li, Mengdi Wang, Shengwen Liang, Huawei Li, Yinhe Han, and Ying
+Wang. 2024. Natural Language is Not Enough: Benchmarking Multi-modal Generative AI for Verilog Generation. In Proceedings of the IEEE/ACM International
+Conference on Computer-Aided Design. Association for Computing Machinery,
+New York, NY, USA, 117:1–117:9. doi:10.1145/3676536.3676679
+[2] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde
+de Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph,
+Greg Brockman, Alex Ray, Raul Puri, Gretchen Krueger, Michael Petrov, Heidy
+Khlaaf, Girish Sastry, Pamela Mishkin, Brooke Chan, Scott Gray, Nick Ryder,
+Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mohammad Bavarian, Clemens
+Winter, Philippe Tillet, Felipe Petroski Such, Dave Cummings, Matthias Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William Hebgen
+Guss, Alex Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin, Suchir
+Balaji, Shantanu Jain, William Saunders, Christopher Hesse, Andrew N. Carr,
+Jan Leike, Josh Achiam, Vedant Misra, Evan Morikawa, Alec Radford, Matthew
+Knight, Miles Brundage, Mira Murati, Katie Mayer, Peter Welinder, Bob McGrew, Dario Amodei, Sam McCandlish, Ilya Sutskever, and Wojciech Zaremba.
+2021. Evaluating Large Language Models Trained on Code. arXiv:2107.03374.
+doi:10.48550/arXiv.2107.03374
+[3] Fan Cui, Chenyang Yin, Kexing Zhou, Youwei Xiao, Guangyu Sun, Qiang Xu,
+Qipeng Guo, Yun Liang, Xingcheng Zhang, Demin Song, and Dahua Lin. 2024.
+OriGen: Enhancing RTL Code Generation with Code-to-Code Augmentation
+and Self-Reflection. In Proceedings of the 43rd IEEE/ACM International Conference
+on Computer-Aided Design. Association for Computing Machinery, New York,
+NY, USA, 99:1–99:9. doi:10.1145/3676536.3676830
+[4] Google. 2026. Gemini 3 Flash Preview. https://ai.google.dev/gemini-api/docs/m
+odels/gemini-3-flash-preview. Endpoint: gemini-3-flash-preview; accessed:
+2026-07-18.
+[5] Google DeepMind. 2026. Nano Banana 2: Combining Pro Capabilities with
+Lightning-Fast Speed. https://blog.google/innovation-and-ai/technology/
+ai/nano-banana-2/. Endpoint: gemini-3.1-flash-image-preview; accessed:
+2026-07-18.
+[6] Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean
+Wang, Lu Wang, and Weizhu Chen. 2022. LoRA: Low-Rank Adaptation of
+Large Language Models. In International Conference on Learning Representations.
+OpenReview.net, Virtual Event, 26 pages. https://openreview.net/forum?id=nZ
+eVKeeFYf9
+[7] Icarus Verilog Project. 2026. Icarus Verilog Documentation. https://steveicarus.
+github.io/iverilog/. Accessed: 2026-07-10.
+[8] Mingjie Liu, Nathaniel Pinckney, Brucek Khailany, and Haoxing Ren. 2023. Invited Paper: VerilogEval: Evaluating Large Language Models for Verilog Code
+Generation. In Proceedings of the 2023 IEEE/ACM International Conference on
+Computer-Aided Design. IEEE, San Francisco, CA, USA, 1–8. doi:10.1109/ICCA
+D57390.2023.10323812
+[9] Mingjie Liu, Yun-Da Tsai, Wenfei Zhou, and Haoxing Ren. 2025. CraftRTL:
+High-quality Synthetic Data Generation for Verilog Code Models with Correctby-Construction Non-Textual Representations and Targeted Code Repair. In
+International Conference on Learning Representations, Y. Yue, A. Garg, N. Peng,
+F. Sha, and R. Yu (Eds.), Vol. 2025. OpenReview.net, Singapore, 90377–90422.
+https://proceedings.iclr.cc/paper_files/paper/2025/hash/e112a4671e8779aa9f6
+40a0e3f81bd26-Abstract-Conference.html
+[10] Shang Liu, Wenji Fang, Yao Lu, Jing Wang, Qijun Zhang, Hongce Zhang, and
+Zhiyao Xie. 2025. RTLCoder: Fully Open-Source and Efficient LLM-Assisted RTL
+Code Generation Technique. IEEE Transactions on Computer-Aided Design of
+Integrated Circuits and Systems 44, 4 (2025), 1448–1461. doi:10.1109/TCAD.2024.
+3483089
+[11] Yao Lu, Shang Liu, Qijun Zhang, and Zhiyao Xie. 2024. RTLLM: An OpenSource Benchmark for Design RTL Generation with Large Language Model. In
+Proceedings of the 29th Asia and South Pacific Design Automation Conference. IEEE,
+Incheon, Republic of Korea, 722–727. doi:10.1109/ASP-DAC58780.2024.10473904
+[12] ModelScope Team. 2026. MS-Swift: Command-Line Parameters. Software documentation. Accessed: 2026-07-11. https://github.com/modelscope/msswift/blob/main/docs/source_en/Instruction/Command-line-parameters.md
+[13] OpenAI. 2026. Introducing GPT-5.5. https://openai.com/index/introducing-gpt5-5/. Accessed: 2026-07-10.
+[14] Hammond Pearce, Benjamin Tan, and Ramesh Karri. 2020. DAVE: Deriving Automatically Verilog from English. In Proceedings of the 2020 ACM/IEEE Workshop
+on Machine Learning for CAD. Association for Computing Machinery, New York,
+NY, USA, 27–32. doi:10.1145/3380446.3430634
+[15] Haiyan Qin, Zhiwei Xie, Jingjing Li, Liangchen Li, Xiaotong Feng, Junzhan Liu,
+and Wang Kang. 2025. ReasoningV: Efficient Verilog Code Generation with
+Adaptive Hybrid Reasoning Model. arXiv:2504.14560. doi:10.48550/arXiv.2504.
+14560
+[16] Qwen Team. 2026. Qwen3.5-4B Model Card. Hugging Face model repository.
+Accessed: 2026-07-11. https://huggingface.co/Qwen/Qwen3.5-4B
+
+[17] Fu Teng, Miao Pan, Xuhong Zhang, Zhezhi He, Yiyao Yang, Xinyi Chai, Mengnan
+Qi, Liqiang Lu, and Jianwei Yin. 2025. VeriRL: Boosting the LLM-based Verilog
+Code Generation via Reinforcement Learning. In 2025 IEEE/ACM International
+Conference on Computer Aided Design (ICCAD). IEEE, Piscataway, NJ, USA, 1–9.
+doi:10.1109/ICCAD66269.2025.11241003
+[18] Shailja Thakur, Baleegh Ahmad, Hammond Pearce, Benjamin Tan, Brendan
+Dolan-Gavitt, Ramesh Karri, and Siddharth Garg. 2024. VeriGen: A Large Language Model for Verilog Code Generation. ACM Transactions on Design Automation of Electronic Systems 29, 3 (2024), 46:1–46:31. doi:10.1145/3643681
+[19] Yiting Wang, Guoheng Sun, Wanghao Ye, Gang Qu, and Ang Li. 2025. VeriReason: Reinforcement Learning with Testbench Feedback for Reasoning-Enhanced
+Verilog Generation. arXiv:2505.11849.
+[20] Guang Yang, Xing Hu, Xiang Chen, and Xin Xia. 2026. From Mirage to
+Grounding: Towards Reliable Multimodal Circuit-to-Verilog Code Generation.
+arXiv:2604.27969. doi:10.48550/arXiv.2604.27969
+[21] Shuo Yin, Yihe Wang, Lancheng Zou, Xufeng Yao, Tinghuan Chen, Chen Bai,
+Zhengrong Wang, Tsung-Yi Ho, and Bei Yu. 2026. CPPL: A Circuit Prompt
+Programming Language. arXiv:2605.17892.
+[22] Patrick Yubeaton, Andre Nakkab, Weihua Xiao, Luca Collini, Ramesh Karri,
+Chinmay Hegde, and Siddharth Garg. 2025. VeriThoughts: Enabling Automated
+Verilog Code Generation Using Reasoning and Formal Verification. In Advances
+in Neural Information Processing Systems 38: Datasets and Benchmarks Track.
+Curran Associates, Inc., Red Hook, NY, USA, 23 pages.
+[23] Yang Zhang, Rui Zhang, Jiaming Guo, Lei Huang, Di Huang, Yunpu Zhao, Shuyao
+Cheng, Pengwei Jin, Chongxiao Li, Zidong Du, Xing Hu, Qi Guo, and Yunji Chen.
+2025. QiMeng-SALV: Signal-Aware Learning for Verilog Code Generation. In
+Advances in Neural Information Processing Systems, Vol. 38. Curran Associates,
+Inc., Red Hook, NY, USA, 159613–159633. https://papers.neurips.cc/paper_files/p
+aper/2025/hash/ea052d3e98adfefa0fbff1766ee2efde-Abstract-Conference.html
+[24] Zixi Zhang, Balint Szekely, Pedro Gimenes, Greg Chadwick, Hugo McNally,
+Jianyi Cheng, Robert Mullins, and Yiren Zhao. 2025. LLM4DV: Using Large
+Language Models for Hardware Test Stimuli Generation. In 2025 IEEE 33rd Annual
+International Symposium on Field-Programmable Custom Computing Machines
+(FCCM). IEEE, Piscataway, NJ, USA, 133–137. doi:10.1109/FCCM62733.2025.00048
+[25] Yang Zhao, Di Huang, Chongxiao Li, Pengwei Jin, Muxin Song, Yinan Xu, Ziyuan
+Nan, Mingju Gao, Tianyun Ma, Lei Qi, Yansong Pan, Zhenxing Zhang, Rui Zhang,
+Xishan Zhang, Zidong Du, Qi Guo, and Xing Hu. 2026. CodeV: Empowering LLMs
+with HDL Generation through Multilevel Summarization. IEEE Transactions on
+Computer-Aided Design of Integrated Circuits and Systems 45, 4 (2026), 1893–1906.
+doi:10.1109/TCAD.2025.3604320
+[26] Yaoyu Zhu, Di Huang, Hanqi Lyu, Xiaoyun Zhang, Chongxiao Li, Wenxuan Shi,
+Yutong Wu, Jianan Mu, Jinghua Wang, Yang Zhao, Pengwei Jin, Shuyao Cheng,
+Shengwen Liang, Xishan Zhang, Rui Zhang, Zidong Du, Qi Guo, Xing Hu, and
+Yunji Chen. 2025. QiMeng-CodeV-R1: Reasoning-Enhanced Verilog Generation.
+In Advances in Neural Information Processing Systems, Vol. 38. Curran Associates,
+Inc., Red Hook, NY, USA, 154266–154300. https://papers.nips.cc/paper_files/pap
+er/2025/hash/e2f7407b62f152b7fe533fbc077fddb7-Abstract-Conference.html
+
+

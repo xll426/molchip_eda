@@ -1,0 +1,360 @@
+                                                VeriTrace: Human-Like Temporal Exploration
+                                                      Completes Agentic Action Space
+                                                                       Yu-Tung Liu                                                  Cunxi Yu
+                                                          University of Maryland, College Park                        University of Maryland, College Park
+                                                                   College Park, USA                                           College Park, USA
+                                                                     liuyt@umd.edu                                             cunxiyu@umd.edu
+
+
+
+                                           Abstract—Large language models have shown promise for               address this gap by incorporating waveform-based debugging
+                                        automated Verilog RTL generation, yet state-of-the-art multi-          feedback [10], [11], but the feedback alone is not sufficient.
+                                        agent systems plateau at 95% accuracy on standard benchmarks.          What matters is the action space available to the debugging
+                                        We trace this ceiling to an incomplete debugging action space:
+                                        existing systems restrict which signals the agent can inspect, which   agent: which signals it can select, which time windows it
+                                        time windows it can query, or both, reducing debugging to pattern      can query, and whether it can issue queries iteratively as its
+                                        matching on a narrow, predetermined view of circuit behavior           understanding evolves [12], [13].
+                                        rather than hypothesis-driven root-cause analysis. We present             Table I summarizes the debugging action spaces of existing
+                                        VeriTrace, a multi-agent system whose Inspector agent operates         multi-agent systems. MAGE [11] introduces state checkpoint
+arXiv:2608.02878v1 [cs.AI] 3 Aug 2026
+
+
+
+
+                                        over a complete debugging action space, with independent control
+                                        over signal selection, time-window bounds, and iteration depth.        printing that captures I/O values at the first error timestamp,
+                                        This capability, which we term Agentic Temporal Exploration,           but restricts the agent to input and output signals at a single
+                                        enables the agent to form hypotheses about failure causes, query       point in time, no signal selection, no temporal freedom, and
+                                        the waveform for evidence, and refine its understanding iteratively,   no iteration. VerilogCoder [10] uses AST analysis to automate
+                                        mirroring the exploratory process of human verification engineers.     signal selection and supports iterative tracing, but anchors its
+                                        VeriTrace achieves 100% Pass@1 on VerilogEval-V2, the first
+                                        system to attain perfect functional correctness on this benchmark.     waveform display to the first mismatch timestamp. Although
+                                        On a shared Claude Sonnet 4.0 backbone, VeriTrace outperforms          both systems demonstrate that waveform feedback improves
+                                        the strongest reproduced baseline by +5.1%, demonstrating that         functional correctness, neither grants the agent joint control
+                                        debugging agency closes the final accuracy gap.                        over which signals to inspect and when.
+                                                               I. I NTRODUCTION
+                                                                                                                                           TABLE I
+                                           Modern digital hardware design remains a labor-intensive                       C OMPARISON OF MULTI - AGENT SYSTEMS .
+                                        process that requires significant expertise in hardware descrip-
+                                        tion languages (HDLs) such as Verilog or SystemVerilog [1],                             Agentic Signal Agentic Temporal
+                                                                                                                  Method                                         Iterative
+                                                                                                                                   Selection        Exploration
+                                        [2]. As chip complexity grows and design cycles shorten,
+                                                                                                                   MAGE                ✗                ✗            ✗
+                                        the demand for automated RTL code generation has become                VerilogCoder     ✓(AST-based)            ✗            ✓
+                                        increasingly urgent [3]–[5]. Manual translation from natural          VeriTrace (Ours)        ✓                 ✓            ✓
+                                        language specifications to functionally correct Verilog is error-
+                                        prone and time-consuming, motivating the need for intelligent        We present VeriTrace, a multi-agent system that closes
+                                        automation.                                                       this action space gap by introducing Agentic Temporal
+                                           Large language models (LLMs) have emerged as promising Exploration, a debugging methodology that grants the LLM
+                                        tools for hardware design automation [4], [6]. Recent work agent full control over signal selection and time-window
+                                        has demonstrated that LLMs can generate syntactically valid inspection. Unlike prior approaches, VeriTrace enables iterative
+                                        Verilog code from natural language descriptions, with models waveform queries: the agent selects signals and a time range,
+                                        like GPT-4 and Claude achieving non-trivial pass rates on observes the result, refines its hypothesis, and queries again
+                                        benchmarks such as VerilogEval [3], [7]. These results suggest until the root cause is identified. Our contributions are as
+                                        that LLMs possess sufficient understanding of HDL syntax follows:
+                                        and basic digital design patterns to serve as the foundation for     • We identify debugging action space completeness as
+                                        automated RTL generation [7]–[9].                                      the key bottleneck in multi-agent RTL generation and
+                                           However, single-agent LLM approaches face fundamental               introduce Agentic Temporal Exploration, enabling self-
+                                        limitations in debugging. When generated code fails simulation,        directed access to arbitrary signals and time windows for
+                                        these systems receive only pass/fail feedback or generic error         hypothesis-driven code refinement.
+                                        messages, lacking the detailed signal-level information needed       • We propose VeriTrace, a multi-agent system built around
+                                        to diagnose functional bugs. Multi-agent systems have begun to         Agentic Temporal Exploration with a dedicated Inspector
+                                         979-8-3195-1246-8-0/26/$31.00 ©2026 IEEE                              Agent for waveform analysis.
+                                                     Fig. 1. Overview of VeriTrace
+
+
+
+  •   Rather than ingesting full VCD waveform dumps, the In-         a Coordinator maintains structured debugging history across
+      spector queries only the signals and time windows relevant     iterations. These systems collectively demonstrate that multi-
+      to its current hypothesis, reducing token consumption by       agent collaboration with simulation-in-the-loop substantially
+      18% and enabling a scalable path toward larger designs.        improves functional correctness over single-pass approaches
+  •   VeriTrace achieves 100% Pass@1 on VerilogEval-V2,              [12], [22], [23].
+      to the best of our knowledge the first open source system
+      to attain perfect functional correctness on this benchmark.    C. Agentic Reasoning and Tool Use
+                       II. BACKGROUND                                   The ReAct paradigm [24] formalizes agentic tool use as an
+                                                                     interleaved loop of Thought, Action, and Observation: the agent
+A. LLMs for RTL Code Generation
+                                                                     reasons about its current state, invokes a tool, observes the
+   The application of large language models to Verilog gen-          result, and repeats. A key finding from the software engineering
+eration has progressed along two paths: domain-specialized           domain is that the interface between agent and tools matters
+models trained on curated RTL datasets [8], [14]–[19], and           as much as the underlying LLM [25].
+general-purpose LLMs such as GPT-4 and Claude applied                   SWE-Agent [26] showed that action-space design matters
+directly to hardware description [3], [7]. Both paths demonstrate    more than model scaling for software agents. Hardware debug-
+that LLMs have acquired sufficient understanding of HDL              ging poses an additional challenge: bugs are spatiotemporal,
+syntax and basic digital design patterns [6], [7], but single-       requiring joint control over signal selection and temporal
+pass generation alone, without simulation feedback, remains          navigation [13], [27]–[32].
+insufficient for reliable functional correctness [20].
+B. Multi-Agent Systems for RTL Generation                                                    III. M ETHOD
+  To incorporate simulation feedback, recent work has adopted      VeriTrace’s multi-agent architecture follows a deterministic
+multi-agent architectures that decompose RTL design into control flow modeled after how human engineers approach RTL
+specialized subtasks. VerilogCoder [10] introduces a Task and design: write code, simulate, inspect failing signals, diagnose
+Circuit Relation Graph for plan decomposition and an AST- the root cause, and repair. Rather than relying on learned or-
+based waveform tracing tool that back-traces signals from chestration or dynamic agent allocation, VeriTrace decomposes
+mismatched outputs, providing signal-level context at the point the task into the same sequential stages a verification engineer
+of failure. MAGE [11] employs four agent types with a high- would follow, with each stage handled by a specialized agent.
+temperature candidate sampling strategy and a state checkpoint     As shown in Figure 1, the system takes a natural language
+mechanism that captures I/O values at the earliest mismatch. specification and golden testbench if available as input, gener-
+ACE-RTL [21] combines a domain-specialized RTL model ates testbench and RTL. Then, if simulation reports a functional
+with a frontier reasoning LLM through an agentic context error, enters a closed-loop cycle of inspection and debugging
+evolution loop, where a Reflector analyzes simulation logs and until all test cases pass. The key innovation lies in the Inspector
+                                Fig. 2. An example of Inspector Agentic Temporal Exploration for Problem 155.
+
+
+
+agent, which operates over a complete debugging action space            1) Observation from Human RTL Verification: When an
+to provide hypothesis-driven diagnostic feedback.                    RTL simulation reports a mismatch, human designers do not
+                                                                     examine the failing timestamp in isolation. In commercial tools
+A. Testbench and RTL Agent                                           such as Synopsys Verdi [33], [34], the designer selects a suspect
+   The Testbench Agent modifies the golden testbench to dump signal, inspects its transitions over a chosen time window, forms
+all waveforms, enabling the Inspector to query arbitrary internal a hypothesis about which logic block introduced the error, and
+signals, just as human designers do with commercial tools [33]. traces further into that block’s inputs to confirm or revise the
+The RTL Agent generates modules from the specification hypothesis. Crucially, it is the designer who decides which
+and modified testbench, with a strict syntax check enforced signals to examine and when. Diagnosing such faults requires
+before simulation. We follow MAGE [11] to incorporate the navigating internal signals, state registers, counters, next-state
+Simulation Judge and High-Temperature RTL Sampling for logic, across arbitrary time ranges, iteratively, as understanding
+the initial pass, avoiding the token-heavy debugging loop for evolves.
+medium to easy tasks.                                                   These observations motivate the Inspector’s design. An agent
+                                                                     restricted to fixed signals or a single timestamp cannot escape
+B. Inspector: Agentic Temporal Exploration                           the narrow view that makes automated debugging brittle. The
+   Complex RTL problems, particularly FSMs with feedback, Inspector grants full control over signal selection and time
+are rarely solved in a single generation pass. As established windows, enabling the iterative, hypothesis-driven process
+in Section II-C, RTL bugs are spatiotemporal: a mismatch formalized below.
+observed at time t may originate many clock cycles earlier              2) Inspector Action Formulation.: Let S denote the natural
+in an unrelated logic block. The Inspector addresses this by         language   specification, C the current RTL code, terr the first
+separating diagnosis from repair. While the Debugger translates      error  timestamp   reported by simulation, and W the complete
+diagnostic findings into code edits, the Inspector operates over     waveform    generated  by the modified testbench.
+the complete debugging action space, selecting which signals            At each iteration i, the Inspector selects a set of signals σ i
+to examine, which time windows to query, and how many and a time window [tstart                   end
+                                                                                            i , ti ] to query. The agentic waveform
+rounds of exploration to perform.                                    tracing tool returns a natural-language-style waveform snapshot:
+   This separation of diagnosis from repair1 gives each agent
+a focused context window, avoiding the need for a single                              ωi = T RACE(W, σ i , tstart  end
+                                                                                                              i , ti )              (1)
+agent to handle waveform analysis and code modification
+simultaneously.                                                         The Inspector follows a ReAct-style reasoning pattern [24],
+   Figure 2 illustrates how the Inspector, starting from the initial interleaving thought and action. At each step, the Inspector
+error timestamp, identifies the incorrect state transition through produces a thought τi that reasons over the accumulated context
+iterative waveform analysis.                                         and decides whether to issue another query or to terminate:
+                                                                                                             TABLE II
+             τi , ai = T HINK(S, C, terr , ω1 , . . . , ωi )          (2)                         C OMPARISON ON V ERILOG E VAL -V2.
+
+where ai ∈ {Q UERY, F INISH}. If ai = Q UERY, the Inspector                        Method
+                                                                                                    Open
+                                                                                                                    LLM Model
+                                                                                                                                          VerilogEval-V2
+                                                                                                   Souce?                                     Pass@1
+selects new parameters (σ i+1 , tstart    end
+                                   i+1 , ti+1 ) and retrieves the
+next snapshot ωi+1 . This loop continues until either ai =                      Single Agent        N/A          Claude Sonnet 4.5             81.4%
+                                                                              VerilogCoder [10]      ✓              GPT4-Turbo                 94.2%
+F INISH or a maximum number of iterations N is reached.                        ACE-RTL [21]          ✗      Custom & Claude Sonnet 4.0        95.5%3
+   Upon termination, the Inspector produces an Inspector                         MAGE [11]           ✓           Claude 3.5 Sonnet             95.7%
+                                                                                    MAGE             ✓           Claude Sonnet 4.0             92.3%
+Report R that summarizes the diagnosed behavioral mismatch                           Ours            ✓           Claude Sonnet 4.0             97.4%
+between S and C, reasoning on the mismatch, and suggested                           Ours             ✓           Claude Sonnet 4.5             100%
+fixes for the subsequent RTL Debugger. Note that the testbench
+is not exposed to the Inspector since the goal of self-correction
+should be finding the mismatched behavior between the RTL                    B. Key Results
+Code C and the functional description S instead of the                  Table II compares VeriTrace with state-of-the-art open source
+testbench.                                                          multi-agent systems [10], [11], [21]. We set N=5 and M=10.
+C. RTL Debugger                                                     With Claude Sonnet 4.5 [35], VeriTrace achieves 100% Pass@1,
+                                                                    the first system to achieve perfect functional correctness in
+   After receiving the Inspector Report R, the RTL Debugger
+                                                                    VerilogEval-V2, closing the gap that persisted in all prior
+analyzes the buggy RTL code C alongside the diagnosed
+                                                                    approaches. To enable a fair same-model comparison, we also
+behavioral mismatch and suggested fixes contained in R. The
+                                                                    evaluate with Claude Sonnet 4.0, where VeriTrace reaches
+Debugger then performs targeted edits to produce a corrected
+            ′                                                       97.4% Pass@1, a +5.1% improvement over MAGE on the
+version C . Rather than attempting to rewrite the entire module,
+                                                                    identical backbone (92.3%)2 . This gain is attributable entirely
+the Debugger focuses on the specific logic blocks identified by
+                                                                    to VeriTrace’s debugging agency, as both systems share the
+the Inspector, preserving the structure of code that is functioning
+                                                                    same underlying LLM.
+correctly.
+                         ′
+   The corrected RTL C is re-simulated. Let m(C) denote the             We also note ACE-RTL [21]3 , which reports 95.5% APR on
+number of output mismatches for a given RTL implementation VerilogEval-V2 using the same Claude Sonnet 4.0 backbone
+C. If m(C ′ ) < m(C), the edit is accepted and C is updated and its custom fine-tuned model. However, APR measures the
+to C ′ . If m(C ′ ) ≥ m(C), the edit is rolled back to prevent fraction of uniquely solved problems across runs rather than
+regressions, and the previous version is retained. This check- the expected single-attempt pass rate, and its closed-source
+point is necessary because an edit that resolves one mismatch implementation precludes reproduction under controlled con-
+may introduce others, particularly in sequential circuits where ditions. We therefore compare primarily against reproducible
+shared state logic has cascading effects. Requiring monotonic open-source baselines.
+reduction in mismatch count ensures steady forward progress. C. Ablation Studies
+   When the accepted edit reduces but does not eliminate all
+mismatches, the system invokes the Inspector again on the               1) The Effectiveness of Inspector: To isolate the contribution
+                  ′
+updated code C with the new error timestamp. This reflects a        of   the Inspector, we compare VeriTrace with and without
+common pattern in real-world RTL debugging: a single design         this   component. Table III reports per-agent and total token
+may contain multiple independent bugs, or fixing one issue          consumption,      averaged across all problems. Because LLM API
+may reveal a previously masked failure. The Inspector then          latency    introduces   variability in wall-clock time, we report the
+begins a fresh round of waveform exploration on the updated         average     number    of LLM calls as a proxy for runtime instead.
+design, and the cycle repeats. The full closed-loop iteration       Pass@1       is computed     over n = 3 runs to reduce sampling
+between the Inspector and RTL Debugger continues until either       variance.     Both  configurations    are using the Claude Sonnet 4.5
+m(C) = 0 (all test cases pass) or a maximum iteration limit         backbone      [35]  with  temperature     t = 0.85.
+M is reached.                                                           Both configurations consume comparable tokens during RTL
+                                                                    generation, confirming that the Inspector’s benefit arises in
+                IV. E XPERIMENT AND R ESULT                         the debugging phase rather than initial code generation. With
+A. Experimental Setup                                               Inspector, waveform analysis is offloaded to a dedicated agent
+   We evaluated VeriTrace on VerilogEval-V2 [3], [7], a that produces targeted diagnostic reports, enabling the RTL
+benchmark comprising 156 Verilog coding problems spanning Debugger to apply more precise fixes. This specialization re-
+combinational logic and sequential circuits1 . Each problem duces combined debugging tokens (RTL Debugger + Inspector)
+includes a natural language specification and a golden testbench.
+                                                                       2We reproduced MAGE using its open-source implementation [11], substitut-
+We report the highest PASS@1 accuracies from the literature
+                                                                    ing Claude Sonnet 4.0 and 4.5 as versions 3.5 and 3.7 have been deprecated. We
+[10], [11]. For the reproduced and our method, we report with note significant performance degradation with Claude Sonnet 4.5, attributable
+n = 3. This mitigates the sampling variance.                        to fragile testbench syntax and output parsing.
+                                                                                3 ACE-RTL [21] reports Agentic Pass Rate (APR), defined as the fraction
+  1 One  of the problems had a mismatched testbench and prompt. After        of uniquely solved problems, rather than the statistical Pass@1 estimator used
+consulting with the authors of [7], we made the corresponding adjustments.   by other entries. Its implementation is not publicly available.
+                                                                          TABLE III
+                                                                       A BLATION S TUDY
+
+                  VerilogEval-V2    Avg. Tokens        Avg. Tokens            Avg. Tokens        Avg. Tokens    Avg. Tokens
+   Method                                                                                                                       Avg. Tokens     Avg. LLM Call
+                      Pass@1        RTL Agent        Testbench Agent           Sim Judge        RTL Debugger     Inspector
+ w/o Inspector       98.29%            10.2k                6.8k                 1.3k               8.5k            N/A              26.7k             6.4
+ w/ Inspector         100%             10.1k                5.4k                 0.9k               0.4k            5.2k             21.9k             6.7
+
+
+                                                                   TABLE IV
+                                          P ER - PROBLEM ABLATION ON DEBUGGING - INTENSIVE PROBLEMS .
+
+                                                         w/o Inspector                                                w/ Inspector
+        Problem         Type
+                                                  Avg. Total       Avg. Debug      Avg. Debug                  Avg. Total     Avg. Debug     Avg. Debug
+                                     Pass@1                                                         Pass@1
+                                                   Tokens            Tokens         LLM Call                    Tokens          Tokens        LLM Call
+        Prob062     Combinational     100%          41.7k              4k                2.00        100%        44.6k            7.3k          4.33
+        Prob070     Combinational     100%          64.7k             10.5k              2.00        100%        63.2k            6.3k          4.00
+        Prob078      Sequential       100%          50.6k             18.4k              4.67        100%        46.8k            7.6k          5.00
+        Prob093     Combinational     100%          94.7k             47.2k              4.67        100%        83.1k           36.5k          8.33
+        Prob137      FSM (Seq.)         0%         348.2k            301.7k             30.00        100%       383.6k          339.6k         56.00
+        Prob149      FSM (Seq.)        33%         345.9k            281.2k             20.67        100%       317.4k          256.9k         31.67
+        Prob155      FSM (Seq.)        33%         619.5k            530.8k             27.33        100%       110.3k           32.6k         9.00
+
+
+
+relative to the RTL Debugger alone without the Inspector,                          cost is non-trivial for academic settings. In preliminary ex-
+yielding an overall reduction of approximately 18% in total                        periments, we applied Agentic Temporal Exploration within a
+token consumption. This improvement comes with a trade-off:                        hierarchical multi-agent framework to two challenging CVDP
+due to the nature of iterative inspection, VeriTrace uses more                     specification-to-RTL problems and solved both, suggesting that
+rounds of LLM calls on average, leading to longer runtime.                         the debugging methodology may generalize beyond single-
+   2) Analysis on the Hard Problems: To understand which                           module benchmarks. Comprehensive evaluation is planned as
+problem categories benefit the most, we further examine the 7                      follow-up work.
+problems that consistently trigger the debugging loop in both                         The Testbench Agent dumps waveforms for all signals by
+configurations (Table IV). For combinational and non-FSM                           default, which is what enables the Inspector to query arbitrary
+sequential circuits, both systems achieve 100% Pass@1. The                         internal signals. Critically, the Inspector does not ingest the
+Inspector’s advantage here is primarily efficiency as it reduces                   full VCD into the LLM context. Instead, it retrieves only
+debugging tokens in 3 of 4 cases by providing more actionable                      the signals and time windows it selects at each iteration, so
+diagnostic information upfront.                                                    token cost scales with diagnostic complexity rather than design
+   The contrast is sharpest on FSM problems, where the system                      size. For the single-module problems in VerilogEval-V2 this
+without the Inspector achieves only 0–33% Pass@1. The                              storage overhead is negligible, but for industrial-scale modules
+Inspector’s ability to trace state transitions across time windows                 with thousands of signals, adaptive waveform dumping or on-
+allows it to pinpoint root causes in feedback-heavy designs,                       demand re-simulation may be necessary.
+boosting all three to 100% Pass@1. Notably, for Prob155                               Finally, as evidenced by the gap between Claude Sonnet
+the Inspector reduces total token consumption by over 5×                           4.0 (97.4%) and 4.5 (100%), all current multi-agent RTL
+(619k → 110k), demonstrating that accurate diagnosis not only                      systems remain sensitive to the underlying LLM. Disentangling
+improves correctness but also avoids the wasteful trial-and-error                  architectural from model-level contributions remains a shared
+cycles of blind retry. In this case we observed that the RTL                       challenge.
+Debugger ended up editing the whole module after multiple                             VI. C ONCLUSION
+failed attempts, consuming significantly more tokens.             We presented VeriTrace, a multi-agent system that introduces
+                                                                Agentic Temporal Exploration, granting LLM agents full
+             V. D ISCUSSION AND L IMITATIONS
+                                                                control over signal selection and temporal exploration during
+   VerilogEval-V2 comprises 156 single-module problems with debugging. VeriTrace achieves 100% Pass@1 on VerilogEval-
+provided golden testbenches. Industrial designs involve multi- V2, the first perfect score on this benchmark, while reducing
+module hierarchies, incomplete specifications, and far larger token consumption by 18% through more targeted diagnosis.
+signal spaces. Whether the Inspector’s temporal exploration Our results demonstrate that debugging agency, not just richer
+scales to such settings remains an open question. Multi-task feedback, is the key to closing the final accuracy gap in
+benchmarks such as CVDP [21], [36], [37] would exercise LLM-based RTL generation. Future work will extend Agentic
+the framework under more diverse conditions. Because CVDP Temporal Exploration to multi-module designs and dynamic
+evaluation requires multiple independent runs per problem agent allocation. The implementation of VeriTrace will be
+with frontier-model API calls at each iteration, the associated publicly available.
+                              R EFERENCES                                                 verification: Past, present, and prospect,” ACM Transactions on Design
+                                                                                          Automation of Electronic Systems, vol. 29, no. 4, pp. 1–42, 2024.
+ [1] J. Choi, S. Brown, and J. Anderson, “From software threads to parallel        [21]   C. Deng, Z. Yu, G.-T. Liu, N. Pinckney, and H. Ren, “Ace-rtl: When
+     hardware in high-level synthesis for fpgas,” in 2013 International                   agentic context evolution meets rtl-specialized llms,” arXiv preprint
+     Conference on Field-Programmable Technology (FPT), 2013, pp. 270–                    arXiv:2602.10218, 2026.
+     277.                                                                          [22]   S. Hong, M. Zhuge, J. Chen, X. Zheng, Y. Cheng, J. Wang, C. Zhang,
+ [2] C. J. Faber, S. D. Harris, Z. Xiac, R. D. Chamberlain, and A. M. Cabrera,            Z. Wang, S. K. S. Yau, Z. Lin, et al., “Metagpt: Meta programming
+     “Challenges designing for fpgas using high-level synthesis,” in 2022                 for a multi-agent collaborative framework,” in The twelfth international
+     IEEE High Performance Extreme Computing Conference (HPEC), 2022,                     conference on learning representations, 2023.
+     pp. 1–7.                                                                      [23]   H. Wu, Z. He, X. Zhang, X. Yao, S. Zheng, H. Zheng, and B. Yu,
+ [3] M. Liu, N. Pinckney, B. Khailany, and H. Ren, “Verilogeval: Evaluating               “Chateda: A large language model powered autonomous agent for eda,”
+     large language models for verilog code generation,” in 2023 IEEE/ACM                 IEEE Transactions on Computer-Aided Design of Integrated Circuits
+     International Conference on Computer Aided Design (ICCAD). IEEE,                     and Systems, vol. 43, no. 10, pp. 3184–3197, 2024.
+     2023, pp. 1–8.                                                                [24]   S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao,
+ [4] J. Pan, G. Zhou, C.-C. Chang, I. Jacobson, J. Hu, and Y. Chen, “A survey             “React: Synergizing reasoning and acting in language models,” arXiv
+     of research in large language models for electronic design automation,”              preprint arXiv:2210.03629, 2022.
+     ACM Transactions on Design Automation of Electronic Systems, vol. 30,         [25]   T. Schick, J. Dwivedi-Yu, R. Dessı̀, R. Raileanu, M. Lomeli, E. Hambro,
+     no. 3, pp. 1–21, 2025.                                                               L. Zettlemoyer, N. Cancedda, and T. Scialom, “Toolformer: Language
+                                                                                          models can teach themselves to use tools,” Advances in neural
+ [5] Y. Lu, S. Liu, Q. Zhang, and Z. Xie, “Rtllm: An open-source benchmark
+                                                                                          information processing systems, vol. 36, pp. 68539–68551, 2023.
+     for design rtl generation with large language model,” in 2024 29th Asia
+                                                                                   [26]   J. Yang, C. E. Jimenez, A. Wettig, K. Lieret, S. Yao, K. Narasimhan,
+     and South Pacific Design Automation Conference (ASP-DAC). IEEE,
+                                                                                          and O. Press, “Swe-agent: Agent-computer interfaces enable automated
+     2024, pp. 722–727.
+                                                                                          software engineering,” Advances in Neural Information Processing
+ [6] S. Thakur, B. Ahmad, Z. Fan, H. Pearce, B. Tan, R. Karri, B. Dolan-
+                                                                                          Systems, vol. 37, pp. 50528–50652, 2024.
+     Gavitt, and S. Garg, “Benchmarking large language models for automated
+                                                                                   [27]   N. Shinn, F. Cassano, A. Gopinath, K. Narasimhan, and S. Yao, “Re-
+     verilog rtl code generation,” 2022.
+                                                                                          flexion: Language agents with verbal reinforcement learning,” Advances
+ [7] N. Pinckney, C. Batten, M. Liu, H. Ren, and B. Khailany, “Revisiting                 in neural information processing systems, vol. 36, pp. 8634–8652, 2023.
+     verilogeval: A year of improvements in large-language models for              [28]   X. Wang, B. Li, Y. Song, F. F. Xu, X. Tang, M. Zhuge, J. Pan, Y. Song,
+     hardware code generation,” ACM Transactions on Design Automation of                  B. Li, J. Singh, et al., “Openhands: An open platform for ai software
+     Electronic Systems, 2025.                                                            developers as generalist agents,” arXiv preprint arXiv:2407.16741, 2024.
+ [8] P. Zehua, H. Zhen, M. Yuan, Y. Huang, and B. Yu, “Betterv:                    [29]   A. Madaan, N. Tandon, P. Gupta, S. Hallinan, L. Gao, S. Wiegreffe,
+     Controlled verilog generation with discriminative guidance,” in Forty-first          U. Alon, N. Dziri, S. Prabhumoye, Y. Yang, et al., “Self-refine:
+     International Conference on Machine Learning, 2024.                                  Iterative refinement with self-feedback,” Advances in neural information
+ [9] Y.-D. Tsai, M. Liu, and H. Ren, “Rtlfixer: Automatically fixing rtl syntax           processing systems, vol. 36, pp. 46534–46594, 2023.
+     errors with large language models,” 2024.                                     [30]   X. Wang, Y. Chen, L. Yuan, Y. Zhang, Y. Li, H. Peng, and H.
+[10] C.-T. Ho, H. Ren, and B. Khailany, “Verilogcoder: Autonomous verilog                 Ji, “Executable code actions elicit better llm agents,” in Forty-first
+     coding agents with graph-based planning and abstract syntax tree (ast)-              International Conference on Machine Learning, 2024.
+     based waveform tracing tool,” in Proceedings of the AAAI Conference           [31]   G. Wang, Y. Xie, Y. Jiang, A. Mandlekar, C. Xiao, Y. Zhu, L. Fan, and
+     on Artificial Intelligence, 2025, vol. 39, pp. 300–307.                              A. Anandkumar, “Voyager: An open-ended embodied agent with large
+[11] Y. Zhao, H. Zhang, H. Huang, Z. Yu, and J. Zhao, “Mage: A multi-agent                language models,” arXiv preprint arXiv:2305.16291, 2023.
+     engine for automated rtl code generation,” in 2025 62nd ACM/IEEE              [32]   M. ul Islam, H. Sami, P.-E. Gaillardon, V. Tenace, et al., “Aivril:
+     Design Automation Conference (DAC). IEEE, 2025, pp. 1–7.                             Ai-driven rtl generation with verification in-the-loop,” arXiv preprint
+[12] Q. Wu, G. Bansal, J. Zhang, Y. Wu, B. Li, E. Zhu, L. Jiang, X. Zhang, S.             arXiv:2409.11411, 2024.
+     Zhang, J. Liu, et al., “Autogen: Enabling next-gen llm applications via       [33]   Synopsys, “Verdi debug: Streamlining verification engineers’ workflow,”
+     multi-agent conversations,” in First conference on language modeling,                2024, Synopsys Blog.
+     2024.                                                                         [34]   Synopsys, Inc., “Verdi automated debug system,” https://www.synopsys.
+[13] X. Chen, M. Lin, N. Schärli, and D. Zhou, “Teaching large language                  com/verification/debug/verdi.html, 2024, Accessed: 2025-02-05.
+     models to self-debug,” arXiv preprint arXiv:2304.05128, 2023.                 [35]   Anthropic, “System card: Claude sonnet 4.5,” Tech. Rep., Anthropic,
+[14] S. Liu, W. Fang, Y. Lu, J. Wang, Q. Zhang, H. Zhang, and Z. Xie,                     September 2025.
+     “Rtlcoder: Fully open-source and efficient llm-assisted rtl code generation   [36]   N. Pinckney, C. Deng, C.-T. Ho, Y.-D. Tsai, M. Liu, W. Zhou, B. Khailany,
+     technique,” IEEE Transactions on Computer-Aided Design of Integrated                 and H. Ren, “Comprehensive verilog design problems: A next-generation
+     Circuits and Systems, vol. 44, no. 4, pp. 1448–1461, 2024.                           benchmark dataset for evaluating large language models and agents on
+[15] C. Deng, Y.-D. Tsai, G.-T. Liu, Z. Yu, and H. Ren, “Scalertl: Scaling                rtl design and verification,” 2025.
+     llms with reasoning data and test-time compute for accurate rtl code          [37]   A. Allam and M. Shalan, “Rtl-repo: A benchmark for evaluating llms
+     generation,” in 2025 ACM/IEEE 7th Symposium on Machine Learning                      on large-scale rtl design projects,” in 2024 IEEE LLM Aided Design
+     for CAD (MLCAD). IEEE, 2025, pp. 1–9.                                                Workshop (LAD). IEEE, 2024, pp. 1–5.
+[16] M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. D. O. Pinto, J. Kaplan, H.
+     Edwards, Y. Burda, N. Joseph, G. Brockman, et al., “Evaluating large
+     language models trained on code,” arXiv preprint arXiv:2107.03374,
+     2021.
+[17] M. Liu, T.-D. Ene, R. Kirby, C. Cheng, N. Pinckney, R. Liang, J. Alben,
+     H. Anand, S. Banerjee, I. Bayraktaroglu, et al., “Chipnemo: Domain-
+     adapted llms for chip design,” arXiv preprint arXiv:2311.00176, 2023.
+[18] F. Cui, C. Yin, K. Zhou, Y. Xiao, G. Sun, Q. Xu, Q. Guo, Y. Liang, X.
+     Zhang, D. Song, et al., “Origen: Enhancing rtl code generation with
+     code-to-code augmentation and self-reflection,” in Proceedings of the
+     43rd IEEE/ACM International Conference on Computer-Aided Design,
+     2024, pp. 1–9.
+[19] M. Liu, Y.-D. Tsai, W. Zhou, and H. Ren, “Craftrtl: High-quality synthetic
+     data generation for verilog code models with correct-by-construction
+     non-textual representations and targeted code repair,” arXiv preprint
+     arXiv:2409.12993, 2024.
+[20] N. Wu, Y. Li, H. Yang, H. Chen, S. Dai, C. Hao, C. Yu, and Y.
+     Xie, “Survey of machine learning for software-assisted hardware design
+
